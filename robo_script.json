@@ -1,0 +1,86 @@
+[
+  {
+    "eventType": "DELAYED_MESSAGE_POSTED",
+    "timestamp": 0,
+    "delayTime": 5000
+  },
+  {
+    "eventType": "VIEW_TEXT_CHANGED",
+    "timestamp": 5000,
+    "replacementText": "tikanah200@gmail.com",
+    "elementDescriptors": [
+      {
+        "className": "android.widget.EditText",
+        "contentDescription": null,
+        "recyclerViewChildPosition": -1,
+        "resourceId": "",
+        "text": "",
+        "ancestorContentDescription": null
+      }
+    ],
+    "actionType": "ELEMENT_MATCH_FIRST"
+  },
+  {
+    "eventType": "DELAYED_MESSAGE_POSTED",
+    "timestamp": 6000,
+    "delayTime": 1000
+  },
+  {
+    "eventType": "VIEW_TEXT_CHANGED",
+    "timestamp": 7000,
+    "replacementText": "123456",
+    "elementDescriptors": [
+      {
+        "className": "android.widget.EditText",
+        "contentDescription": null,
+        "recyclerViewChildPosition": -1,
+        "resourceId": "",
+        "text": "",
+        "ancestorContentDescription": null
+      }
+    ],
+    "actionType": "ELEMENT_MATCH_SECOND"
+  },
+  {
+    "eventType": "DELAYED_MESSAGE_POSTED",
+    "timestamp": 8000,
+    "delayTime": 1000
+  },
+  {
+    "eventType": "VIEW_CLICKED",
+    "timestamp": 9000,
+    "elementDescriptors": [
+      {
+        "className": "android.widget.Button",
+        "contentDescription": null,
+        "recyclerViewChildPosition": -1,
+        "resourceId": "",
+        "text": ""
+      }
+    ],
+    "actionType": "ELEMENT_MATCH_FIRST"
+  },
+  {
+    "eventType": "DELAYED_MESSAGE_POSTED",
+    "timestamp": 10000,
+    "delayTime": 8000
+  },
+  {
+    "eventType": "VIEW_CLICKED",
+    "timestamp": 18000,
+    "elementDescriptors": [
+      {
+        "className": "android.view.View",
+        "contentDescription": null,
+        "recyclerViewChildPosition": 0,
+        "resourceId": ""
+      }
+    ],
+    "actionType": "ELEMENT_MATCH_FIRST"
+  },
+  {
+    "eventType": "DELAYED_MESSAGE_POSTED",
+    "timestamp": 19000,
+    "delayTime": 10000
+  }
+]

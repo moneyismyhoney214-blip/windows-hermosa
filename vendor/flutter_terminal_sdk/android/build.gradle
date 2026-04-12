@@ -1,0 +1,113 @@
+plugins {
+    id "com.android.library"
+    id "org.jetbrains.kotlin.android"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+def flutterSdkPath = localProperties.getProperty("flutter.sdk")
+def flutterJar = flutterSdkPath
+    ? file("$flutterSdkPath/bin/cache/artifacts/engine/android-arm64/flutter.jar")
+    : null
+
+android {
+    compileSdk = 35
+    namespace = "com.example.flutter_terminal_sdk"
+
+    defaultConfig {
+        minSdk = 28
+    }
+    
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    java {
+        toolchain {
+            languageVersion.set(JavaLanguageVersion.of(17))
+        }
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+        test.java.srcDirs += "src/test/kotlin"
+    }
+
+    testOptions {
+        unitTests.all {
+            useJUnitPlatform()
+
+            testLogging {
+                events("passed", "skipped", "failed", "standardOut", "standardError")
+                outputs.upToDateWhen { false }
+                showStandardStreams = true
+            }
+        }
+    }
+
+}
+
+repositories {
+    // NearPay Maven Repository
+    def nearpayToken = providers.gradleProperty("nearpayPosGitlabReadToken")
+        .orElse(providers.environmentVariable("NEARPAY_POS_GITLAB_READ_TOKEN"))
+        .orNull
+    
+    if (nearpayToken != null && !nearpayToken.trim().isEmpty()) {
+        maven {
+            url = uri("https://gitlab.com/api/v4/projects/37026421/packages/maven")
+            credentials(HttpHeaderCredentials) {
+                name = "Private-Token"
+                value = nearpayToken.trim()
+            }
+            authentication {
+                header(HttpHeaderAuthentication)
+            }
+        }
+    }
+    
+    mavenCentral()
+    google()
+    maven { url = uri("https://developer.huawei.com/repo/") }
+    maven { url = uri("https://jitpack.io") }
+}
+
+dependencies {
+//    implementation("io.flutter:flutter_embedding_debug:3.9.0")
+    // Kotlin stdlib
+    if (flutterJar != null && flutterJar.exists()) {
+        compileOnly files(flutterJar)
+        testImplementation files(flutterJar)
+    }
+
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.21"
+    
+    // NEARPAY SDK - Using version from documentation
+    implementation "io.nearpay:terminalsdk-release:0.0.169"
+    
+    implementation 'com.google.android.gms:play-services-location:20.0.0'
+    implementation 'com.huawei.hms:location:6.4.0.300'
+    implementation 'com.jakewharton.timber:timber:5.0.1'
+    implementation 'com.google.code.gson:gson:2.13.2'
+
+    // Testing
+    testImplementation "org.jetbrains.kotlin:kotlin-test:2.0.21"
+    testImplementation "junit:junit:4.13.2"
+    testRuntimeOnly "org.junit.vintage:junit-vintage-engine:5.12.1"
+    testImplementation "org.robolectric:robolectric:4.12.2"
+    testImplementation "androidx.test:core:1.6.1"
+    testImplementation "org.mockito:mockito-core:5.21.0"
+    testImplementation "org.mockito.kotlin:mockito-kotlin:5.4.0"
+}

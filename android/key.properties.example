@@ -1,0 +1,4 @@
+storePassword=CHANGE_ME_STORE_PASSWORD
+keyPassword=CHANGE_ME_KEY_PASSWORD
+keyAlias=CHANGE_ME_KEY_ALIAS
+storeFile=../temp-release.keystore

@@ -1,0 +1,9370 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:hermosa_pos/services/printer_service.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:ui' as ui;
+import 'package:lucide_icons/lucide_icons.dart';
+
+import '../models.dart';
+import '../models/booking_invoice.dart';
+import '../models/customer.dart';
+import '../models/receipt_data.dart';
+import '../data.dart';
+import '../widgets/product_card.dart';
+import '../widgets/order_panel.dart';
+import '../widgets/settings_view.dart';
+import '../dialogs/product_customization_dialog.dart';
+import '../dialogs/payment_tender_dialog.dart';
+import '../services/language_service.dart';
+import '../services/display_app_service.dart';
+import '../services/invoice_html_pdf_service.dart';
+import '../services/kds_meal_availability_service.dart';
+import '../services/print_orchestrator_service.dart';
+import '../services/category_printer_route_registry.dart';
+import '../services/kitchen_printer_route_registry.dart';
+import '../dialogs/payment_success_view.dart';
+import '../services/print_job_cache_service.dart';
+import '../services/printer_role_registry.dart';
+import '../services/nearpay/nearpay_service.dart';
+import '../utils/display_device_selection.dart';
+import '../widgets/pdf_preview_screen.dart';
+
+import '../dialogs/booking_details_dialog.dart';
+import '../dialogs/meal_details_dialog.dart';
+import 'table_management_screen.dart';
+import 'customers_screen.dart';
+import 'reports_screen.dart';
+import 'orders_screen.dart';
+import 'invoices_screen.dart';
+import '../locator.dart';
+import 'package:hermosa_pos/services/api/product_service.dart';
+import 'package:hermosa_pos/services/api/order_service.dart';
+import 'package:hermosa_pos/services/api/table_service.dart';
+import 'package:hermosa_pos/services/api/branch_service.dart';
+import 'package:hermosa_pos/services/api/base_client.dart';
+import 'package:hermosa_pos/services/api/auth_service.dart';
+import 'package:hermosa_pos/services/api/promocode_service.dart';
+import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/api/device_service.dart';
+import 'package:hermosa_pos/services/api/error_handler.dart';
+import 'package:hermosa_pos/services/cashier_sound_service.dart';
+import 'branch_selection_screen.dart';
+import 'login_screen.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
+
+  @override
+  State<MainScreen> createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final TableService _tableService = getIt<TableService>();
+
+  String _activeTab = 'home';
+  String _selectedCategory = 'all';
+  String _searchQuery = '';
+  final List<CartItem> _cart = [];
+  final List<DeviceConfig> _devices = [];
+
+  List<Product> _allProducts = [];
+  List<CategoryModel> _categories = [];
+  final Set<String> _pinnedCategoryIds = {};
+
+  // Menu Lists (Price Lists) state
+  bool _isMenuListActive = false;
+  int? _activeMenuListId;
+  String _activeMenuListName = '';
+  String _menuListPriceType = 'delivery'; // 'delivery' or 'pickup'
+  List<Product> _menuListProducts = [];
+  List<CategoryModel> _menuListCategories = [];
+  List<Map<String, dynamic>> _availableMenuLists = [];
+  List<CategoryModel> _originalCategories = []; // saved before menu list switch
+  Map<String, bool> _enabledPayMethods = {
+    'cash': false,
+    'card': false,
+    'mada': false,
+    'visa': false,
+    'benefit': false,
+    'stc': false,
+    'bank_transfer': false,
+    'wallet': false,
+    'cheque': false,
+    'petty_cash': false,
+    'pay_later': false,
+    'tabby': false,
+    'tamara': false,
+    'keeta': false,
+    'my_fatoorah': false,
+    'jahez': false,
+    'talabat': false,
+  };
+  List<Map<String, dynamic>> _orderTypeOptions = [];
+  TableItem? _selectedTable;
+  TableItem? _lastSelectedTable;
+  Customer? _selectedCustomer;
+  PromoCode? _activePromoCode;
+  List<PromoCode> _cachedPromoCodes = [];
+  bool _isLoading = true;
+  String? _error;
+  int _currentPage = 1;
+  bool _isLastPage = false;
+  bool _isLoadingMore = false;
+  final ScrollController _productsScrollController = ScrollController();
+
+  // New Ecosystem state
+  String _selectedOrderType = 'services';
+  final TextEditingController _orderNotesController = TextEditingController();
+  final TextEditingController _carNumberController = TextEditingController();
+
+  // User Profile
+  String _userName = 'المستخدم';
+  String _userRole = 'كاشير';
+  String _initials = 'US';
+  bool _requireCustomerSelection = true;
+  bool _isCdsEnabled = true;
+  bool _isKdsEnabled = true;
+  bool _autoPrintCashier = true;
+  bool _autoPrintCustomer = true;
+  bool _printKitchenInvoices = true;
+  bool _allowPrintWithKds = false;
+  double _mealIconScale = 1.0;
+  double _sidebarIconScale = 1.0;
+  bool _isTaxEnabled = true;
+  double _taxRate = 0.15;
+  bool _isProfileNearPayEnabled = false;
+  String? _lastCreatedBookingId;
+  String? _lastMainCartFingerprint;
+  Map<String, dynamic>? _lastUserData;
+  late final KdsMealAvailabilityService _mealAvailabilityService;
+  late final DisplayAppService _displayAppService;
+  bool _isBootstrappingSession = false;
+  double _cashOpeningBalance = 0.0;
+  double _cashTransactionsTotal = 0.0;
+
+  static const String _requireCustomerSelectionKey =
+      'cashier_require_customer_selection';
+  static const String _cdsEnabledKey = 'cashier_cds_enabled_v1';
+  static const String _kdsEnabledKey = 'cashier_kds_enabled_v1';
+  static const String _autoPrintCashierKey = 'cashier_auto_print_cashier_v1';
+  static const String _autoPrintCustomerKey = 'cashier_auto_print_customer_v1';
+  static const String _printKitchenInvoicesKey =
+      'cashier_print_kitchen_invoices_v1';
+  static const String _allowPrintWithKdsKey = 'cashier_allow_print_with_kds_v1';
+  static const String _mealIconScaleKey = 'cashier_meal_icon_scale_v1';
+  static const String _sidebarIconScaleKey = 'cashier_sidebar_icon_scale_v1';
+  static const String _cashFloatOpeningBalanceKey =
+      'cash_float_opening_balance_v1';
+  static const String _cashFloatTransactionsTotalKey =
+      'cash_float_transactions_total_v1';
+
+  @override
+  void initState() {
+    super.initState();
+    _mealAvailabilityService = getIt<KdsMealAvailabilityService>();
+    _displayAppService = getIt<DisplayAppService>();
+    _displayAppService.addMealAvailabilityListener(_handleMealAvailabilitySync);
+    WidgetsBinding.instance.addObserver(this);
+    translationService.addListener(_onLanguageChanged);
+    _productsScrollController.addListener(_onProductsScroll);
+    unawaited(_bootstrapSessionAndLoad());
+  }
+
+  bool _canCallBranchApis() {
+    final token = BaseClient().getToken();
+    return token != null && token.isNotEmpty && ApiConstants.branchId > 0;
+  }
+
+  String get _normalizedLanguageCode {
+    final raw = translationService.currentLanguageCode.trim().toLowerCase();
+    if (raw.isEmpty) return 'ar';
+    final segments = raw.split(RegExp(r'[-_]'));
+    return segments.isNotEmpty ? segments.first : raw;
+  }
+
+  bool get _useArabicUi {
+    final code = _normalizedLanguageCode;
+    return code == 'ar' || code == 'ur';
+  }
+
+  String _trUi(String ar, String nonArabic) => _useArabicUi ? ar : nonArabic;
+
+  bool _containsArabicChars(String value) {
+    return RegExp(r'[\u0600-\u06FF]').hasMatch(value);
+  }
+
+  String _stripWrappingQuotes(String value) {
+    var text = value.trim();
+    if (text.length >= 2) {
+      final startsWithSingle = text.startsWith("'");
+      final endsWithSingle = text.endsWith("'");
+      final startsWithDouble = text.startsWith('"');
+      final endsWithDouble = text.endsWith('"');
+      if ((startsWithSingle && endsWithSingle) ||
+          (startsWithDouble && endsWithDouble)) {
+        text = text.substring(1, text.length - 1).trim();
+      }
+    }
+    return text;
+  }
+
+  String? _extractLegacyLocalizedFromString(String raw) {
+    String? findByCode(String code) {
+      final match =
+          RegExp("['\\\"]?$code['\\\"]?\\s*:\\s*([^,}\\]]+)").firstMatch(raw);
+      if (match == null) return null;
+      final extracted = _stripWrappingQuotes(match.group(1) ?? '');
+      if (extracted.isEmpty || extracted.toLowerCase() == 'null') return null;
+      return extracted;
+    }
+
+    final orderedCodes =
+        _useArabicUi ? const <String>['ar', 'en'] : const <String>['en', 'ar'];
+    for (final code in orderedCodes) {
+      final found = findByCode(code);
+      if (found != null && found.isNotEmpty) return found;
+    }
+    return null;
+  }
+
+  String? _extractFirstMeaningfulFromListString(String raw) {
+    if (!(raw.startsWith('[') && raw.endsWith(']'))) return null;
+    final content = raw.substring(1, raw.length - 1).trim();
+    if (content.isEmpty) return null;
+
+    final localized = _extractLegacyLocalizedFromString(content);
+    if (localized != null && localized.isNotEmpty) return localized;
+
+    for (final part in content.split(',')) {
+      final token = _stripWrappingQuotes(part);
+      if (token.isEmpty || token.toLowerCase() == 'null') continue;
+      if (token.contains(':')) {
+        final tokenLocalized = _extractLegacyLocalizedFromString(token);
+        if (tokenLocalized != null && tokenLocalized.isNotEmpty) {
+          return tokenLocalized;
+        }
+      }
+      return token;
+    }
+    return null;
+  }
+
+  Future<void> _redirectToLogin() async {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _bootstrapSessionAndLoad() async {
+    if (_isBootstrappingSession) return;
+    _isBootstrappingSession = true;
+
+    try {
+      final authService = getIt<AuthService>();
+      final hasToken =
+          await authService.ensureSessionReady(requireBranch: false);
+      if (!hasToken) {
+        await _redirectToLogin();
+        return;
+      }
+
+      if (ApiConstants.branchId <= 0) {
+        final branches = await authService.getBranches();
+        if (!mounted) return;
+        if (branches.isEmpty) {
+          setState(() {
+            _error = 'لا يوجد فرع متاح لهذا الحساب';
+            _isLoading = false;
+          });
+          return;
+        }
+
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => BranchSelectionScreen(branches: branches),
+          ),
+        );
+        return;
+      }
+
+      await _loadCashierSettings();
+      await _loadUserData();
+      await _loadData();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    } finally {
+      _isBootstrappingSession = false;
+    }
+  }
+
+  Future<void> _loadCashierSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = prefs.getBool(_requireCustomerSelectionKey);
+      final cdsEnabled = prefs.getBool(_cdsEnabledKey) ?? true;
+      final kdsEnabled = prefs.getBool(_kdsEnabledKey) ?? true;
+      final autoPrintCashier = prefs.getBool(_autoPrintCashierKey) ?? true;
+      final autoPrintCustomer = prefs.getBool(_autoPrintCustomerKey) ?? true;
+      final printKitchenInvoices =
+          prefs.getBool(_printKitchenInvoicesKey) ?? true;
+      final allowPrintWithKds = prefs.getBool(_allowPrintWithKdsKey) ?? false;
+      final mealIconScale = prefs.getDouble(_mealIconScaleKey) ?? 1.0;
+      final sidebarIconScale = prefs.getDouble(_sidebarIconScaleKey) ?? 1.0;
+      final normalizedSidebarIconScale =
+          sidebarIconScale.clamp(0.85, 1.4).toDouble();
+      final opening = prefs.getDouble(_cashFloatOpeningBalanceKey) ?? 0.0;
+      final transactions =
+          prefs.getDouble(_cashFloatTransactionsTotalKey) ?? 0.0;
+      if (mounted) {
+        setState(() {
+          if (value != null) {
+            _requireCustomerSelection = value;
+          }
+          _isCdsEnabled = cdsEnabled;
+          _isKdsEnabled = kdsEnabled;
+          _autoPrintCashier = autoPrintCashier;
+          _autoPrintCustomer = autoPrintCustomer;
+          _printKitchenInvoices = printKitchenInvoices;
+          _allowPrintWithKds = allowPrintWithKds;
+          _mealIconScale = mealIconScale;
+          _sidebarIconScale = normalizedSidebarIconScale;
+          _cashOpeningBalance = opening;
+          _cashTransactionsTotal = transactions;
+        });
+      }
+
+      if (_isKdsEnabled) {
+        unawaited(_mealAvailabilityService.initialize());
+      }
+
+      _displayAppService.setCashFloatSnapshot(
+        _buildCashFloatSnapshot(),
+        sync: false,
+      );
+    } catch (e) {
+      print('⚠️ Failed to load cashier settings: $e');
+    }
+  }
+
+  Future<void> _persistCashFloat() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_cashFloatOpeningBalanceKey, _cashOpeningBalance);
+      await prefs.setDouble(
+        _cashFloatTransactionsTotalKey,
+        _cashTransactionsTotal,
+      );
+    } catch (e) {
+      print('⚠️ Failed to persist cash float: $e');
+    }
+  }
+
+  Map<String, dynamic> _buildCashFloatSnapshot() {
+    final currentBalance = _cashOpeningBalance + _cashTransactionsTotal;
+    return {
+      'opening_balance': _cashOpeningBalance,
+      'transactions_total': _cashTransactionsTotal,
+      'current_balance': currentBalance,
+      'currency': ApiConstants.currency,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+  }
+
+  Future<void> _recordCashTransaction(
+    List<Map<String, dynamic>> pays,
+  ) async {
+    if (pays.isEmpty) return;
+    double cashIn = 0.0;
+    for (final pay in pays) {
+      final method = _normalizePayMethod(pay['pay_method']?.toString());
+      if (method != 'cash') continue;
+      final amount = (pay['amount'] as num?)?.toDouble() ??
+          double.tryParse(pay['amount']?.toString() ?? '') ??
+          0.0;
+      if (amount > 0) {
+        cashIn += amount;
+      }
+    }
+    if (cashIn <= 0) return;
+
+    setState(() {
+      _cashTransactionsTotal = double.parse(
+        (_cashTransactionsTotal + cashIn).toStringAsFixed(2),
+      );
+    });
+    await _persistCashFloat();
+    _displayAppService.setCashFloatSnapshot(_buildCashFloatSnapshot());
+  }
+
+  Future<void> _setRequireCustomerSelection(bool value) async {
+    setState(() {
+      _requireCustomerSelection = value;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_requireCustomerSelectionKey, value);
+    } catch (e) {
+      print('⚠️ Failed to save cashier settings: $e');
+    }
+  }
+
+  bool _isDisplayModeEnabled(DisplayMode mode) {
+    return mode == DisplayMode.cds ? _isCdsEnabled : _isKdsEnabled;
+  }
+
+  Future<void> _setCdsEnabled(bool value) async {
+    setState(() {
+      _isCdsEnabled = value;
+      _lastMainCartFingerprint = null;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_cdsEnabledKey, value);
+    } catch (e) {
+      print('⚠️ Failed to save CDS setting: $e');
+    }
+
+    if (!value) {
+      _displayAppService.clearPaymentDisplay();
+      if (_displayAppService.isConnected &&
+          _displayAppService.currentMode == DisplayMode.cds) {
+        if (_isKdsEnabled) {
+          _displayAppService.setMode(DisplayMode.kds);
+        } else {
+          _displayAppService.disconnect();
+        }
+      }
+    }
+  }
+
+  Future<void> _setKdsEnabled(bool value) async {
+    setState(() {
+      _isKdsEnabled = value;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kdsEnabledKey, value);
+    } catch (e) {
+      print('⚠️ Failed to save KDS setting: $e');
+    }
+
+    if (value) {
+      unawaited(_mealAvailabilityService.initialize());
+      return;
+    }
+
+    unawaited(_mealAvailabilityService.disposeService());
+
+    if (_displayAppService.isConnected &&
+        _displayAppService.currentMode == DisplayMode.kds) {
+      if (_isCdsEnabled) {
+        _displayAppService.setMode(DisplayMode.cds);
+      } else {
+        _displayAppService.disconnect();
+      }
+    }
+  }
+
+  Future<void> _setAllowPrintWithKds(bool value) async {
+    setState(() {
+      _allowPrintWithKds = value;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_allowPrintWithKdsKey, value);
+    } catch (e) {
+      print('⚠️ Failed to save print-with-kds setting: $e');
+    }
+  }
+
+  Future<void> _setAutoPrintCashier(bool value) async {
+    setState(() {
+      _autoPrintCashier = value;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_autoPrintCashierKey, value);
+    } catch (e) {
+      print('⚠️ Failed to save auto-print cashier setting: $e');
+    }
+  }
+
+  Future<void> _setAutoPrintCustomer(bool value) async {
+    setState(() {
+      _autoPrintCustomer = value;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_autoPrintCustomerKey, value);
+    } catch (e) {
+      print('⚠️ Failed to save auto-print customer setting: $e');
+    }
+  }
+
+  Future<void> _setPrintKitchenInvoices(bool value) async {
+    setState(() {
+      _printKitchenInvoices = value;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_printKitchenInvoicesKey, value);
+    } catch (e) {
+      print('⚠️ Failed to save print kitchen setting: $e');
+    }
+  }
+
+  Future<void> _setMealIconScale(double value) async {
+    final clamped = value.clamp(0.85, 1.4).toDouble();
+    setState(() {
+      _mealIconScale = clamped;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_mealIconScaleKey, clamped);
+    } catch (e) {
+      print('⚠️ Failed to save meal icon scale setting: $e');
+    }
+  }
+
+  Future<void> _setSidebarIconScale(double value) async {
+    final clamped = value.clamp(0.8, 1.3).toDouble();
+    setState(() {
+      _sidebarIconScale = clamped;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_sidebarIconScaleKey, clamped);
+    } catch (e) {
+      print('⚠️ Failed to save sidebar icon scale setting: $e');
+    }
+  }
+
+  Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return null;
+  }
+
+  bool? _toNullableBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized.isEmpty || normalized == 'null') return null;
+      if (const ['1', 'true', 'yes', 'on', 'enabled', 'active']
+          .contains(normalized)) {
+        return true;
+      }
+      if (const ['0', 'false', 'no', 'off', 'disabled', 'inactive']
+          .contains(normalized)) {
+        return false;
+      }
+    }
+    return null;
+  }
+
+  double? _toNullableTaxRate(dynamic value) {
+    if (value == null) return null;
+    if (value is num) {
+      final numeric = value.toDouble();
+      if (numeric < 0) return null;
+      if (numeric > 1.0) return (numeric / 100).clamp(0.0, 1.0);
+      return numeric.clamp(0.0, 1.0);
+    }
+    if (value is String) {
+      final cleaned = value.trim().replaceAll('%', '');
+      if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') return null;
+      final numeric = double.tryParse(cleaned);
+      if (numeric == null || numeric < 0) return null;
+      if (numeric > 1.0) return (numeric / 100).clamp(0.0, 1.0);
+      return numeric.clamp(0.0, 1.0);
+    }
+    return null;
+  }
+
+  double? _findTaxRateInPayload(dynamic payload) {
+    final queue = <dynamic>[payload];
+    var guard = 0;
+    while (queue.isNotEmpty && guard < 250) {
+      guard++;
+      final node = queue.removeLast();
+      final map = _asMap(node);
+      if (map != null) {
+        for (final key in const [
+          'tax_rate',
+          'taxRate',
+          'tax_percentage',
+          'taxPercentage',
+          'vat_rate',
+          'vat_percentage',
+        ]) {
+          final parsed = _toNullableTaxRate(map[key]);
+          if (parsed != null) return parsed;
+        }
+        final nestedTaxObject = _asMap(map['taxObject'] ?? map['tax_object']);
+        if (nestedTaxObject != null) {
+          queue.add(nestedTaxObject);
+        }
+        for (final value in map.values) {
+          if (value is Map || value is List) {
+            queue.add(value);
+          }
+        }
+        continue;
+      }
+      if (node is List) {
+        for (final value in node) {
+          if (value is Map || value is List) {
+            queue.add(value);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  bool? _findHasTaxInPayload(dynamic payload) {
+    final queue = <dynamic>[payload];
+    var guard = 0;
+    while (queue.isNotEmpty && guard < 250) {
+      guard++;
+      final node = queue.removeLast();
+      final map = _asMap(node);
+      if (map != null) {
+        for (final key in const [
+          'has_tax',
+          'hasTax',
+          'tax_enabled',
+          'taxEnabled',
+          'enable_tax',
+          'enableTax',
+        ]) {
+          final parsed = _toNullableBool(map[key]);
+          if (parsed != null) return parsed;
+        }
+        for (final value in map.values) {
+          if (value is Map || value is List) {
+            queue.add(value);
+          }
+        }
+        continue;
+      }
+      if (node is List) {
+        for (final value in node) {
+          if (value is Map || value is List) {
+            queue.add(value);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> _loadTaxConfiguration({BranchService? branchService}) async {
+    final service = branchService ?? getIt<BranchService>();
+    double? resolvedRate;
+    bool? resolvedHasTax;
+
+    try {
+      final settings = await service.getBranchSettings();
+      if (settings.isNotEmpty) {
+        resolvedRate = _findTaxRateInPayload(settings);
+        resolvedHasTax = _findHasTaxInPayload(settings);
+      }
+    } catch (e) {
+      print('⚠️ Failed to read tax config from branch settings: $e');
+    }
+
+    if (resolvedRate == null || resolvedHasTax == null) {
+      try {
+        final branches = await getIt<AuthService>().getBranchesRaw();
+        Map<String, dynamic>? currentBranch;
+        for (final branch in branches) {
+          final branchId = int.tryParse(branch['id']?.toString() ?? '') ??
+              int.tryParse(branch['branch_id']?.toString() ?? '') ??
+              0;
+          if (branchId == ApiConstants.branchId) {
+            currentBranch = branch;
+            break;
+          }
+        }
+        currentBranch ??= branches.isNotEmpty ? branches.first : null;
+        if (currentBranch != null) {
+          resolvedRate ??= _findTaxRateInPayload(currentBranch);
+          resolvedHasTax ??= _findHasTaxInPayload(currentBranch);
+        }
+      } catch (e) {
+        print('⚠️ Failed to read tax config from branches: $e');
+      }
+    }
+
+    final hasTax = resolvedHasTax ?? true;
+    final taxRate =
+        hasTax ? (resolvedRate ?? _taxRate).clamp(0.0, 1.0).toDouble() : 0.0;
+    if (!mounted) return;
+    if ((_taxRate - taxRate).abs() > 0.000001 || _isTaxEnabled != hasTax) {
+      setState(() {
+        _taxRate = taxRate;
+        _isTaxEnabled = hasTax;
+      });
+      _syncDisplayCartFromMain();
+    }
+  }
+
+  double _taxAmountFromSubtotal(double subtotal) {
+    if (!_isTaxEnabled || _taxRate <= 0 || subtotal <= 0) return 0.0;
+    return subtotal * _taxRate;
+  }
+
+  double _subtotalFromTaxInclusiveTotal(double total) {
+    if (!_isTaxEnabled || _taxRate <= 0 || total <= 0) return total;
+    return total / (1.0 + _taxRate);
+  }
+
+  double _taxFromTaxInclusiveTotal(double total) {
+    if (!_isTaxEnabled || _taxRate <= 0 || total <= 0) return 0.0;
+    final subtotal = _subtotalFromTaxInclusiveTotal(total);
+    return total - subtotal;
+  }
+
+  Future<void> _loadUserData() async {
+    final authService = getIt<AuthService>();
+
+    // First try from cached/stored data
+    final cachedUser = authService.getUser();
+    if (cachedUser != null) {
+      _updateUserUI(cachedUser);
+    }
+
+    // Then fetch fresh profile from API
+    try {
+      final profile = await authService.getProfile();
+      if (profile['data'] != null) {
+        _updateUserUI(profile['data']);
+      }
+    } catch (e) {
+      print('⚠️ Failed to fetch fresh profile: $e');
+    }
+  }
+
+  void _updateUserUI(Map<String, dynamic> user) {
+    _lastUserData = user.map((k, v) => MapEntry(k.toString(), v));
+    final options = user['options'];
+    final optionsMap = options is Map
+        ? options.map((k, v) => MapEntry(k.toString(), v))
+        : const <String, dynamic>{};
+    final nearPayEnabledFromProfile = optionsMap['nearpay'] == true;
+    getIt<DisplayAppService>().setProfileNearPayOption(
+      nearPayEnabledFromProfile,
+    );
+    // Pre-warm the JWT cache so AUTH_CHALLENGE always gets a JWT immediately.
+    if (nearPayEnabledFromProfile) {
+      NearPayService().generateJwt().then((_) {}).catchError((Object e) {
+        debugPrint('⚠️ NearPay JWT pre-warm failed: $e');
+      });
+    }
+
+    setState(() {
+      _isProfileNearPayEnabled = nearPayEnabledFromProfile;
+      final nameCandidates = _useArabicUi
+          ? <dynamic>[
+              user['fullname_ar'],
+              user['seller_name_ar'],
+              user['name_ar'],
+              user['fullname'],
+              user['seller_name'],
+              user['name'],
+              user['username'],
+              user['fullname_en'],
+              user['seller_name_en'],
+              user['name_en'],
+            ]
+          : <dynamic>[
+              user['fullname_en'],
+              user['seller_name_en'],
+              user['name_en'],
+              user['fullname'],
+              user['seller_name'],
+              user['name'],
+              user['username'],
+              user['fullname_ar'],
+              user['seller_name_ar'],
+              user['name_ar'],
+            ];
+      _userName =
+          _readLocalizedText(nameCandidates) ?? _trUi('المستخدم', 'User');
+
+      final roleCandidates = _useArabicUi
+          ? <dynamic>[
+              user['role_display_ar'],
+              user['role_ar'],
+              user['role_display'],
+              user['role'],
+              user['role_display_en'],
+              user['role_en'],
+            ]
+          : <dynamic>[
+              user['role_display_en'],
+              user['role_en'],
+              user['role_display'],
+              user['role'],
+              user['role_display_ar'],
+              user['role_ar'],
+            ];
+      _userRole =
+          _readLocalizedText(roleCandidates) ?? _trUi('كاشير', 'Cashier');
+
+      if (_userName.isNotEmpty) {
+        final parts = _userName.trim().split(' ');
+        if (parts.length > 1) {
+          _initials = (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+        } else {
+          _initials = _userName
+              .substring(0, _userName.length > 1 ? 2 : 1)
+              .toUpperCase();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    translationService.removeListener(_onLanguageChanged);
+    _displayAppService.removeMealAvailabilityListener(
+      _handleMealAvailabilitySync,
+    );
+    unawaited(_mealAvailabilityService.disposeService());
+    getIt<DisplayAppService>().clearCallbacks();
+    _productsScrollController.removeListener(_onProductsScroll);
+    _productsScrollController.dispose();
+    _orderNotesController.dispose();
+    _carNumberController.dispose();
+    super.dispose();
+  }
+
+  void _onLanguageChanged() {
+    if (mounted) {
+      if (_lastUserData != null) {
+        _updateUserUI(_lastUserData!);
+      }
+      if (_canCallBranchApis()) {
+        _loadData();
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (_canCallBranchApis()) {
+        _loadData();
+      }
+    }
+  }
+
+  Future<void> _handleLogout() async {
+    final authService = AuthService();
+
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(translationService.t('logout_confirm_title')),
+        content: Text(translationService.t('logout_confirm_message')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(translationService.t('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text(translationService.t('logout')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      // Show loading
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) =>
+              const Center(child: CircularProgressIndicator()),
+        );
+      }
+
+      await authService.logout();
+
+      if (mounted) {
+        // Clear navigation and go to login
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (route) => false,
+        );
+      }
+    }
+  }
+
+  Future<void> _handleSwitchBranch() async {
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final authService = getIt<AuthService>();
+      final branches = await authService.getBranches();
+
+      if (mounted) Navigator.pop(context); // Close loading
+
+      if (branches.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(
+            SnackBar(
+                content: Text(translationService.t('no_branches_available'))),
+          );
+        }
+        return;
+      }
+
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => BranchSelectionScreen(branches: branches),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(
+          SnackBar(
+            content: Text(
+              translationService.t('branch_fetch_error', args: {'error': e}),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _switchCategory(String categoryId) async {
+    if (categoryId == _selectedCategory) return;
+
+    // In menu list mode, filter locally - no API call needed
+    if (_isMenuListActive) {
+      // setState مرة واحدة بس بدل اتنين عشان نقلل الـ rebuilds
+      setState(() {
+        _selectedCategory = categoryId;
+        _currentPage = 1;
+        _isLastPage = false;
+        _allProducts = categoryId == 'all'
+            ? _menuListProducts
+            : _menuListProducts
+                .where((p) => p.categoryId == categoryId)
+                .toList();
+      });
+      return;
+    }
+
+    final productService = getIt<ProductService>();
+
+    // عرض الكاش فوراً بدون loading - مع تحديث الكاتيجوري في نفس الـ setState
+    List<Product> cached = [];
+    try {
+      cached = await productService.getCachedProducts(categoryId);
+    } catch (_) {}
+
+    if (!mounted) return;
+    // setState مرة واحدة: تحديث الكاتيجوري + المنتجات المخزنة مع بعض
+    setState(() {
+      _selectedCategory = categoryId;
+      _currentPage = 1;
+      _isLastPage = false;
+      if (cached.isNotEmpty) {
+        _allProducts = cached;
+      }
+    });
+
+    // جلب البيانات الجديدة من الـ API في الخلفية
+    try {
+      final products = await productService.getProducts(
+        categoryId: categoryId,
+        page: 1,
+      );
+      if (mounted) {
+        setState(() {
+          _allProducts = products;
+          _isLastPage = products.length < 100;
+        });
+      }
+    } catch (_) {}
+  }
+
+  // ─── Menu Lists (Price Lists) ────────────────────────────────
+
+  Future<void> _fetchAvailableMenuLists() async {
+    try {
+      final productService = getIt<ProductService>();
+      final lists = await productService.getMenuLists();
+      if (mounted) {
+        setState(() => _availableMenuLists = lists.where((m) => m['is_active'] == true).toList());
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to fetch menu lists: $e');
+    }
+  }
+
+  Future<void> _loadMenuListDetails(int menuId) async {
+    try {
+      final productService = getIt<ProductService>();
+      final data = await productService.getMenuListDetails(menuId);
+      final rawCategories = data['categories'] as List? ?? [];
+
+      // Build lookup from original categories by name (case-insensitive)
+      final originalCatByName = <String, CategoryModel>{};
+      for (final cat in _originalCategories) {
+        if (cat.id != 'all') {
+          originalCatByName[cat.name.trim().toLowerCase()] = cat;
+        }
+      }
+
+      final categories = <CategoryModel>[];
+      final products = <Product>[];
+
+      for (final rawCat in rawCategories) {
+        if (rawCat is! Map) continue;
+        final catName = rawCat['name']?.toString() ?? '';
+        // Match with original category by name to get the real ID
+        final matched = originalCatByName[catName.trim().toLowerCase()];
+        final catId = matched?.id ?? catName.hashCode.toString();
+        categories.add(CategoryModel(id: catId, name: catName));
+
+        final items = rawCat['items'] as List? ?? [];
+        for (final rawItem in items) {
+          if (rawItem is! Map) continue;
+          final meal = rawItem['meal'] is Map ? rawItem['meal'] as Map : {};
+          final deliveryPrice =
+              double.tryParse(rawItem['delivery_price']?.toString() ?? '') ?? 0;
+          final pickupPrice =
+              double.tryParse(rawItem['pickup_price']?.toString() ?? '') ?? 0;
+          final price = _menuListPriceType == 'delivery'
+              ? deliveryPrice
+              : pickupPrice;
+
+          products.add(Product(
+            id: meal['id']?.toString() ?? '',
+            name: meal['name']?.toString() ?? '',
+            nameAr: meal['name']?.toString() ?? '',
+            nameEn: '',
+            price: price,
+            category: catName,
+            categoryId: catId,
+            image: meal['image']?.toString(),
+          ));
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _menuListCategories = [
+            CategoryModel(id: 'all', name: _trUi('الكل', 'All')),
+            ...categories,
+          ];
+          _menuListProducts = products;
+          _categories = _menuListCategories;
+          _allProducts = _menuListProducts;
+          _selectedCategory = 'all';
+        });
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to load menu list: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_trUi('فشل تحميل قائمة الأسعار', 'Failed to load price list')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showMenuListPicker() async {
+    if (_availableMenuLists.isEmpty) {
+      await _fetchAvailableMenuLists();
+    }
+    if (_availableMenuLists.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_trUi('لا توجد قوائم أسعار', 'No price lists available')),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 16),
+            Text(_trUi('اختر قائمة الأسعار', 'Choose Price List'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            // Warning if cart is not empty
+            if (_cart.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFF59E0B)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: Color(0xFFF59E0B), size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _trUi('فضّي السلة أولاً عشان تقدر تبدل المينو', 'Clear cart first to switch menu'),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (_cart.isNotEmpty) const SizedBox(height: 8),
+            // "Main Menu" option to go back
+            ListTile(
+              leading: const Icon(Icons.storefront, color: Color(0xFF10B981)),
+              title: Text(_trUi('المينو الأساسي', 'Main Menu')),
+              selected: !_isMenuListActive,
+              enabled: _cart.isEmpty || !_isMenuListActive,
+              onTap: () {
+                if (_cart.isNotEmpty && _isMenuListActive) return;
+                Navigator.pop(ctx);
+                if (_isMenuListActive) {
+                  setState(() {
+                    _isMenuListActive = false;
+                    _activeMenuListId = null;
+                    _activeMenuListName = '';
+                    _selectedCategory = 'all';
+                  });
+                  _loadData();
+                }
+              },
+            ),
+            const Divider(height: 1),
+            ..._availableMenuLists.map((menu) {
+              final id = menu['id'] as int? ?? 0;
+              final menuType = menu['menu_type'] is Map ? menu['menu_type'] as Map : {};
+              final name = menuType['name_display']?.toString() ?? 'قائمة $id';
+              final count = menu['items_count'] ?? 0;
+              final isCurrentMenu = _isMenuListActive && _activeMenuListId == id;
+              final canSwitch = _cart.isEmpty || isCurrentMenu;
+              return ListTile(
+                leading: Icon(Icons.restaurant_menu,
+                    color: canSwitch ? const Color(0xFFF58220) : Colors.grey),
+                title: Text(name),
+                subtitle: Text('$count ${_trUi('صنف', 'items')}'),
+                selected: isCurrentMenu,
+                enabled: canSwitch,
+                onTap: () {
+                  if (!canSwitch) return;
+                  Navigator.pop(ctx);
+                  setState(() {
+                    if (!_isMenuListActive) {
+                      _originalCategories = List.from(_categories);
+                    }
+                    _isMenuListActive = true;
+                    _activeMenuListId = id;
+                    _activeMenuListName = name;
+                  });
+                  _loadMenuListDetails(id);
+                },
+              );
+            }),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _switchMenuListPriceType(String type) {
+    if (type == _menuListPriceType || _activeMenuListId == null) return;
+    setState(() => _menuListPriceType = type);
+    _loadMenuListDetails(_activeMenuListId!);
+  }
+
+  /// توحيد تطبيق/إزالة الكوبون في مكان واحد
+  void _applyPromoCode(PromoCode? promo) {
+    setState(() {
+      _activePromoCode = promo;
+      // Don't clear manual discount — both should stack
+    });
+  }
+
+  Future<void> _loadPromoCodes() async {
+    try {
+      final promos = await PromoCodeService().getPromoCodes();
+      if (mounted) {
+        setState(() => _cachedPromoCodes = promos);
+      }
+    } catch (e) {
+      print('⚠️ Failed to load promo codes: $e');
+    }
+  }
+
+  Future<void> _loadData({String? categoryId}) async {
+    if (!_canCallBranchApis()) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = translationService.t('session_incomplete_error');
+        });
+      }
+      return;
+    }
+
+    try {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+        _currentPage = 1;
+        _isLastPage = false;
+        if (categoryId != null) {
+          _selectedCategory = categoryId;
+        }
+      });
+
+      final productService = getIt<ProductService>();
+      final branchService = getIt<BranchService>();
+      final orderService = getIt<OrderService>();
+
+      // Load each resource independently so one failure doesn't kill everything
+      List<CategoryModel> categories = [];
+      List<CategoryModel> categoriesWithMeals = [];
+      List<Product> products = [];
+      Map<String, bool> payMethods = {
+        'cash': false,
+        'card': false,
+        'mada': false,
+        'visa': false,
+        'benefit': false,
+        'stc': false,
+        'bank_transfer': false,
+        'wallet': false,
+        'cheque': false,
+        'petty_cash': false,
+        'pay_later': false,
+        'tabby': false,
+        'tamara': false,
+        'keeta': false,
+        'my_fatoorah': false,
+        'jahez': false,
+        'talabat': false,
+      };
+      String? payMethodsNotice;
+      BookingSettings bookingSettings = BookingSettings(
+        typeOptions: [],
+        tableOptions: [],
+      );
+
+      // ── Phase 1: Serve cached data instantly (no network wait) ──────────
+      try {
+        final cachedCats = await productService.getCachedMealCategories();
+        final cachedProds =
+            await productService.getCachedProducts(_selectedCategory);
+        final cachedPay = await branchService.getCachedPayMethods();
+        if (mounted && (cachedCats.isNotEmpty || cachedProds.isNotEmpty)) {
+          var displayCats = List<CategoryModel>.from(cachedCats);
+          if (displayCats.isNotEmpty &&
+              !displayCats.any((c) => c.id == 'all')) {
+            displayCats.insert(
+              0,
+              CategoryModel(
+                id: 'all',
+                name: translationService.t('all'),
+                icon: LucideIcons.filter,
+              ),
+            );
+          }
+          setState(() {
+            if (displayCats.isNotEmpty) {
+              _categories = displayCats;
+              _originalCategories = List.from(displayCats);
+            }
+            if (cachedProds.isNotEmpty) {
+              _allProducts = cachedProds;
+              _isLastPage = cachedProds.length < 100;
+            }
+            if (cachedPay != null) _enabledPayMethods = cachedPay;
+            _isLoading = false;
+          });
+        }
+      } catch (_) {}
+
+      // ── Phase 2: Fetch all fresh data in parallel ─────────────────────
+      // Start every request at the same time — none blocks another
+      final fCategories = productService
+          .getMealCategories()
+          .catchError((_) => <CategoryModel>[]);
+      final fCategoriesWithMeals = productService
+          .getCategoriesWithMeals()
+          .catchError((_) => <CategoryModel>[]);
+      final fProducts =
+          productService.getProducts(categoryId: _selectedCategory, page: 1);
+      final fPayMethods = branchService.getEnabledPayMethods();
+      final fBooking = orderService.getBookingSettings();
+
+      // Tax + devices + promo codes: load in background
+      _loadTaxConfiguration(branchService: branchService).ignore();
+      _loadCachedDevicesThenRefresh().ignore();
+      _loadPromoCodes().ignore();
+      _fetchAvailableMenuLists().ignore();
+
+      // Wait for all main data in parallel
+      await Future.wait([
+        fCategories,
+        fCategoriesWithMeals,
+        fProducts,
+        fPayMethods,
+        fBooking
+      ]);
+
+      categories = await fCategories;
+      categoriesWithMeals = await fCategoriesWithMeals;
+      products = await fProducts;
+      try {
+        payMethods = await fPayMethods;
+        payMethodsNotice = branchService.lastPayMethodsNotice;
+      } catch (_) {}
+
+      try {
+        bookingSettings = await fBooking;
+        print('📋 Type Options from API:');
+        if (bookingSettings.typeOptions.isNotEmpty) {
+          for (var i = 0; i < bookingSettings.typeOptions.length; i++) {
+            final type = bookingSettings.typeOptions[i];
+            print('  ${i + 1}. value="${type.value}", label="${type.label}"');
+          }
+        } else {
+          print('  ⚠️  No type options returned from API');
+        }
+      } catch (_) {}
+
+      _isLastPage = products.length < 100;
+
+      final useArabicUi = _useArabicUi;
+
+      String englishTypeLabel(String value, String fallback) {
+        switch (value.trim().toLowerCase()) {
+          case 'restaurant_pickup':
+            return 'Pickup';
+          case 'restaurant_internal':
+            return 'Dine In';
+          case 'restaurant_delivery':
+            return 'Delivery';
+          case 'restaurant_parking':
+          case 'cars':
+          case 'car':
+            return 'Cars';
+          case 'services':
+          case 'service':
+          case 'restaurant_services':
+            return 'Local';
+          default:
+            return fallback;
+        }
+      }
+
+      String arabicTypeLabel(String value, String fallback) {
+        switch (value.trim().toLowerCase()) {
+          case 'restaurant_pickup':
+            return 'سفري';
+          case 'restaurant_internal':
+            return 'طاولة داخلية';
+          case 'restaurant_delivery':
+            return 'توصيل';
+          case 'restaurant_parking':
+          case 'cars':
+          case 'car':
+            return 'سيارات';
+          case 'services':
+          case 'service':
+          case 'restaurant_services':
+            return 'محلي';
+          default:
+            return fallback;
+        }
+      }
+
+      bool isRestaurantTypeValue(String value) {
+        final normalized = value.trim().toLowerCase();
+        switch (normalized) {
+          case 'restaurant_pickup':
+          case 'pickup':
+          case 'takeaway':
+          case 'take_away':
+          case 'restaurant_takeaway':
+          case 'restaurant_take_away':
+          case 'restaurant_internal':
+          case 'restaurant_table':
+          case 'table':
+          case 'dine_in':
+          case 'dinein':
+          case 'internal':
+          case 'inside':
+          case 'restaurant_delivery':
+          case 'delivery':
+          case 'home_delivery':
+          case 'restaurant_home_delivery':
+          case 'restaurant_parking':
+          case 'parking':
+          case 'drive_through':
+          case 'drive-through':
+          case 'cars':
+          case 'car':
+          case 'services':
+          case 'service':
+          case 'restaurant_services':
+            return true;
+          default:
+            return false;
+        }
+      }
+
+      String resolveOrderTypeLabel(String value, String fallback) {
+        final normalized = _normalizeOrderTypeValue(value);
+        final known = useArabicUi
+            ? arabicTypeLabel(normalized, fallback)
+            : englishTypeLabel(normalized, fallback);
+        if (known.trim().isNotEmpty && known.trim() != fallback.trim()) {
+          return known;
+        }
+        final extracted = _readLocalizedText(fallback)?.trim();
+        if (extracted != null && extracted.isNotEmpty) return extracted;
+        final sanitized = fallback.trim();
+        if (sanitized.isNotEmpty) return sanitized;
+        return useArabicUi ? 'سفري' : 'Pickup';
+      }
+
+      final seenValues = <String>{};
+      final List<Map<String, dynamic>> typeOptions = [];
+      for (final option in bookingSettings.typeOptions) {
+        final rawValue = option.value.toString().trim();
+        if (rawValue.isEmpty || !isRestaurantTypeValue(rawValue)) continue;
+        final normalized = _normalizeOrderTypeValue(rawValue);
+        if (!seenValues.add(normalized)) continue;
+        typeOptions.add({
+          'value': normalized,
+          'label': resolveOrderTypeLabel(rawValue, option.label),
+        });
+      }
+
+      if (typeOptions.isEmpty) {
+        typeOptions.addAll([
+          {'value': 'services', 'label': _trUi('محلي', 'Local')},
+          {'value': 'restaurant_pickup', 'label': _trUi('سفري', 'Pickup')},
+          {'value': 'restaurant_parking', 'label': _trUi('سيارات', 'Cars')},
+          {'value': 'restaurant_delivery', 'label': _trUi('توصيل', 'Delivery')},
+          {
+            'value': 'restaurant_internal',
+            'label': _trUi('طاولة داخلية', 'Dine In'),
+          },
+        ]);
+      }
+
+      print(
+          '✅ Order Type Options Loaded: ${typeOptions.map((e) => e['value']).toList()}');
+      print('✅ Current Branch ID: ${ApiConstants.branchId}');
+
+      categories = _mergeUniqueCategories([
+        ...categories,
+        ...categoriesWithMeals,
+      ]);
+
+      // Ensure 'All' category exists
+      if (!categories.any((c) => c.id == 'all')) {
+        categories.insert(
+          0,
+          CategoryModel(
+            id: 'all',
+            name: translationService.t('all'),
+            icon: LucideIcons.filter,
+          ),
+        );
+      }
+
+      if (mounted) {
+        setState(() {
+          _categories = categories;
+          _originalCategories = List.from(categories);
+          _allProducts = products;
+          _enabledPayMethods = payMethods;
+          _orderTypeOptions = typeOptions;
+
+          // Keep current selection only if it's still valid and non-empty.
+          if (_orderTypeOptions.isNotEmpty) {
+            final selectedNormalized = _selectedOrderType.trim().toLowerCase();
+            final hasValidCurrentSelection = selectedNormalized.isNotEmpty &&
+                selectedNormalized != 'null' &&
+                _orderTypeOptions.any((option) {
+                  final optionValue =
+                      option['value']?.toString().trim().toLowerCase() ?? '';
+                  return optionValue == selectedNormalized;
+                });
+
+            if (!hasValidCurrentSelection) {
+              _selectedOrderType = _preferredNonTableOrderType();
+            }
+          } else {
+            // Fallback if no options from backend
+            if (_selectedOrderType.isEmpty ||
+                _selectedOrderType.toLowerCase() == 'null') {
+              _selectedOrderType = 'services';
+            }
+          }
+
+          _isLoading = false;
+        });
+        final notice = payMethodsNotice?.trim() ?? '';
+        if (notice.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(notice),
+              backgroundColor: const Color(0xFF0F766E),
+              action: SnackBarAction(
+                label: 'إعادة المحاولة',
+                textColor: Colors.white,
+                onPressed: _loadData,
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Check if it's a 401 Unauthorized error
+      if (e is UnauthorizedException) {
+        print('User not authenticated (401), redirecting to login...');
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  List<CategoryModel> _mergeUniqueCategories(Iterable<dynamic> source) {
+    final byId = <String, CategoryModel>{};
+    final byName = <String, CategoryModel>{};
+
+    for (final item in source) {
+      CategoryModel? category;
+      if (item is CategoryModel) {
+        category = item;
+      } else if (item is Map<String, dynamic>) {
+        try {
+          category = CategoryModel.fromJson(item);
+        } catch (_) {
+          category = null;
+        }
+      } else if (item is Map) {
+        try {
+          category = CategoryModel.fromJson(
+            item.map((key, value) => MapEntry(key.toString(), value)),
+          );
+        } catch (_) {
+          category = null;
+        }
+      }
+
+      if (category == null) continue;
+
+      final id = category.id.trim();
+      final name = category.name.trim().toLowerCase();
+      if (id.isNotEmpty && id != 'all') {
+        byId.putIfAbsent(id, () => category!);
+      } else if (name.isNotEmpty && name != translationService.t('all')) {
+        byName.putIfAbsent(name, () => category!);
+      }
+    }
+
+    return [...byId.values, ...byName.values];
+  }
+
+  void _onProductsScroll() {
+    if (_isLastPage || _isLoadingMore) return;
+    final pos = _productsScrollController.position;
+    if (pos.pixels >= pos.maxScrollExtent - 200) {
+      _loadMoreProducts();
+    }
+  }
+
+  Future<void> _loadMoreProducts() async {
+    if (_isLoadingMore || _isLastPage) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final productService = getIt<ProductService>();
+      final nextPage = _currentPage + 1;
+      final products = await productService.getProducts(
+        categoryId: _selectedCategory,
+        page: nextPage,
+      );
+
+      if (mounted) {
+        setState(() {
+          _allProducts.addAll(products);
+          _currentPage = nextPage;
+          _isLoadingMore = false;
+          _isLastPage = products.length < 100;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading more products: $e')),
+        );
+      }
+    }
+  }
+
+  /// Strips Arabic diacritics (tashkeel) and normalises common letter variants
+  /// so that search is diacritic-insensitive and handles alef/hamza/ta marbuta.
+  static String _normalizeArabic(String s) {
+    // Remove diacritics (harakat + tatweel)
+    var r = s.replaceAll(RegExp(r'[\u064B-\u065F\u0670\u0640]'), '');
+    // Normalize alef variants → plain alef
+    r = r.replaceAll(RegExp(r'[إأآا]'), 'ا');
+    // Normalize ta marbuta / ha
+    r = r.replaceAll('ة', 'ه');
+    // Normalize ya variants
+    r = r.replaceAll('ى', 'ي');
+    return r.toLowerCase();
+  }
+
+  List<Product> get _filteredProducts {
+    final raw = _searchQuery.trim();
+    if (raw.isEmpty) return _allProducts;
+
+    final normalized = _normalizeArabic(raw);
+    final words =
+        normalized.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+
+    // Score: higher = better match
+    int score(Product p) {
+      final name = _normalizeArabic(p.name);
+      // Exact match
+      if (name == normalized) return 4;
+      // Starts with the full query
+      if (name.startsWith(normalized)) return 3;
+      // All words appear in the name
+      if (words.every((w) => name.contains(w))) return 2;
+      // Any word appears in the name
+      if (words.any((w) => name.contains(w))) return 1;
+      return 0;
+    }
+
+    final results = <({Product product, int score})>[];
+    for (final p in _allProducts) {
+      final s = score(p);
+      if (s > 0) results.add((product: p, score: s));
+    }
+    results.sort((a, b) => b.score.compareTo(a.score));
+    return results.map((r) => r.product).toList();
+  }
+
+  double _orderDiscount = 0.0;
+  bool _isOrderFree = false;
+  String? _pendingPaymentTypeAfterTableSelection;
+  List<Map<String, dynamic>>? _pendingPaymentPaysAfterTableSelection;
+  bool _pendingPaymentShowLoadingAfterTableSelection = true;
+  bool _pendingPaymentShowSuccessAfterTableSelection = true;
+  bool _pendingPaymentClearCartAfterTableSelection = false;
+  bool _pendingPaymentNearPayAfterTableSelection = false;
+
+  bool _isCarOrderType([String? type]) {
+    final selected =
+        _normalizeOrderTypeValue(type ?? _selectedOrderType).toLowerCase();
+    if (selected == 'cars' ||
+        selected == 'car' ||
+        selected == 'drive_through' ||
+        selected == 'drive-through') {
+      return true;
+    }
+    final matched = _orderTypeOptions.cast<Map<String, dynamic>?>().firstWhere(
+          (t) => t?['value']?.toString() == (type ?? _selectedOrderType),
+          orElse: () => null,
+        );
+    final label = matched?['label']?.toString().toLowerCase() ?? '';
+    return label.contains('سيار') || label.contains('car');
+  }
+
+  bool _isTableOrderType([String? type]) {
+    final selected =
+        _normalizeOrderTypeValue(type ?? _selectedOrderType).toLowerCase();
+    if (selected == 'restaurant_internal' ||
+        selected == 'restaurant_table' ||
+        selected == 'table') {
+      return true;
+    }
+    final matched = _orderTypeOptions.cast<Map<String, dynamic>?>().firstWhere(
+          (t) => t?['value']?.toString() == (type ?? _selectedOrderType),
+          orElse: () => null,
+        );
+    final label = matched?['label']?.toString().toLowerCase() ?? '';
+    return label.contains('طاول') || label.contains('table');
+  }
+
+  String _preferredTableOrderType() {
+    const preferredValues = <String>[
+      'restaurant_internal',
+      'restaurant_table',
+      'table',
+    ];
+
+    for (final value in preferredValues) {
+      final exists = _orderTypeOptions.any(
+        (option) => option['value']?.toString() == value,
+      );
+      if (exists) return value;
+    }
+
+    for (final option in _orderTypeOptions) {
+      final label = option['label']?.toString().toLowerCase() ?? '';
+      if (label.contains('طاول') || label.contains('table')) {
+        final value = option['value']?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+
+    // Fallback used when booking settings options are missing from backend.
+    return 'restaurant_internal';
+  }
+
+  String _preferredNonTableOrderType() {
+    const preferredValues = <String>[
+      'services',
+      'restaurant_pickup',
+      'restaurant_delivery',
+      'restaurant_parking',
+    ];
+
+    for (final value in preferredValues) {
+      final exists = _orderTypeOptions.any(
+        (option) => option['value']?.toString() == value,
+      );
+      if (exists) return value;
+    }
+
+    for (final option in _orderTypeOptions) {
+      final value = option['value']?.toString().trim() ?? '';
+      final label = option['label']?.toString().toLowerCase() ?? '';
+      if (value.isEmpty) continue;
+      if (_isTableOrderType(value)) continue;
+      if (label.contains('طاول') || label.contains('table')) continue;
+      return value;
+    }
+
+    // Fallback used when booking settings options are missing from backend.
+    return 'services';
+  }
+
+  String _normalizeOrderTypeValue(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'null') {
+      return 'restaurant_pickup';
+    }
+    switch (normalized) {
+      case 'pickup':
+      case 'takeaway':
+      case 'take_away':
+      case 'restaurant_takeaway':
+      case 'restaurant_take_away':
+        return 'restaurant_pickup';
+      case 'dine_in':
+      case 'dinein':
+      case 'internal':
+      case 'inside':
+      case 'restaurant_table':
+      case 'table':
+        return 'restaurant_internal';
+      case 'delivery':
+      case 'home_delivery':
+      case 'restaurant_home_delivery':
+        return 'restaurant_delivery';
+      case 'restaurant_parking':
+      case 'parking':
+      case 'drive_through':
+      case 'drive-through':
+      case 'cars':
+      case 'car':
+        return 'restaurant_parking';
+      case 'services':
+      case 'service':
+      case 'restaurant_services':
+        return 'services';
+      default:
+        return normalized;
+    }
+  }
+
+  String _resolveOrderTypeForBooking(TableItem? selectedTable) {
+    // Use the selected type as-is – the dropdown already holds the exact
+    // value the backend expects.  Do NOT run _normalizeOrderTypeValue here
+    // because it can map e.g. 'cars' → 'restaurant_parking' which the API
+    // rejects with 422.
+    final selectedType = _selectedOrderType.trim();
+    if (selectedTable == null) {
+      if (_isTableOrderType(selectedType)) return _preferredNonTableOrderType();
+      return selectedType;
+    }
+    if (_isTableOrderType(selectedType)) return selectedType;
+    return _preferredTableOrderType();
+  }
+
+  double get _grossOrderTotal {
+    if (_isOrderFree) return 0.0;
+    final subtotal = _cart.fold<double>(
+      0,
+      (sum, item) => sum + item.totalPrice,
+    );
+    final tax = _taxAmountFromSubtotal(subtotal);
+    return subtotal + tax;
+  }
+
+  void _queuePendingPaymentAfterTableSelection({
+    required String type,
+    List<Map<String, dynamic>>? pays,
+    required bool showLoadingOverlay,
+    required bool showSuccessDialog,
+    required bool clearCartOnSuccess,
+    required bool isNearPayCardFlow,
+  }) {
+    print(
+      '🧾 [PAY] queue pending type=$type showLoading=$showLoadingOverlay showSuccess=$showSuccessDialog clearCart=$clearCartOnSuccess nearPay=$isNearPayCardFlow',
+    );
+    _pendingPaymentTypeAfterTableSelection = type;
+    _pendingPaymentPaysAfterTableSelection = pays == null
+        ? null
+        : pays.map((p) => Map<String, dynamic>.from(p)).toList(growable: false);
+    _pendingPaymentShowLoadingAfterTableSelection = showLoadingOverlay;
+    _pendingPaymentShowSuccessAfterTableSelection = showSuccessDialog;
+    _pendingPaymentClearCartAfterTableSelection = clearCartOnSuccess;
+    _pendingPaymentNearPayAfterTableSelection = isNearPayCardFlow;
+  }
+
+  void _clearPendingPaymentAfterTableSelection() {
+    if (_pendingPaymentTypeAfterTableSelection != null) {
+      print(
+        '🧾 [PAY] clear pending type=$_pendingPaymentTypeAfterTableSelection',
+      );
+    }
+    _pendingPaymentTypeAfterTableSelection = null;
+    _pendingPaymentPaysAfterTableSelection = null;
+    _pendingPaymentShowLoadingAfterTableSelection = true;
+    _pendingPaymentShowSuccessAfterTableSelection = true;
+    _pendingPaymentClearCartAfterTableSelection = false;
+    _pendingPaymentNearPayAfterTableSelection = false;
+  }
+
+  double _resolveEffectiveDiscountAmount(double grossTotal) {
+    if (grossTotal <= 0) return 0.0;
+
+    // Free order = 100% discount
+    if (_isOrderFree) return grossTotal;
+
+    // Start with manual discount (خصم إضافي)
+    var discount = _orderDiscount;
+
+    // ADD promo code discount on top (not replace)
+    if (_activePromoCode != null) {
+      double promoDiscount;
+      if (_activePromoCode!.type == DiscountType.percentage) {
+        promoDiscount = grossTotal * (_activePromoCode!.discount / 100);
+      } else {
+        promoDiscount = _activePromoCode!.discount;
+      }
+      if (_activePromoCode!.maxDiscount != null &&
+          promoDiscount > _activePromoCode!.maxDiscount!) {
+        promoDiscount = _activePromoCode!.maxDiscount!;
+      }
+      discount += promoDiscount;
+    }
+    return discount.clamp(0.0, grossTotal);
+  }
+
+  double get _totalAmount {
+    if (_isOrderFree) return 0.0;
+    final grossTotal = _grossOrderTotal;
+    final discount = _resolveEffectiveDiscountAmount(grossTotal);
+    return (grossTotal - discount).clamp(0.0, double.infinity);
+  }
+
+  void _onProductTap(Product product) async {
+    if (await _handleDisabledMealTap(product)) {
+      return;
+    }
+    if (!mounted) return;
+
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final productService = getIt<ProductService>();
+
+      // Fetch meal addons from the specific endpoint
+      final addons = await productService.getMealAddons(product.id);
+
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+
+        // Create a copy of the product with the newly fetched addons
+        final activeProduct = Product(
+          id: product.id,
+          name: product.name,
+          price: product.price,
+          category: product.category,
+          isActive: product.isActive,
+          image: product.image,
+          extras: addons.isNotEmpty ? addons : product.extras,
+        );
+
+        // Open customization only if this meal has addons/options from API
+        if (activeProduct.extras.isEmpty) {
+          _addToCartWithExtras(activeProduct, const [], 1.0, '');
+          return;
+        }
+
+        showDialog(
+          context: context,
+          builder: (context) => ProductCustomizationDialog(
+            product: activeProduct,
+            taxRate: _isTaxEnabled ? _taxRate : 0.0,
+            onConfirm: (p, extras, qty, notes) {
+              _addToCartWithExtras(p, extras, qty, notes);
+            },
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        // Fallback: only open customization if meal already has extras locally.
+        if (product.extras.isNotEmpty) {
+          showDialog(
+            context: context,
+            builder: (context) => ProductCustomizationDialog(
+              product: product,
+              taxRate: _isTaxEnabled ? _taxRate : 0.0,
+              onConfirm: (p, extras, qty, notes) {
+                _addToCartWithExtras(p, extras, qty, notes);
+              },
+            ),
+          );
+        } else {
+          _addToCartWithExtras(product, const [], 1.0, '');
+        }
+      }
+    }
+  }
+
+  void _addToCartWithExtras(
+    Product product,
+    List<Extra> extras,
+    double quantity,
+    String notes,
+  ) {
+    if (_isKdsEnabled && _mealAvailabilityService.isMealDisabled(product.id)) {
+      unawaited(_handleDisabledMealTap(product));
+      return;
+    }
+
+    if (getIt.isRegistered<CashierSoundService>()) {
+      getIt<CashierSoundService>().playButtonSound();
+    }
+    HapticFeedback.lightImpact();
+    setState(() {
+      _cart.add(
+        CartItem(
+          cartId: DateTime.now().millisecondsSinceEpoch.toString(),
+          product: product,
+          quantity: quantity,
+          selectedExtras: extras,
+          notes: notes,
+        ),
+      );
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  void _handleMealAvailabilitySync(Map<String, dynamic> payload) {
+    if (!_isKdsEnabled) return;
+
+    final mealName = payload['meal_name']?.toString().trim();
+    final isDisabled = payload['is_disabled'] == true;
+    _mealAvailabilityService.applyKdsRealtimeUpdate(payload);
+
+    if (mounted && mealName != null && mealName.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isDisabled
+                ? _trUi(
+                    'الوجبة "$mealName" أصبحت: نفذت',
+                    'Meal "$mealName" is now sold out',
+                  )
+                : _trUi(
+                    'تمت إعادة تفعيل الوجبة "$mealName"',
+                    'Meal "$mealName" is available again',
+                  ),
+          ),
+          backgroundColor:
+              isDisabled ? const Color(0xFFB91C1C) : const Color(0xFF166534),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<bool> _handleDisabledMealTap(Product product) async {
+    if (!_isKdsEnabled) return false;
+
+    if (!_mealAvailabilityService.isMealDisabled(product.id)) {
+      return false;
+    }
+
+    HapticFeedback.heavyImpact();
+    final alternatives = _mealAvailabilityService.suggestAlternatives(
+      product,
+      _filteredProducts,
+    );
+
+    if (!mounted) return true;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            SizedBox(width: 8),
+            Text('نفذت الوجبة'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('الوجبة "${product.name}" غير متاحة حالياً.'),
+            if (alternatives.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'بدائل مقترحة:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: alternatives
+                    .map(
+                      (item) => ActionChip(
+                        label: Text(item.name),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _onProductTap(item);
+                        },
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إغلاق'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              await _mealAvailabilityService.refreshFromApi(force: true);
+              if (!context.mounted) return;
+              Navigator.pop(context);
+              if (!_mealAvailabilityService.isMealDisabled(product.id)) {
+                _onProductTap(product);
+              }
+            },
+            icon: const Icon(Icons.refresh),
+            label: const Text('إعادة المحاولة'),
+          ),
+        ],
+      ),
+    );
+
+    return true;
+  }
+
+  void _updateQuantity(String cartId, double delta) {
+    HapticFeedback.selectionClick();
+    final index = _cart.indexWhere((item) => item.cartId == cartId);
+    if (_isKdsEnabled &&
+        delta > 0 &&
+        index >= 0 &&
+        _mealAvailabilityService.isMealDisabled(_cart[index].product.id)) {
+      unawaited(_handleDisabledMealTap(_cart[index].product));
+      return;
+    }
+
+    setState(() {
+      if (index >= 0) {
+        _cart[index].quantity += delta;
+        if (_cart[index].quantity <= 0) _cart[index].quantity = 1;
+      }
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  void _removeFromCart(String cartId) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _cart.removeWhere((item) => item.cartId == cartId);
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  void _clearCart() {
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _cart.clear();
+      _orderDiscount = 0.0;
+      _activePromoCode = null;
+      _isOrderFree = false;
+      _carNumberController.clear();
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  Map<String, dynamic> _buildTableReservationPayload(
+    TableItem table, {
+    required bool reserved,
+  }) {
+    return <String, dynamic>{
+      'name': table.number,
+      'seats': table.seats,
+      'status': reserved ? 'occupied' : 'available',
+      'occupied_minutes': reserved ? 1 : 0,
+      'waiter_name': reserved ? 'محجوز' : null,
+    };
+  }
+
+  Future<bool> _syncTableReservationForOrder(
+    TableItem table, {
+    required bool reserved,
+  }) async {
+    try {
+      await _tableService.updateTable(
+        table.id,
+        _buildTableReservationPayload(table, reserved: reserved),
+      );
+      print(
+        '✅ table reservation synced table=${table.id} reserved=$reserved',
+      );
+      return true;
+    } catch (e) {
+      try {
+        final latest = await _tableService.getTableDetails(table.id);
+        final payloadSource = latest ?? table;
+        await _tableService.updateTable(
+          table.id,
+          _buildTableReservationPayload(payloadSource, reserved: reserved),
+        );
+        print(
+          '✅ table reservation synced on retry table=${table.id} reserved=$reserved',
+        );
+        return true;
+      } catch (retryError) {
+        print(
+          '⚠️ table reservation sync failed table=${table.id} reserved=$reserved error=$e retry=$retryError',
+        );
+        return false;
+      }
+    }
+  }
+
+  void _syncDisplayCartFromMain() {
+    if (!_isCdsEnabled) return;
+
+    final displayService = getIt<DisplayAppService>();
+    if (!displayService.isConnected) {
+      return;
+    }
+    final grossTotal = _grossOrderTotal;
+    final effectiveDiscount = _resolveEffectiveDiscountAmount(grossTotal);
+    final promoCodeValue = _activePromoCode?.code.trim();
+    final promoCodeId = _activePromoCode?.id;
+    final promoDiscountType = _activePromoCode == null
+        ? null
+        : (_activePromoCode!.type == DiscountType.percentage
+            ? 'percentage'
+            : 'fixed');
+    final promoDiscountTypeForDisplay =
+        promoDiscountType == 'fixed' ? 'amount' : promoDiscountType;
+    final cashFloatSnapshot = _buildCashFloatSnapshot();
+    final subtotal =
+        _cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
+    final tax = _taxAmountFromSubtotal(subtotal);
+    final taxPercentage = double.parse((_taxRate * 100).toStringAsFixed(4));
+    final beforeDiscountTotal = subtotal + tax;
+    final discountAmountForDisplay = _isOrderFree
+        ? beforeDiscountTotal
+        : effectiveDiscount.clamp(0.0, beforeDiscountTotal);
+    final discountedTotalForDisplay = _isOrderFree
+        ? 0.0
+        : (beforeDiscountTotal - discountAmountForDisplay)
+            .clamp(0.0, double.infinity);
+    final effectiveDiscountPercentForDisplay = beforeDiscountTotal <= 0
+        ? 0.0
+        : ((discountAmountForDisplay / beforeDiscountTotal) * 100)
+            .clamp(0.0, 100.0)
+            .toDouble();
+    final orderDiscountTypeForDisplay = _isOrderFree
+        ? 'percentage'
+        : (promoDiscountTypeForDisplay ??
+            (_orderDiscount > 0 ? 'amount' : null));
+    final orderDiscountValueForDisplay = _isOrderFree
+        ? 100.0
+        : (_activePromoCode != null
+            ? _sanitizeDiscountInput(_activePromoCode!.discount)
+            : (_orderDiscount > 0
+                ? _sanitizeDiscountInput(_orderDiscount)
+                : 0.0));
+    final discountSourceForDisplay = _isOrderFree
+        ? 'free'
+        : (_activePromoCode != null
+            ? 'promo'
+            : (_orderDiscount > 0 ? 'manual' : 'none'));
+    final promoPayload = promoCodeValue == null || promoCodeValue.isEmpty
+        ? null
+        : <String, dynamic>{
+            if (promoCodeId != null) 'id': promoCodeId,
+            'code': promoCodeValue,
+            if (promoDiscountTypeForDisplay != null)
+              'discount_type': promoDiscountTypeForDisplay,
+            'discount_amount': discountAmountForDisplay,
+          };
+    final payload = {
+      'items': _cart
+          .map((item) => {
+                'cartId': item.cartId,
+                'meal_id': item.product.id,
+                'productId': item.product.id,
+                'name': item.product.name,
+                'category_name': item.product.category,
+                'quantity': item.quantity,
+                'price': item.product.price,
+                'extras': item.selectedExtras
+                    .map((e) => {
+                          'id': e.id,
+                          'name': e.name,
+                          'price': e.price,
+                        })
+                    .toList(),
+                'totalPrice': item.totalPrice,
+                'notes': item.notes,
+              })
+          .toList(),
+      'subtotal': subtotal,
+      'tax': tax,
+      'tax_rate': _taxRate,
+      'tax_percentage': taxPercentage,
+      'has_tax': _isTaxEnabled,
+      'total': discountedTotalForDisplay,
+      'original_total': beforeDiscountTotal,
+      'discount_amount': discountAmountForDisplay,
+      'discounted_total': discountedTotalForDisplay,
+      'is_order_free': _isOrderFree,
+      'isOrderFree': _isOrderFree,
+      if (orderDiscountTypeForDisplay != null)
+        'order_discount_type': orderDiscountTypeForDisplay,
+      'order_discount_value': orderDiscountValueForDisplay,
+      'order_discount_percent': effectiveDiscountPercentForDisplay,
+      'discount_source': discountSourceForDisplay,
+      if (promoCodeValue != null && promoCodeValue.isNotEmpty)
+        'promocodeValue': promoCodeValue,
+      if (promoCodeId != null) 'promocode_id': promoCodeId,
+      if (promoDiscountTypeForDisplay != null)
+        'discount_type': promoDiscountTypeForDisplay,
+      if (promoPayload != null) 'promo': promoPayload,
+      'cash_float': cashFloatSnapshot,
+      'orderNumber': '',
+      'orderType': _selectedOrderType,
+      'note': _orderNotesController.text.trim().isEmpty
+          ? null
+          : _orderNotesController.text.trim(),
+    };
+    final fingerprint = jsonEncode(payload);
+    if (fingerprint == _lastMainCartFingerprint) {
+      return;
+    }
+    _lastMainCartFingerprint = fingerprint;
+    displayService.updateCartDisplay(
+      items: _cart.map((item) {
+        final basePrice = item.product.price;
+        final extrasPrice =
+            item.selectedExtras.fold<double>(0.0, (sum, e) => sum + e.price);
+        final originalUnitPrice = basePrice + extrasPrice;
+        final originalTotal = originalUnitPrice * item.quantity;
+
+        return {
+          'cartId': item.cartId,
+          'meal_id': item.product.id,
+          'productId': item.product.id,
+          'name': item.product.name,
+          'category_name': item.product.category,
+          'quantity': item.quantity,
+          'price': item.product.price,
+          'extras': item.selectedExtras
+              .map((e) => {
+                    'id': e.id,
+                    'name': e.name,
+                    'price': e.price,
+                  })
+              .toList(),
+          'totalPrice': item.totalPrice,
+          'notes': item.notes,
+          // ✅ Discount info for CDS
+          'original_unit_price': originalUnitPrice,
+          'original_total': originalTotal,
+          'final_total': item.totalPrice,
+          'discount': item.discount,
+          'discount_type': item.discountType == DiscountType.percentage
+              ? 'percentage'
+              : 'amount',
+          'discountType': item.discountType == DiscountType.percentage
+              ? 'percentage'
+              : 'amount',
+          'is_free': item.isFree,
+          'isFree': item.isFree,
+        };
+      }).toList(),
+      subtotal: subtotal,
+      tax: tax,
+      taxRate: _taxRate,
+      hasTax: _isTaxEnabled,
+      total: discountedTotalForDisplay,
+      promoCode: promoCodeValue,
+      promoCodeId: promoCodeId,
+      promoDiscountType: promoDiscountTypeForDisplay,
+      discountAmount: discountAmountForDisplay,
+      originalTotal: beforeDiscountTotal,
+      discountedTotal: discountedTotalForDisplay,
+      cashFloatSnapshot: cashFloatSnapshot,
+      orderNumber: '',
+      orderType: _selectedOrderType,
+      note: _orderNotesController.text.trim().isEmpty
+          ? null
+          : _orderNotesController.text.trim(),
+      isOrderFree: _isOrderFree,
+      orderDiscountType: orderDiscountTypeForDisplay,
+      orderDiscountValue: orderDiscountValueForDisplay,
+      orderDiscountPercent: effectiveDiscountPercentForDisplay,
+      discountSource: discountSourceForDisplay,
+    );
+  }
+
+  double _sanitizeDiscountInput(double value) {
+    if (!value.isFinite) return 0.0;
+    return value < 0 ? 0.0 : value;
+  }
+
+  double _clampCartItemDiscount(CartItem item, double raw, DiscountType type) {
+    final sanitized = _sanitizeDiscountInput(raw);
+    if (type == DiscountType.percentage) {
+      return sanitized.clamp(0.0, 100.0).toDouble();
+    }
+    final extrasTotal =
+        item.selectedExtras.fold<double>(0.0, (sum, e) => sum + e.price);
+    final baseTotal = (item.product.price + extrasTotal) * item.quantity;
+    return sanitized.clamp(0.0, baseTotal).toDouble();
+  }
+
+  void _setOrderDiscount(double rawDiscount) {
+    final sanitized = _sanitizeDiscountInput(rawDiscount);
+    final subtotal =
+        _cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
+    final gross = subtotal + _taxAmountFromSubtotal(subtotal);
+    final clamped = sanitized.clamp(0.0, gross).toDouble();
+    setState(() {
+      _orderDiscount = clamped;
+      if (_isOrderFree) {
+        _isOrderFree = false;
+      }
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  void _toggleOrderFreeState() {
+    setState(() {
+      _isOrderFree = !_isOrderFree;
+      if (_isOrderFree) {
+        _orderDiscount = 0.0;
+      }
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  Future<void> _handlePay() async {
+    if (_cart.isEmpty) return;
+
+    print(
+      '🧾 [PAY] open_tender start type=$_selectedOrderType table=${_selectedTable?.id ?? '-'} lastTable=${_lastSelectedTable?.id ?? '-'} cart=${_cart.length}',
+    );
+
+    final resolvedTableSelection = _selectedTable ?? _lastSelectedTable;
+    if (_selectedTable == null && resolvedTableSelection != null && mounted) {
+      setState(() => _selectedTable = resolvedTableSelection);
+    }
+    final selectedTableForValidation = resolvedTableSelection;
+    final requiresTableForBookingValidation =
+        _isTableOrderType(_selectedOrderType);
+    if (requiresTableForBookingValidation &&
+        (selectedTableForValidation == null ||
+            selectedTableForValidation.id.trim().isEmpty)) {
+      print('🧾 [PAY] missing table -> queue pending & go tables');
+      _queuePendingPaymentAfterTableSelection(
+        type: 'open_tender',
+        showLoadingOverlay: true,
+        showSuccessDialog: true,
+        clearCartOnSuccess: false,
+        isNearPayCardFlow: false,
+      );
+      setState(() {
+        // Clear any empty-id ghost table so the next selection starts fresh.
+        if (_selectedTable != null && _selectedTable!.id.trim().isEmpty) {
+          _selectedTable = null;
+          _lastSelectedTable = null;
+        }
+        _activeTab = 'tables';
+      });
+      return;
+    }
+
+    if (!_hasAnyEnabledPayMethod()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'لا توجد طرق دفع مفعّلة لهذا الفرع. فعّل طريقة دفع من لوحة التحكم ثم أعد المحاولة.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (_selectedTable != null) {
+      _lastSelectedTable = _selectedTable;
+    }
+    print(
+      '🧾 [PAY] open_tender ready table=${_selectedTable?.id ?? '-'} lastTable=${_lastSelectedTable?.id ?? '-'}',
+    );
+
+    final displayService = getIt<DisplayAppService>();
+    final tenderEnabledMethods = _effectiveEnabledPayMethodsForTender();
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.6),
+      builder: (context) => PaymentTenderDialog(
+        total: _totalAmount,
+        taxRate: _taxRate,
+        enabledMethods: tenderEnabledMethods,
+        promocodes: _cachedPromoCodes,
+        appliedPromoCode: _activePromoCode,
+        onPromoCodeChanged: _applyPromoCode,
+        onConfirm: () async {
+          Navigator.pop(context); // Close tender
+          print('🧾 [PAY] confirm (single) -> processPayment');
+          await _processPayment(type: 'payment');
+        },
+        onConfirmWithPays: (pays) async {
+          Navigator.pop(context); // Close tender
+          print('🧾 [PAY] confirm (pays=${pays.length}) -> processPayment');
+          final normalizedPays = _buildNormalizedPays(pays);
+          final cardAmount = normalizedPays
+              .where((pay) =>
+                  _normalizePayMethod(pay['pay_method']?.toString()) == 'card')
+              .fold<double>(
+                0.0,
+                (sum, pay) =>
+                    sum +
+                    ((pay['amount'] as num?)?.toDouble() ??
+                        double.tryParse(pay['amount']?.toString() ?? '') ??
+                        0.0),
+              );
+
+          if (cardAmount > 0 && _isProfileNearPayEnabled) {
+            if (!_isCdsEnabled) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'الدفع بالبطاقة يتطلب تفعيل CDS لأن NearPay يعمل عبر شاشة العميل فقط',
+                  ),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              return;
+            }
+            final cdsReady = await _ensureCdsAutoConnected();
+            if (!cdsReady) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'تعذر الاتصال التلقائي بـCDS. تأكد أن شاشة العرض مفتوحة وعلى نفس الشبكة',
+                  ),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              return;
+            }
+            if (!displayService.supportsNearPay) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'تم الاتصال بالشاشة لكن NearPay غير متاح حالياً. حاول إعادة المحاولة',
+                  ),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              return;
+            }
+            await _processNearPayPayment(
+              paysForInvoice: normalizedPays,
+              nearPayAmount: cardAmount,
+            );
+            return;
+          }
+
+          await _processPayment(type: 'payment', pays: normalizedPays);
+        },
+      ),
+    );
+  }
+
+  /// Process NearPay payment through Display App
+  Future<void> _processNearPayPayment({
+    required List<Map<String, dynamic>> paysForInvoice,
+    required double nearPayAmount,
+  }) async {
+    if (!_isCdsEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'NearPay متوقف لأن CDS غير مفعّل من الإعدادات',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    final displayService = getIt<DisplayAppService>();
+    final paymentAmount = nearPayAmount <= 0 ? _totalAmount : nearPayAmount;
+    const orderNumber = '';
+    displayService.clearCallbacks();
+
+    // Status notifier for dialog updates
+    final ValueNotifier<String> statusNotifier = ValueNotifier<String>(
+      'في انتظار الدفع...',
+    );
+    bool isWaitingDialogOpen = true;
+
+    // Show waiting dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => ValueListenableBuilder<String>(
+        valueListenable: statusNotifier,
+        builder: (context, status, child) {
+          return AlertDialog(
+            title: const Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Expanded(
+                  child: Text('جاري الدفع...', style: TextStyle(fontSize: 18)),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  status,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'المبلغ: ${paymentAmount.toStringAsFixed(2)} ${ApiConstants.currency}',
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'يرجى إكمال الدفع على شاشة العميل',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  displayService.cancelPayment();
+                  if (isWaitingDialogOpen) {
+                    Navigator.pop(context);
+                    isWaitingDialogOpen = false;
+                  }
+                },
+                child: const Text('إلغاء', style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    // Set up payment callbacks
+    displayService.setCallbacks(
+      onPaymentStatus: (status, message) {
+        final normalizedStatus = status.toLowerCase().trim();
+        final normalizedMessage = message?.trim() ?? '';
+
+        if (normalizedMessage.isNotEmpty) {
+          if (normalizedMessage.toUpperCase() == 'LOADING') {
+            statusNotifier.value = 'جاري معالجة الدفع...';
+          } else {
+            statusNotifier.value = normalizedMessage;
+          }
+        } else {
+          // Fallback translations if no message
+          switch (normalizedStatus) {
+            case 'waiting_card':
+            case 'waitingcard':
+              statusNotifier.value = 'الرجاء تقريب البطاقة...';
+              break;
+            case 'reading_card':
+            case 'readingcard':
+              statusNotifier.value = 'جاري قراءة البطاقة...';
+              break;
+            case 'entering_pin':
+            case 'enteringpin':
+              statusNotifier.value = 'العميل يُدخل الرقم السري...';
+              break;
+            case 'processing':
+              statusNotifier.value = 'جاري معالجة العملية...';
+              break;
+            case 'success':
+              statusNotifier.value = 'تم الدفع بنجاح';
+              break;
+            default:
+              statusNotifier.value = 'جاري الدفع...';
+          }
+        }
+      },
+      onPaymentSuccess: (transactionData) async {
+        displayService.clearCallbacks();
+        if (isWaitingDialogOpen) {
+          Navigator.pop(context); // Close waiting dialog
+          isWaitingDialogOpen = false;
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('تم الدفع بنجاح'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+
+        // Process the order
+        await _processPayment(
+          type: 'payment',
+          pays: paysForInvoice,
+          showLoadingOverlay: false,
+          showSuccessDialog: false,
+          clearCartOnSuccess: true,
+          isNearPayCardFlow: true,
+        );
+      },
+      onPaymentFailed: (errorMessage) {
+        displayService.clearCallbacks();
+        if (isWaitingDialogOpen) {
+          Navigator.pop(context); // Close waiting dialog
+          isWaitingDialogOpen = false;
+        }
+
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.error, color: Colors.red, size: 32),
+                SizedBox(width: 8),
+                Text('فشل الدفع'),
+              ],
+            ),
+            content: Text(errorMessage),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('حسناً'),
+              ),
+            ],
+          ),
+        );
+      },
+      onPaymentCancelled: () {
+        displayService.clearCallbacks();
+        if (isWaitingDialogOpen) {
+          Navigator.pop(context); // Close waiting dialog
+          isWaitingDialogOpen = false;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم إلغاء الدفع'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      },
+    );
+
+    // Start payment on Display App
+    displayService.startPayment(
+      amount: paymentAmount,
+      orderNumber: orderNumber,
+      customerReference: _selectedCustomer?.id.toString(),
+    );
+  }
+
+  Future<void> _handlePayLater() async {
+    if (_cart.isEmpty) return;
+    // Pay Later: create booking only, no invoice, show success dialog
+    await _processPayment(
+      type: 'later',
+      showSuccessDialog: true,
+      clearCartOnSuccess: true,
+    );
+  }
+
+  String _normalizePayMethod(String? method) {
+    final rawInput = (method ?? '').trim();
+    if (rawInput.isEmpty) return 'cash';
+    final raw = rawInput.toLowerCase();
+    final compact = raw.replaceAll(RegExp(r'[\\s_\\-]+'), '');
+
+    if (raw.contains('آجل') || raw.contains('اجل') || raw.contains('بالآجل')) {
+      return 'pay_later';
+    }
+    if (raw.contains('بيتي') ||
+        raw.contains('بيتي كاش') ||
+        raw.contains('بيتيكاش')) {
+      return 'petty_cash';
+    }
+    if (raw.contains('تابي')) return 'tabby';
+    if (raw.contains('تمارا')) return 'tamara';
+    if (raw.contains('كيتا')) return 'keeta';
+    if (raw.contains('ماي فاتورة') ||
+        raw.contains('ماي_فاتورة') ||
+        raw.contains('مايفاتورة')) {
+      return 'my_fatoorah';
+    }
+    if (raw.contains('جاهز')) return 'jahez';
+    if (raw.contains('طلبات')) return 'talabat';
+    if (raw.contains('تحويل')) return 'bank_transfer';
+    if (raw.contains('محفظة')) return 'wallet';
+    if (raw.contains('شيك')) return 'cheque';
+    if (raw.contains('بينيفت') || raw.contains('بنفت')) return 'benefit';
+    if (raw.contains('اس تي سي') ||
+        raw.contains('stc') ||
+        raw.contains('اس_تي_سي')) {
+      return 'stc';
+    }
+    if (raw.contains('مدى')) return 'mada';
+    if (raw.contains('بطاقة') ||
+        raw.contains('فيزا') ||
+        raw.contains('ماستر')) {
+      return 'card';
+    }
+    if (raw.contains('نقد')) return 'cash';
+
+    switch (compact) {
+      case 'cash':
+      case 'cashpayment':
+        return 'cash';
+      case 'pettycash':
+      case 'petty_cash':
+        return 'petty_cash';
+      case 'paylater':
+      case 'pay_later':
+      case 'postpaid':
+      case 'deferred':
+        return 'pay_later';
+      case 'card':
+      case 'creditcard':
+      case 'debitcard':
+        return 'card';
+      case 'mada':
+        return 'mada';
+      case 'visa':
+      case 'mastercard':
+        return 'visa';
+      case 'benefit':
+      case 'benefitpay':
+      case 'benefit_pay':
+        return 'benefit';
+      case 'stc':
+      case 'stcpay':
+      case 'stc_pay':
+        return 'stc';
+      case 'bank':
+      case 'banktransfer':
+      case 'bank_transfer':
+      case 'transfer':
+        return 'bank_transfer';
+      case 'wallet':
+      case 'ewallet':
+      case 'electronicwallet':
+        return 'wallet';
+      case 'cheque':
+      case 'check':
+        return 'cheque';
+      case 'tabby':
+      case 'taby':
+        return 'tabby';
+      case 'tamara':
+        return 'tamara';
+      case 'keeta':
+      case 'kita':
+        return 'keeta';
+      case 'myfatoorah':
+      case 'my_fatoorah':
+      case 'myfatora':
+      case 'myfatoora':
+      case 'my_fatoora':
+        return 'my_fatoorah';
+      case 'jahez':
+      case 'gahez':
+        return 'jahez';
+      case 'talabat':
+        return 'talabat';
+      default:
+        return 'cash';
+    }
+  }
+
+  bool _isCashOnlyPayment(List<Map<String, dynamic>> pays) {
+    if (pays.isEmpty) return false;
+    bool hasPositiveAmount = false;
+    for (final pay in pays) {
+      final amount = (pay['amount'] as num?)?.toDouble() ??
+          double.tryParse(pay['amount']?.toString() ?? '') ??
+          0.0;
+      if (amount <= 0) continue;
+      hasPositiveAmount = true;
+      final normalized = _normalizePayMethod(pay['pay_method']?.toString());
+      if (normalized != 'cash') return false;
+    }
+    return hasPositiveAmount;
+  }
+
+  Future<void> _showCashPaymentSuccessOnCds({
+    required DisplayAppService displayService,
+    required List<Map<String, dynamic>> pays,
+  }) async {
+    if (!_isCdsEnabled ||
+        !displayService.isConnected ||
+        !_isCashOnlyPayment(pays)) {
+      return;
+    }
+
+    displayService.pinCdsModeTemporarily(duration: const Duration(seconds: 12));
+    displayService.updatePaymentStatus('success');
+
+    await Future.delayed(const Duration(seconds: 3));
+    displayService.clearPaymentDisplay();
+  }
+
+  bool _isMethodEnabledForInvoice(String normalizedMethod) {
+    if (normalizedMethod == 'card' &&
+        _isProfileNearPayEnabled &&
+        !_isCdsEnabled) {
+      return false;
+    }
+
+    if (_enabledPayMethods[normalizedMethod] == true) return true;
+    if (normalizedMethod == 'card') {
+      return _enabledPayMethods['mada'] == true ||
+          _enabledPayMethods['visa'] == true ||
+          _enabledPayMethods['benefit'] == true;
+    }
+    return false;
+  }
+
+  bool _hasAnyEnabledPayMethod() {
+    const supported = {
+      'cash',
+      'card',
+      'mada',
+      'visa',
+      'benefit',
+      'stc',
+      'bank_transfer',
+      'wallet',
+      'cheque',
+      'petty_cash',
+      'pay_later',
+      'tabby',
+      'tamara',
+      'keeta',
+      'my_fatoorah',
+      'jahez',
+      'talabat',
+    };
+    for (final entry in _enabledPayMethods.entries) {
+      if (supported.contains(entry.key) && entry.value == true) {
+        if (_isProfileNearPayEnabled &&
+            !_isCdsEnabled &&
+            (entry.key == 'card' ||
+                entry.key == 'mada' ||
+                entry.key == 'visa' ||
+                entry.key == 'benefit')) {
+          continue;
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Map<String, bool> _effectiveEnabledPayMethodsForTender() {
+    final effective = Map<String, bool>.from(_enabledPayMethods);
+    // "Pay later" is a booking status, not a valid invoice pay_method.
+    effective['pay_later'] = false;
+    // NearPay handles card payments — keep them visible for split payment
+    // but the actual NearPay flow is triggered in _processPayment.
+    return effective;
+  }
+
+  List<Map<String, dynamic>> _buildNormalizedPays(
+    List<Map<String, dynamic>>? pays, {
+    double? targetTotal,
+  }) {
+    final effectiveTotal = targetTotal ?? _totalAmount;
+
+    String resolveAllowedMethod(String method) {
+      final normalized = _normalizePayMethod(method);
+      if (_isMethodEnabledForInvoice(normalized)) return normalized;
+      const fallbackCandidates = [
+        'cash',
+        'card',
+        'stc',
+        'bank_transfer',
+        'wallet',
+        'cheque',
+      ];
+      for (final candidate in fallbackCandidates) {
+        if (_isMethodEnabledForInvoice(candidate)) return candidate;
+      }
+      throw Exception(
+        'لا توجد طرق دفع مفعّلة لهذا الفرع. يرجى تفعيل طريقة دفع من لوحة التحكم.',
+      );
+    }
+
+    if (pays == null || pays.isEmpty) {
+      final method = resolveAllowedMethod('cash');
+      return [
+        {
+          'name': method == 'card' ? 'دفع بطاقة' : 'دفع نقدي',
+          'pay_method': method,
+          'amount': double.parse(effectiveTotal.toStringAsFixed(2)),
+          'index': 0,
+        },
+      ];
+    }
+
+    return pays.asMap().entries.map((entry) {
+      final index = entry.key;
+      final pay = entry.value;
+      final method = resolveAllowedMethod(pay['pay_method']?.toString() ?? '');
+      final amount = (pay['amount'] as num?)?.toDouble() ??
+          double.tryParse(pay['amount']?.toString() ?? '') ??
+          0.0;
+      final roundedAmount = double.parse(amount.toStringAsFixed(2));
+      return {
+        'name': pay['name']?.toString().trim().isNotEmpty == true
+            ? pay['name']
+            : method,
+        'pay_method': method,
+        'amount': roundedAmount,
+        'index': index,
+      };
+    }).toList();
+  }
+
+  List<Map<String, dynamic>> _buildUpdatePaysPayload(
+    List<Map<String, dynamic>> pays,
+    double invoiceTotal, {
+    bool preserveCardAmounts = false,
+  }) {
+    double round2(double value) => double.parse(value.toStringAsFixed(2));
+    num toBackendAmount(double value) {
+      final rounded = round2(value);
+      final asInt = rounded.roundToDouble();
+      if ((rounded - asInt).abs() < 0.000001) {
+        return asInt.toInt();
+      }
+      return rounded;
+    }
+
+    final normalized = <Map<String, dynamic>>[];
+    double sum = 0.0;
+    var outIndex = 0;
+
+    for (final pay in pays) {
+      final method = _normalizePayMethod(pay['pay_method']?.toString() ?? '');
+      final amount = (pay['amount'] as num?)?.toDouble() ??
+          double.tryParse(pay['amount']?.toString() ?? '') ??
+          0.0;
+      if (amount <= 0) continue;
+      final roundedAmount = round2(amount);
+      normalized.add({
+        'name': pay['name']?.toString().trim().isNotEmpty == true
+            ? pay['name']
+            : (method == 'card' ? 'البطاقة' : 'دفع نقدي'),
+        'pay_method': method,
+        'amount': toBackendAmount(roundedAmount),
+        'index': outIndex++,
+      });
+      sum += roundedAmount;
+    }
+
+    if (normalized.isEmpty) {
+      return [
+        {
+          'name': 'دفع نقدي',
+          'pay_method': 'cash',
+          'amount': toBackendAmount(invoiceTotal),
+          'index': 0,
+        }
+      ];
+    }
+
+    int resolveAdjustmentIndex() {
+      if (!preserveCardAmounts || normalized.isEmpty) {
+        return normalized.length - 1;
+      }
+      for (var i = normalized.length - 1; i >= 0; i--) {
+        final method =
+            _normalizePayMethod(normalized[i]['pay_method']?.toString() ?? '');
+        if (method != 'card') return i;
+      }
+      return normalized.length - 1;
+    }
+
+    final targetTotal = round2(invoiceTotal);
+    final currentTotal = round2(sum);
+    final diff = round2(targetTotal - currentTotal);
+    // Adjust even for a 0.01 difference to satisfy backend strict validation.
+    if (diff.abs() >= 0.01) {
+      final adjustmentIndex = resolveAdjustmentIndex();
+      final currentAmount =
+          (normalized[adjustmentIndex]['amount'] as num?)?.toDouble() ?? 0.0;
+      normalized[adjustmentIndex]['amount'] = toBackendAmount(
+        (currentAmount + diff).clamp(0.0, double.infinity),
+      );
+    }
+
+    // Final safety pass: force exact 2-decimal total by correcting last pay.
+    final recomputedSum = round2(normalized.fold<double>(
+      0.0,
+      (acc, p) => acc + ((p['amount'] as num?)?.toDouble() ?? 0.0),
+    ));
+    final finalDiff = round2(targetTotal - recomputedSum);
+    if (finalDiff != 0 && normalized.isNotEmpty) {
+      final adjustmentIndex = resolveAdjustmentIndex();
+      final currentAmount =
+          (normalized[adjustmentIndex]['amount'] as num?)?.toDouble() ?? 0.0;
+      normalized[adjustmentIndex]['amount'] = toBackendAmount(
+        (currentAmount + finalDiff).clamp(0.0, double.infinity),
+      );
+    }
+
+    return normalized;
+  }
+
+  List<int> _toAddonIdList(List<Extra> extras) {
+    final ids = <int>[];
+    for (final extra in extras) {
+      final parsedId = int.tryParse(extra.id.toString().trim());
+      if (parsedId != null) ids.add(parsedId);
+    }
+    return ids;
+  }
+
+  Future<bool> _waitForKdsAck(
+    DisplayAppService displayService,
+    String orderId, {
+    Duration timeout = const Duration(milliseconds: 900),
+  }) async {
+    final targetOrderId = orderId.trim();
+    if (targetOrderId.isEmpty) return false;
+
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final ackId = displayService.lastOrderAckId?.trim();
+      final ackAt = displayService.lastOrderAckAt;
+      if (ackId == targetOrderId &&
+          ackAt != null &&
+          DateTime.now().difference(ackAt) <= const Duration(seconds: 8)) {
+        return true;
+      }
+      await Future.delayed(const Duration(milliseconds: 120));
+    }
+    return false;
+  }
+
+  Future<bool> _dispatchOrderToKdsWithAck({
+    required DisplayAppService displayService,
+    required String orderId,
+    required String orderNumber,
+    required String orderType,
+    required List<Map<String, dynamic>> items,
+    String? note,
+    required double total,
+    Map<String, dynamic>? invoice,
+    bool allowModeSwitchFallback = true,
+  }) async {
+    void send() {
+      displayService.sendOrderToKitchen(
+        orderId: orderId,
+        orderNumber: orderNumber,
+        orderType: orderType,
+        items: items,
+        note: note,
+        total: total,
+        invoice: invoice,
+        switchMode: false,
+      );
+    }
+
+    send();
+
+    if (!displayService.isConnected) {
+      // Message will remain queued until websocket reconnects.
+      return false;
+    }
+
+    var acked = await _waitForKdsAck(displayService, orderId);
+    if (acked) {
+      return true;
+    }
+
+    if (!allowModeSwitchFallback) {
+      return false;
+    }
+
+    final canSwitchToKds = _isKdsEnabled &&
+        displayService.isConnected &&
+        displayService.currentMode != DisplayMode.kds &&
+        !displayService.isPaymentProcessing;
+
+    if (canSwitchToKds) {
+      displayService.setMode(DisplayMode.kds, force: true);
+      await Future.delayed(const Duration(milliseconds: 250));
+      send();
+      acked = await _waitForKdsAck(
+        displayService,
+        orderId,
+        timeout: const Duration(milliseconds: 1200),
+      );
+    }
+
+    return acked;
+  }
+
+  Future<void> _processPayment({
+    required String type,
+    List<Map<String, dynamic>>? pays,
+    bool showLoadingOverlay = true,
+    bool showSuccessDialog = true,
+    bool clearCartOnSuccess = true,
+    bool isNearPayCardFlow = false,
+  }) async {
+    print(
+      '🧾 [PAY] process start type=$type orderType=$_selectedOrderType table=${_selectedTable?.id ?? '-'} lastTable=${_lastSelectedTable?.id ?? '-'} cart=${_cart.length} pays=${pays?.length ?? 0} nearPay=$isNearPayCardFlow',
+    );
+    if (_cart.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لا يمكن إنشاء فاتورة بدون عناصر في السلة'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (type == 'payment' && !_hasAnyEnabledPayMethod()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'لا توجد طرق دفع مفعّلة لهذا الفرع. فعّل طريقة دفع من لوحة التحكم ثم أعد المحاولة.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    final carNumber = _carNumberController.text.trim();
+    if (_isCarOrderType() && carNumber.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _trUi(
+                'رقم السيارة مطلوب لطلبات السيارات',
+                'Car number is required for car orders',
+              ),
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+
+    final resolvedTableSelection = _selectedTable ?? _lastSelectedTable;
+    if (_selectedTable == null && resolvedTableSelection != null && mounted) {
+      setState(() => _selectedTable = resolvedTableSelection);
+    }
+    final selectedTableForValidation = resolvedTableSelection;
+    final requiresTableForBookingValidation =
+        _isTableOrderType(_selectedOrderType);
+    if (requiresTableForBookingValidation &&
+        selectedTableForValidation == null) {
+      print('🧾 [PAY] process missing table -> queue & go tables');
+      if (type == 'payment') {
+        _queuePendingPaymentAfterTableSelection(
+          type: type,
+          pays: pays,
+          showLoadingOverlay: showLoadingOverlay,
+          showSuccessDialog: showSuccessDialog,
+          clearCartOnSuccess: clearCartOnSuccess,
+          isNearPayCardFlow: isNearPayCardFlow,
+        );
+      }
+      setState(() => _activeTab = 'tables');
+      return;
+    }
+
+    // Show loading
+    if (showLoadingOverlay) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    try {
+      final orderService = getIt<OrderService>();
+      final displayService = getIt<DisplayAppService>();
+      if (type == 'payment' && _isCdsEnabled) {
+        displayService.pinCdsModeTemporarily(
+          duration: const Duration(seconds: 18),
+        );
+      }
+      final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final grossOrderTotal = _grossOrderTotal;
+      double appliedDiscountAmount =
+          _resolveEffectiveDiscountAmount(grossOrderTotal);
+      double orderTotal =
+          (grossOrderTotal - appliedDiscountAmount).clamp(0.0, double.infinity);
+      double payableTotal = orderTotal;
+      String? promoCodeId = _activePromoCode?.id;
+      String? promoCodeValue = _activePromoCode?.code.trim();
+      String? promoDiscountType = _activePromoCode == null
+          ? null
+          : (_activePromoCode!.type == DiscountType.percentage
+              ? 'percentage'
+              : 'fixed');
+      var promoRemovedDueToExpiry = false;
+
+      bool isExpiredPromoMessage(String message) {
+        final normalized = message.trim().toLowerCase();
+        if (normalized.isEmpty) return false;
+        final hasPromoToken = normalized.contains('برومو') ||
+            normalized.contains('promo') ||
+            normalized.contains('promocode');
+        final hasExpiredToken = normalized.contains('انتهت') ||
+            normalized.contains('منتهي') ||
+            normalized.contains('صلاحية') ||
+            normalized.contains('expire');
+        return hasPromoToken && hasExpiredToken;
+      }
+
+      void clearActivePromoSelectionLocally() {
+        if (_activePromoCode == null) return;
+        _applyPromoCode(null);
+      }
+
+      Map<String, dynamic>? asStringKeyMap(dynamic value) {
+        if (value is Map<String, dynamic>) return value;
+        if (value is Map) {
+          return value.map((key, val) => MapEntry(key.toString(), val));
+        }
+        return null;
+      }
+
+      Future<Map<String, dynamic>?> resolveInvoicePayloadForPreview(
+        String? invoiceId,
+        Map<String, dynamic>? fallbackPayload,
+      ) async {
+        if (invoiceId == null || invoiceId.trim().isEmpty) {
+          return fallbackPayload;
+        }
+        try {
+          // Fetch Arabic version (default)
+          final detailsResponse = await orderService
+              .getInvoice(invoiceId)
+              .timeout(const Duration(seconds: 2));
+          final detailsMap = asStringKeyMap(detailsResponse);
+          final detailsData = asStringKeyMap(detailsMap?['data']);
+          final arPayload = (detailsData != null && detailsData.isNotEmpty)
+              ? detailsData
+              : (detailsMap != null && detailsMap.isNotEmpty ? detailsMap : null);
+
+          // Fetch English version for bilingual receipt
+          if (arPayload != null) {
+            try {
+              final savedLang = ApiConstants.acceptLanguage;
+              ApiConstants.setAcceptLanguage('en');
+              final enResponse = await orderService
+                  .getInvoice(invoiceId)
+                  .timeout(const Duration(seconds: 2));
+              ApiConstants.setAcceptLanguage(savedLang);
+
+              final enMap = asStringKeyMap(enResponse);
+              final enData = asStringKeyMap(enMap?['data']) ?? enMap;
+
+              // Merge English fields into Arabic payload
+              if (enData != null) {
+                final enBranch = asStringKeyMap(enData['branch']);
+                final enInvoice = asStringKeyMap(enData['invoice']) ?? enData;
+                // Store English address/district
+                arPayload['branch_address_en'] = enBranch?['address'];
+                arPayload['branch_district_en'] = enBranch?['district'];
+                arPayload['seller_name_en'] = enBranch?['seller_name'];
+                // Store English item names
+                final arItems = (arPayload['invoice'] is Map)
+                    ? (arPayload['invoice'] as Map)['items']
+                    : arPayload['items'];
+                final enItems = enInvoice['items'];
+                if (arItems is List && enItems is List) {
+                  for (var i = 0; i < arItems.length && i < enItems.length; i++) {
+                    if (arItems[i] is Map && enItems[i] is Map) {
+                      arItems[i]['item_name_en'] = enItems[i]['item_name'];
+                    }
+                  }
+                }
+              }
+            } catch (_) {
+              // English fetch failed — continue with Arabic only
+            }
+            return arPayload;
+          }
+        } catch (e) {
+          print(
+            '⚠️ Could not load invoice details for preview (invoice_id=$invoiceId), using fallback payload: $e',
+          );
+        }
+        return fallbackPayload;
+      }
+
+      String? firstNonEmptyText(
+        List<dynamic> values, {
+        bool allowZero = true,
+      }) {
+        for (final value in values) {
+          final text = value?.toString().trim();
+          if (text == null || text.isEmpty || text.toLowerCase() == 'null') {
+            continue;
+          }
+          if (!allowZero) {
+            final normalized = text.startsWith('#') ? text.substring(1) : text;
+            final parsed = int.tryParse(normalized);
+            if (parsed != null && parsed == 0) {
+              continue;
+            }
+          }
+          return text;
+        }
+        return null;
+      }
+
+      String normalizeDisplayOrderRef(String raw) {
+        final value = raw.trim();
+        if (value.isEmpty) return value;
+        if (value.startsWith('#')) return value;
+        if (RegExp(r'^\d+$').hasMatch(value)) return '#$value';
+        return value;
+      }
+
+      final cartItemsForOrder =
+          _cart.where((item) => item.quantity > 0).toList();
+      if (cartItemsForOrder.isEmpty) {
+        throw Exception(translationService.t('cart_empty_error'));
+      }
+      final selectedTableForOrder = resolvedTableSelection;
+      print(
+        '🧾 [PAY] order table resolved=${selectedTableForOrder?.id ?? '-'}',
+      );
+      final bookingOrderType =
+          _resolveOrderTypeForBooking(selectedTableForOrder);
+      final requiresTableForBooking = _isTableOrderType(_selectedOrderType);
+      String? resolvedTableName;
+      if (selectedTableForOrder != null) {
+        final rawName = selectedTableForOrder.number.trim();
+        resolvedTableName =
+            rawName.isNotEmpty ? rawName : selectedTableForOrder.id.trim();
+      }
+      final hasResolvedTableName =
+          resolvedTableName != null && resolvedTableName.trim().isNotEmpty;
+
+      // Backend enforces table_name for dine-in/table order types.
+      if (requiresTableForBooking &&
+          (selectedTableForOrder == null || !hasResolvedTableName)) {
+        if (type == 'payment') {
+          _queuePendingPaymentAfterTableSelection(
+            type: type,
+            pays: pays,
+            showLoadingOverlay: showLoadingOverlay,
+            showSuccessDialog: showSuccessDialog,
+            clearCartOnSuccess: clearCartOnSuccess,
+            isNearPayCardFlow: isNearPayCardFlow,
+          );
+        }
+        if (showLoadingOverlay && mounted && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _trUi(
+                  'اختر طاولة صالحة قبل إكمال العملية',
+                  'Select a valid table before continuing',
+                ),
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          setState(() => _activeTab = 'tables');
+        }
+        return;
+      }
+
+      final orderItemsSnapshot = cartItemsForOrder.map(
+        (item) {
+          final categoryName = item.product.category.trim();
+          // Prefer the category ID already on the product (from the API);
+          // fall back to name-based resolution only when not available.
+          final categoryId =
+              (item.product.categoryId?.trim().isNotEmpty == true)
+                  ? item.product.categoryId!.trim()
+                  : _resolveCategoryIdByName(categoryName);
+          String arName = item.product.nameAr;
+          String enName = item.product.nameEn;
+          final fallbackName = item.product.name;
+          
+          // Always try to split the combined name for bilingual support
+          if (enName.trim().isEmpty && fallbackName.contains(' - ')) {
+            arName = fallbackName.split(' - ').first.trim();
+            enName = fallbackName.split(' - ').last.trim();
+          } else if (arName.trim().isEmpty) {
+            arName = fallbackName;
+          }
+          // If arName is still empty after split, use fallbackName
+          if (arName.trim().isEmpty) {
+            arName = fallbackName;
+          }
+
+          return {
+            'name': fallbackName,
+            'nameAr': arName,
+            'nameEn': enName,
+            'category_name': categoryName,
+            if (categoryId != null && categoryId.isNotEmpty)
+              'category_id': categoryId,
+            'quantity': item.quantity,
+            'unitPrice': item.product.price,
+            'total': item.totalPrice,
+            'notes': item.notes,
+            'extras': item.selectedExtras.map((e) => {'name': e.name}).toList(),
+          };
+        },
+      ).toList();
+      final kdsItemsPayload = cartItemsForOrder.map(
+        (item) {
+          final categoryName = item.product.category.trim();
+          final categoryId =
+              (item.product.categoryId?.trim().isNotEmpty == true)
+                  ? item.product.categoryId!.trim()
+                  : _resolveCategoryIdByName(categoryName);
+          final basePrice = item.product.price;
+          final extrasPrice =
+              item.selectedExtras.fold<double>(0.0, (sum, e) => sum + e.price);
+          final originalUnitPrice = basePrice + extrasPrice;
+          final originalTotal = originalUnitPrice * item.quantity;
+
+          return {
+            'cartId': item.cartId,
+            'meal_id': item.product.id,
+            'productId': item.product.id,
+            'name': item.product.name,
+            'category_name': categoryName,
+            if (categoryId != null) 'category_id': categoryId,
+            'quantity': item.quantity,
+            'extras': item.selectedExtras.map((e) => {'name': e.name}).toList(),
+            'notes': item.notes,
+            // ✅ Discount information for KDS
+            'original_unit_price': originalUnitPrice,
+            'original_total': originalTotal,
+            'final_total': item.totalPrice,
+            'discount': item.discount,
+            'discount_type': item.discountType == DiscountType.percentage
+                ? 'percentage'
+                : 'amount',
+            'is_free': item.isFree,
+          };
+        },
+      ).toList();
+      bool kdsOrderDispatched = false;
+      bool kdsScreenReceivedOrder = false;
+
+      // Step 1: Create Booking
+      print('📝 Creating booking with order type: $bookingOrderType');
+      print('📝 _selectedOrderType: $_selectedOrderType');
+      final bookingData = <String, dynamic>{
+        'type': bookingOrderType,
+        'date': dateStr,
+        if (selectedTableForOrder != null) 'table_id': selectedTableForOrder.id,
+        if (_selectedCustomer != null)
+          'customer_id': _selectedCustomer!.id.toString(),
+        'type_extra': {
+          if (carNumber.isNotEmpty) 'car_number': carNumber,
+          if (requiresTableForBooking && selectedTableForOrder != null) ...{
+            'table_name': resolvedTableName,
+            'table_id': selectedTableForOrder.id,
+          },
+          'latitude': null,
+          'longitude': null,
+        },
+      };
+      print('🧾 Booking payload table: '
+          'type=$bookingOrderType '
+          'table_id=${selectedTableForOrder?.id} '
+          'table_name=$resolvedTableName');
+
+      // Build items in API-compatible "card" shape.
+      final List<Map<String, dynamic>> cartItems = [];
+      for (var item in cartItemsForOrder) {
+        final addonIds = _toAddonIdList(item.selectedExtras);
+        cartItems.add({
+          'item_name': item.product.name,
+          'meal_id': item.product.id,
+          'price': item.product.price,
+          'unitPrice': item.product.price,
+          'modified_unit_price': null,
+          'quantity': item.quantity.round().clamp(1, 9999),
+          'addons': addonIds,
+          if (item.notes.isNotEmpty) 'note': item.notes,
+        });
+      }
+      // Keep both keys for compatibility across accounts.
+      bookingData['card'] = cartItems;
+      bookingData['meals'] = cartItems;
+
+      final bookingResponse = await orderService.createBooking(
+        bookingData,
+        paymentType: type,
+      );
+      final bookingDataResponse = bookingResponse['data'];
+      final bookingDataMap = asStringKeyMap(bookingDataResponse);
+      final bookingNode = asStringKeyMap(bookingDataMap?['booking']);
+      final orderNode = asStringKeyMap(bookingDataMap?['order']);
+      final orderId = firstNonEmptyText([
+        bookingNode?['id'],
+        bookingDataMap?['booking_id'],
+        bookingDataMap?['id'],
+      ]);
+      final backendOrderId = firstNonEmptyText(
+        [
+          orderNode?['id'],
+          bookingDataMap?['order_id'],
+          bookingNode?['order_id'],
+        ],
+        allowZero: false,
+      );
+      final backendDailyOrderNumber = firstNonEmptyText(
+        [
+          bookingNode?['daily_order_number'],
+          orderNode?['order_number'],
+          bookingDataMap?['daily_order_number'],
+          bookingDataMap?['order_number'],
+          bookingNode?['order_number'],
+        ],
+        allowZero: false,
+      );
+      final bookingProductIds = <dynamic>[];
+      final bookingProductsData = <Map<String, dynamic>>[];
+      final bookingMealsData = <Map<String, dynamic>>[];
+      dynamic extractBookingProductId(dynamic node) {
+        if (node is Map) {
+          if (node['booking_product_id'] != null) {
+            return node['booking_product_id'];
+          }
+          for (final value in node.values) {
+            final found = extractBookingProductId(value);
+            if (found != null) return found;
+          }
+        } else if (node is List) {
+          for (final item in node) {
+            final found = extractBookingProductId(item);
+            if (found != null) return found;
+          }
+        }
+        return null;
+      }
+
+      if (bookingDataResponse is Map) {
+        final bookingProducts = bookingDataResponse['booking_products'];
+        if (bookingProducts is List) {
+          for (final p in bookingProducts) {
+            final productMap = asStringKeyMap(p);
+            if (productMap != null) {
+              bookingProductsData.add(productMap);
+              if (productMap['id'] != null) {
+                bookingProductIds.add(productMap['id']);
+              }
+            }
+          }
+        }
+
+        final bookingMeals = bookingDataResponse['booking_meals'];
+        if (bookingMeals is List) {
+          for (final m in bookingMeals) {
+            final mealMap = asStringKeyMap(m);
+            if (mealMap != null) {
+              bookingMealsData.add(mealMap);
+            }
+          }
+        }
+      }
+
+      if (orderId == null) {
+        final backendMessage = bookingResponse['message']?.toString();
+        throw Exception(
+          ErrorHandler.normalizeBackendMessage(
+            backendMessage,
+            defaultMessage: 'فشل إنشاء الطلب',
+          ),
+        );
+      }
+      final displayOrderRef = normalizeDisplayOrderRef(
+        firstNonEmptyText(
+              [
+                backendDailyOrderNumber,
+                backendOrderId,
+                orderId,
+              ],
+              allowZero: false,
+            ) ??
+            orderId,
+      );
+      print(
+        'ℹ️ Booking/Order mapping resolved: booking.id=$orderId order.id=${backendOrderId ?? '-'} order_number=${backendDailyOrderNumber ?? '-'}',
+      );
+      _lastCreatedBookingId = orderId;
+
+      if (selectedTableForOrder != null) {
+        final reservationSynced = await _syncTableReservationForOrder(
+          selectedTableForOrder,
+          reserved: true,
+        );
+        if (!reservationSynced && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _trUi(
+                  'تم إنشاء الطلب ولكن تعذر تحديث حالة الطاولة تلقائياً. يرجى التحقق من شاشة الطاولات.',
+                  'Order was created, but table status could not be updated automatically. Please verify from tables screen.',
+                ),
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+      if (_isKdsEnabled) {
+        try {
+          final firstDispatchAcked = await _dispatchOrderToKdsWithAck(
+            displayService: displayService,
+            orderId: orderId,
+            orderNumber: displayOrderRef,
+            orderType: bookingOrderType,
+            items: kdsItemsPayload,
+            note: _orderNotesController.text.isNotEmpty
+                ? _orderNotesController.text
+                : null,
+            total: orderTotal,
+            invoice: _buildKdsInvoicePayload(
+              bookingId: orderId,
+              orderId: backendOrderId,
+              orderNumber: displayOrderRef,
+              invoiceId: null,
+              invoiceNumber: null,
+              type: type,
+              orderTotal: orderTotal,
+              grossOrderTotal: grossOrderTotal,
+              discountAmount: appliedDiscountAmount,
+              promoCodeId: promoCodeId,
+              promoCode: promoCodeValue,
+              promoDiscountType: promoDiscountType,
+              orderItems: orderItemsSnapshot,
+              cashFloatSnapshot: _buildCashFloatSnapshot(),
+            ),
+          );
+          kdsOrderDispatched = true;
+          kdsScreenReceivedOrder = firstDispatchAcked;
+          if (firstDispatchAcked) {
+            print('✅ NEW_ORDER dispatched to KDS with ACK: #$orderId');
+          } else {
+            print(
+              '⚠️ NEW_ORDER dispatched to KDS but ACK not confirmed yet: #$orderId',
+            );
+          }
+        } catch (e) {
+          print('⚠️ Failed to dispatch NEW_ORDER after booking #$orderId: $e');
+        }
+      }
+
+      // Fallback extraction for accounts that require explicit booking_product_id.
+      if (bookingProductIds.isEmpty) {
+        try {
+          final bookingDetails = await orderService.getBookingDetails(orderId);
+          final detailsData = bookingDetails['data'];
+          final detected = extractBookingProductId(detailsData);
+          if (detected != null) {
+            bookingProductIds.add(detected);
+          }
+
+          if (detailsData is Map) {
+            final detailsMeals = detailsData['booking_meals'];
+            if (detailsMeals is List) {
+              for (final m in detailsMeals) {
+                final mealMap = asStringKeyMap(m);
+                if (mealMap != null) {
+                  bookingMealsData.add(mealMap);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          print(
+              '⚠️ Could not fetch booking details for booking_product_id: $e');
+        }
+      }
+
+      final dynamic primaryBookingProductId =
+          bookingProductIds.isNotEmpty ? bookingProductIds.first : null;
+      if (primaryBookingProductId != null) {
+        print('ℹ️ booking_product_id detected: $primaryBookingProductId');
+      }
+
+      // Step 2: Create Invoice (if payment)
+      String? invoiceNumber;
+      String? invoiceId;
+      Map<String, dynamic>? invoicePayload;
+      List<Map<String, dynamic>> normalizedPays = const [];
+      if (type == 'payment') {
+        double extractExpectedInvoiceTotal(dynamic response, double fallback) {
+          if (response is! Map) return fallback;
+          final map = response.map((k, v) => MapEntry(k.toString(), v));
+          final candidates = <dynamic>[
+            map['total'],
+            map['invoice_total'],
+            map['grand_total'],
+            if (map['data'] is Map) (map['data'] as Map)['total'],
+            if (map['data'] is Map) (map['data'] as Map)['invoice_total'],
+            if (map['data'] is Map) (map['data'] as Map)['grand_total'],
+            if (map['data'] is Map) (map['data'] as Map)['total_with_tax'],
+          ];
+          for (final c in candidates) {
+            if (c is num) return c.toDouble();
+            if (c is String) {
+              final parsed = double.tryParse(c);
+              if (parsed != null) return parsed;
+            }
+          }
+          return fallback;
+        }
+
+        List<Map<String, dynamic>> clonePaysList(dynamic rawPays) {
+          if (rawPays is! List) return <Map<String, dynamic>>[];
+          return rawPays
+              .whereType<Map>()
+              .map((entry) => entry.map((k, v) => MapEntry(k.toString(), v)))
+              .toList();
+        }
+
+        double sumPaysAmounts(List<Map<String, dynamic>> pays) {
+          var sum = 0.0;
+          for (final pay in pays) {
+            final amount = (pay['amount'] as num?)?.toDouble() ??
+                double.tryParse(pay['amount']?.toString() ?? '') ??
+                0.0;
+            if (amount <= 0) continue;
+            sum += amount;
+          }
+          return double.parse(sum.toStringAsFixed(2));
+        }
+
+        // Calculate invoice first using official API payload
+        final calcItems = cartItemsForOrder
+            .map(
+              (item) => {
+                'meal_id': int.tryParse(item.product.id) ?? item.product.id,
+                'quantity': item.quantity.round().clamp(1, 9999),
+                'price': item.product.price,
+              },
+            )
+            .toList();
+        final calculationPayload = {
+          'items': calcItems,
+          'discount': _orderDiscount,
+          if (promoCodeId != null) 'promocode_id': promoCodeId,
+          if (promoCodeValue != null && promoCodeValue.isNotEmpty)
+            'promocodeValue': promoCodeValue,
+          if (promoCodeValue != null && promoCodeValue.isNotEmpty)
+            'promocode_name': promoCodeValue,
+          if (promoDiscountType != null) 'discount_type': promoDiscountType,
+        };
+        try {
+          final calcResponse = await orderService.calculateInvoice(
+            calculationPayload,
+          );
+          payableTotal = extractExpectedInvoiceTotal(calcResponse, orderTotal);
+          if ((payableTotal - payableTotal.roundToDouble()).abs() <= 0.02) {
+            payableTotal = payableTotal.roundToDouble();
+          } else {
+            payableTotal = double.parse(payableTotal.toStringAsFixed(2));
+          }
+        } on ApiException catch (e) {
+          if (e.statusCode == 422 &&
+              !promoRemovedDueToExpiry &&
+              isExpiredPromoMessage(e.message)) {
+            promoRemovedDueToExpiry = true;
+            promoCodeId = null;
+            promoCodeValue = null;
+            promoDiscountType = null;
+            clearActivePromoSelectionLocally();
+            appliedDiscountAmount =
+                _resolveEffectiveDiscountAmount(grossOrderTotal);
+            orderTotal = (grossOrderTotal - appliedDiscountAmount)
+                .clamp(0.0, double.infinity);
+            payableTotal = double.parse(orderTotal.toStringAsFixed(2));
+            print(
+              '♻️ Promo expired while calculating invoice; continuing without promo',
+            );
+          } else {
+            // Non-blocking: some accounts reject calculate payload variants
+            // while still accepting create invoice payload.
+            print(
+                '⚠️ Calculate invoice failed, continuing to create invoice: $e');
+          }
+        } catch (e) {
+          // Non-blocking: some accounts reject calculate payload variants
+          // while still accepting create invoice payload.
+          print(
+              '⚠️ Calculate invoice failed, continuing to create invoice: $e');
+        }
+        normalizedPays = _buildNormalizedPays(
+          pays,
+          targetTotal: payableTotal,
+        );
+        normalizedPays = _buildUpdatePaysPayload(
+          normalizedPays,
+          payableTotal,
+          preserveCardAmounts: isNearPayCardFlow,
+        );
+        final hasCardPayment = normalizedPays.any((pay) {
+          final method = _normalizePayMethod(pay['pay_method']?.toString());
+          return method == 'card';
+        });
+        if (_isProfileNearPayEnabled && hasCardPayment && !isNearPayCardFlow) {
+          throw Exception('دفع البطاقة يجب أن يتم عبر NearPay فقط');
+        }
+
+        // Create invoice using official payload format:
+        // customer_id, order_id, date, pays
+        final invoiceItems = cartItemsForOrder.map(
+          (item) {
+            final addonIds = _toAddonIdList(item.selectedExtras);
+            return {
+              'item_name': item.product.name,
+              'meal_id': int.tryParse(item.product.id) ?? item.product.id,
+              'price': item.product.price,
+              'unitPrice': item.product.price,
+              'modified_unit_price': null,
+              'quantity': item.quantity.round().clamp(1, 9999),
+              'addons': addonIds,
+              if (item.notes.isNotEmpty) 'note': item.notes,
+            };
+          },
+        ).toList();
+        int toSafeInt(dynamic value, {int fallback = 1}) {
+          if (value is int) return value;
+          if (value is num) return value.toInt();
+          if (value is String) return int.tryParse(value) ?? fallback;
+          return fallback;
+        }
+
+        double toSafeDouble(dynamic value, {double fallback = 0.0}) {
+          if (value is num) return value.toDouble();
+          if (value is String) return double.tryParse(value) ?? fallback;
+          return fallback;
+        }
+
+        final mealNameById = <String, String>{};
+        final mealPriceById = <String, double>{};
+        for (final item in cartItemsForOrder) {
+          final mealId =
+              (int.tryParse(item.product.id) ?? item.product.id).toString();
+          mealNameById.putIfAbsent(mealId, () => item.product.name);
+          mealPriceById.putIfAbsent(mealId, () => item.product.price);
+        }
+
+        final salesMeals = <Map<String, dynamic>>[];
+        final usedBookingMealIds = <int>{};
+
+        // Prefer booking_meals response because it contains canonical booking IDs.
+        for (final meal in bookingMealsData) {
+          final bookingMealIdRaw = meal['id'] ?? meal['booking_meal_id'];
+          final bookingMealId = toSafeInt(bookingMealIdRaw, fallback: 0);
+          if (bookingMealId <= 0 ||
+              usedBookingMealIds.contains(bookingMealId)) {
+            continue;
+          }
+
+          final mealIdRaw = meal['meal_id'] ?? meal['product_id'];
+          final mealIdStr = mealIdRaw?.toString() ?? '';
+          final quantity =
+              toSafeInt(meal['quantity'], fallback: 1).clamp(1, 9999);
+          final unitPrice = toSafeDouble(
+            meal['unit_price'] ?? meal['price'] ?? mealPriceById[mealIdStr],
+            fallback: 0.0,
+          );
+          final totalPrice = toSafeDouble(
+            meal['total'] ?? meal['price'],
+            fallback: unitPrice * quantity,
+          );
+
+          salesMeals.add({
+            'booking_meal_id': bookingMealId,
+            'meal_id': int.tryParse(mealIdStr) ?? mealIdRaw ?? mealIdStr,
+            'quantity': quantity,
+            'meal_name':
+                meal['meal_name']?.toString() ?? mealNameById[mealIdStr] ?? '',
+            'unit_price': unitPrice,
+            'price': totalPrice,
+            'total': totalPrice,
+            'discount': meal['discount']?.toString() ?? '',
+            'discount_type': meal['discount_type']?.toString() ?? '%',
+            'notes': meal['notes']?.toString() ?? '',
+          });
+          usedBookingMealIds.add(bookingMealId);
+        }
+
+        // Do not fabricate sales_meals IDs from booking_products IDs.
+        // If booking_meals is unavailable, we rely on items/card payload variants.
+
+        final hasValidSalesMealBookingIds = salesMeals.isNotEmpty &&
+            salesMeals.every(
+              (m) => toSafeInt(m['booking_meal_id'], fallback: 0) > 0,
+            );
+        // Always use normalizedPays (already adjusted to payableTotal) instead
+        // of recalculating from salesMeals totals, which may differ from the
+        // backend invoice total due to rounding, taxes, or booking discounts.
+        final paysForSalesMeals = normalizedPays;
+        if (invoiceItems.isEmpty) {
+          throw Exception('يجب أن تحتوي الفاتورة علي عناصر.');
+        }
+
+        final bookingIdValue = int.tryParse(orderId) ?? orderId;
+        final orderIdValue =
+            backendOrderId != null && int.tryParse(backendOrderId) != null
+                ? int.parse(backendOrderId)
+                : (backendOrderId ?? bookingIdValue);
+        final bookingCustomerMap = asStringKeyMap(bookingDataMap?['customer']);
+        final customerIdValue = _selectedCustomer?.id ??
+            bookingDataMap?['customer_id'] ??
+            bookingCustomerMap?['id'];
+        final promoFields = <String, dynamic>{
+          if (promoCodeId != null) 'promocode_id': promoCodeId,
+          if (promoCodeValue != null && promoCodeValue.isNotEmpty)
+            'promocodeValue': promoCodeValue,
+          if (promoCodeValue != null && promoCodeValue.isNotEmpty)
+            'promocode_name': promoCodeValue,
+          if (promoDiscountType != null) 'discount_type': promoDiscountType,
+        };
+        final invoiceDataBase = <String, dynamic>{
+          if (customerIdValue != null) 'customer_id': customerIdValue,
+          'branch_id': ApiConstants.branchId,
+          'order_id': orderIdValue,
+          'booking_id': bookingIdValue,
+          if (primaryBookingProductId != null)
+            'booking_product_id': primaryBookingProductId,
+          ...promoFields,
+          'cash_back': 0,
+          'date': dateStr,
+          'pays': normalizedPays,
+          'items': invoiceItems,
+          'card': invoiceItems,
+          'meals': invoiceItems,
+          if (hasValidSalesMealBookingIds) 'sales_meals': salesMeals,
+        };
+        final invoiceDataBookingOnly =
+            Map<String, dynamic>.from(invoiceDataBase)..remove('order_id');
+        final isCashOnlyPayment = normalizedPays.length == 1 &&
+            _normalizePayMethod(
+                  normalizedPays.first['pay_method']?.toString(),
+                ) ==
+                'cash';
+        final invoiceDataCashPostman = <String, dynamic>{
+          if (customerIdValue != null) 'customer_id': customerIdValue,
+          'branch_id': ApiConstants.branchId,
+          'booking_id': bookingIdValue,
+          'date': dateStr,
+          'pays': normalizedPays,
+          ...promoFields,
+        };
+        final invoiceDataCashWithSalesMeals = <String, dynamic>{
+          if (customerIdValue != null) 'customer_id': customerIdValue,
+          'branch_id': ApiConstants.branchId,
+          'booking_id': bookingIdValue,
+          'date': dateStr,
+          'pays': paysForSalesMeals,
+          ...promoFields,
+          if (hasValidSalesMealBookingIds) 'sales_meals': salesMeals,
+          if (!hasValidSalesMealBookingIds) 'items': invoiceItems,
+        };
+        final invoiceDataPostmanPaysOnly = <String, dynamic>{
+          if (customerIdValue != null) 'customer_id': customerIdValue,
+          'branch_id': ApiConstants.branchId,
+          'booking_id': bookingIdValue,
+          'date': dateStr,
+          'pays': normalizedPays,
+          ...promoFields,
+        };
+        final invoiceDataBackendExact = <String, dynamic>{
+          if (customerIdValue != null) 'customer_id': customerIdValue,
+          'branch_id': ApiConstants.branchId,
+          'booking_id': bookingIdValue,
+          'date': dateStr,
+          'pays': paysForSalesMeals,
+          if (hasValidSalesMealBookingIds) 'sales_meals': salesMeals,
+        };
+        final invoiceDataWithItems = <String, dynamic>{
+          ...invoiceDataBase,
+          // Some accounts require items payload even with order_id.
+          'items': invoiceItems,
+          'card': invoiceItems,
+          'meals': invoiceItems,
+          if (hasValidSalesMealBookingIds) 'sales_meals': salesMeals,
+        };
+        final invoiceDataWithItemsBookingOnly =
+            Map<String, dynamic>.from(invoiceDataWithItems)..remove('order_id');
+        print('📝 Creating invoice with order type: $bookingOrderType');
+        final invoiceDataLegacyCard = <String, dynamic>{
+          if (customerIdValue != null) 'customer_id': customerIdValue,
+          'branch_id': ApiConstants.branchId,
+          'date': dateStr,
+          'card': invoiceItems,
+          'pays': normalizedPays,
+          ...promoFields,
+          'type': bookingOrderType,
+          'type_extra': {
+            'car_number': carNumber.isEmpty ? null : carNumber,
+            'table_name': selectedTableForOrder?.number,
+            'latitude': null,
+            'longitude': null,
+          },
+        };
+
+        Map<String, dynamic> invoiceResponse;
+        Object? lastInvoiceError;
+        final attempts = <Map<String, dynamic>>[];
+        if (hasValidSalesMealBookingIds) {
+          attempts.add({
+            'label': 'multipart_backend_exact',
+            'run': () => orderService.createInvoiceMultipart(
+                  invoiceDataBackendExact,
+                ),
+            'payload': invoiceDataBackendExact,
+          });
+        }
+        if (isCashOnlyPayment) {
+          if (hasValidSalesMealBookingIds) {
+            attempts.addAll([
+              {
+                'label': 'json_cash_with_sales_meals',
+                'run': () =>
+                    orderService.createInvoice(invoiceDataCashWithSalesMeals),
+                'payload': invoiceDataCashWithSalesMeals,
+              },
+              {
+                'label': 'multipart_cash_with_sales_meals',
+                'run': () => orderService
+                    .createInvoiceMultipart(invoiceDataCashWithSalesMeals),
+                'payload': invoiceDataCashWithSalesMeals,
+              },
+            ]);
+          }
+          // Keep cashier-cash flow closest to Postman contract as fallback.
+          attempts.addAll([
+            {
+              'label': 'json_cash_postman_exact',
+              'run': () => orderService.createInvoice(invoiceDataCashPostman),
+              'payload': invoiceDataCashPostman,
+            },
+            {
+              'label': 'multipart_cash_postman_exact',
+              'run': () =>
+                  orderService.createInvoiceMultipart(invoiceDataCashPostman),
+              'payload': invoiceDataCashPostman,
+            },
+            {
+              'label': 'json_postman_pays_only',
+              'run': () =>
+                  orderService.createInvoice(invoiceDataPostmanPaysOnly),
+              'payload': invoiceDataPostmanPaysOnly,
+            },
+            {
+              'label': 'json_booking_only_base',
+              'run': () => orderService.createInvoice(invoiceDataBookingOnly),
+              'payload': invoiceDataBookingOnly,
+            },
+            {
+              'label': 'json_order_booking_base',
+              'run': () => orderService.createInvoice(invoiceDataBase),
+              'payload': invoiceDataBase,
+            },
+          ]);
+        } else {
+          if (hasValidSalesMealBookingIds) {
+            attempts.addAll([
+              {
+                'label': 'json_non_cash_with_sales_meals',
+                'run': () =>
+                    orderService.createInvoice(invoiceDataCashWithSalesMeals),
+                'payload': invoiceDataCashWithSalesMeals,
+              },
+              {
+                'label': 'multipart_non_cash_with_sales_meals',
+                'run': () => orderService
+                    .createInvoiceMultipart(invoiceDataCashWithSalesMeals),
+                'payload': invoiceDataCashWithSalesMeals,
+              },
+            ]);
+          }
+          attempts.addAll([
+            {
+              'label': 'json_postman_pays_only',
+              'run': () =>
+                  orderService.createInvoice(invoiceDataPostmanPaysOnly),
+              'payload': invoiceDataPostmanPaysOnly,
+            },
+            {
+              'label': 'multipart_postman_pays_only',
+              'run': () => orderService
+                  .createInvoiceMultipart(invoiceDataPostmanPaysOnly),
+              'payload': invoiceDataPostmanPaysOnly,
+            },
+            {
+              'label': 'json_order_booking_base',
+              'run': () => orderService.createInvoice(invoiceDataBase),
+              'payload': invoiceDataBase,
+            },
+            {
+              'label': 'json_booking_only_base',
+              'run': () => orderService.createInvoice(invoiceDataBookingOnly),
+              'payload': invoiceDataBookingOnly,
+            },
+            {
+              'label': 'json_order_booking_with_items',
+              'run': () => orderService.createInvoice(invoiceDataWithItems),
+              'payload': invoiceDataWithItems,
+            },
+            {
+              'label': 'json_booking_only_with_items',
+              'run': () =>
+                  orderService.createInvoice(invoiceDataWithItemsBookingOnly),
+              'payload': invoiceDataWithItemsBookingOnly,
+            },
+            {
+              'label': 'multipart_order_booking_with_items',
+              'run': () =>
+                  orderService.createInvoiceMultipart(invoiceDataWithItems),
+              'payload': invoiceDataWithItems,
+            },
+            {
+              'label': 'multipart_booking_only_with_items',
+              'run': () => orderService
+                  .createInvoiceMultipart(invoiceDataWithItemsBookingOnly),
+              'payload': invoiceDataWithItemsBookingOnly,
+            },
+            {
+              'label': 'json_legacy_card_payload',
+              'run': () => orderService.createInvoice(invoiceDataLegacyCard),
+              'payload': invoiceDataLegacyCard,
+            },
+            {
+              'label': 'multipart_legacy_card_payload',
+              'run': () =>
+                  orderService.createInvoiceMultipart(invoiceDataLegacyCard),
+              'payload': invoiceDataLegacyCard,
+            },
+          ]);
+        }
+        if (!isCashOnlyPayment && bookingProductIds.length > 1) {
+          for (final bookingProductId in bookingProductIds.skip(1)) {
+            final withSpecificBookingProduct =
+                Map<String, dynamic>.from(invoiceDataWithItems)
+                  ..['booking_product_id'] = bookingProductId;
+            attempts.add({
+              'label': 'json_with_items_booking_product_$bookingProductId',
+              'run': () =>
+                  orderService.createInvoice(withSpecificBookingProduct),
+              'payload': withSpecificBookingProduct,
+            });
+            attempts.add({
+              'label': 'multipart_with_items_booking_product_$bookingProductId',
+              'run': () => orderService
+                  .createInvoiceMultipart(withSpecificBookingProduct),
+              'payload': withSpecificBookingProduct,
+            });
+          }
+        }
+        if (!isNearPayCardFlow &&
+            !isCashOnlyPayment &&
+            _isMethodEnabledForInvoice('cash')) {
+          final fallbackInvoiceData = <String, dynamic>{
+            ...invoiceDataWithItems,
+            'pays': [
+              {
+                'name': 'دفع نقدي',
+                'pay_method': 'cash',
+                'amount': payableTotal,
+                'index': 0,
+              },
+            ],
+          };
+          attempts.add({
+            'label': 'json_cash_fallback_with_items',
+            'run': () => orderService.createInvoice(fallbackInvoiceData),
+            'payload': fallbackInvoiceData,
+          });
+
+          final fallbackInvoiceDataBookingOnly = <String, dynamic>{
+            ...invoiceDataWithItemsBookingOnly,
+            'pays': [
+              {
+                'name': 'دفع نقدي',
+                'pay_method': 'cash',
+                'amount': payableTotal,
+                'index': 0,
+              },
+            ],
+          };
+          attempts.add({
+            'label': 'multipart_cash_fallback_with_items',
+            'run': () => orderService
+                .createInvoiceMultipart(fallbackInvoiceDataBookingOnly),
+            'payload': fallbackInvoiceDataBookingOnly,
+          });
+        }
+
+        Map<String, dynamic>? resolvedInvoice;
+        String? resolvedAttemptLabel;
+        double? resolvedAttemptPaysTotal;
+        var checkedForExistingInvoice = false;
+        Future<bool> tryResolveExistingInvoice() async {
+          try {
+            final bookingDetails =
+                await orderService.getBookingDetails(orderId);
+            final bookingDetailsMap = asStringKeyMap(bookingDetails['data']);
+            final hasInvoice = bookingDetailsMap?['has_invoice'] == true;
+            final existingInvoiceId =
+                bookingDetailsMap?['invoice_id']?.toString();
+            if (hasInvoice &&
+                existingInvoiceId != null &&
+                existingInvoiceId.isNotEmpty) {
+              resolvedInvoice =
+                  await orderService.getInvoice(existingInvoiceId);
+              resolvedAttemptLabel = 'existing_invoice_on_booking';
+              print(
+                'ℹ️ booking already has invoice, reusing invoice_id=$existingInvoiceId',
+              );
+              return true;
+            }
+          } catch (lookupError) {
+            print(
+              '⚠️ booking already used but existing invoice lookup failed: $lookupError',
+            );
+          }
+          return false;
+        }
+
+        double? extractExpectedPaysTotalFromMessage(String message) {
+          final match = RegExp(r'\(([\d.]+)\)').firstMatch(message);
+          if (match == null) return null;
+          final raw = match.group(1);
+          if (raw == null || raw.isEmpty) return null;
+          return double.tryParse(raw);
+        }
+
+        List<Map<String, dynamic>> normalizePaysToExactTotal(
+          dynamic rawPays,
+          double expectedTotal,
+        ) {
+          final paysList = rawPays is List
+              ? rawPays
+                  .whereType<Map>()
+                  .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
+                  .toList()
+              : <Map<String, dynamic>>[];
+          if (paysList.isEmpty) {
+            return [
+              {'pay_method': 'cash', 'amount': expectedTotal},
+            ];
+          }
+
+          final normalized = <Map<String, dynamic>>[];
+          for (var i = 0; i < paysList.length; i++) {
+            final pay = paysList[i];
+            final method = _normalizePayMethod(pay['pay_method']?.toString());
+            final amount = (pay['amount'] as num?)?.toDouble() ??
+                double.tryParse(pay['amount']?.toString() ?? '') ??
+                0.0;
+            normalized.add({
+              ...pay,
+              'pay_method': method,
+              'amount': amount,
+              if (pay['index'] == null) 'index': i,
+            });
+          }
+
+          final adjusted = _buildUpdatePaysPayload(
+            normalized,
+            expectedTotal,
+            preserveCardAmounts: isNearPayCardFlow,
+          );
+          for (var i = 0; i < adjusted.length; i++) {
+            final method = adjusted[i]['pay_method']?.toString() ?? 'cash';
+            adjusted[i] = {
+              ...normalized[i],
+              'pay_method': method,
+              'amount': adjusted[i]['amount'],
+              if (normalized[i]['index'] == null) 'index': i,
+            };
+          }
+          return adjusted;
+        }
+
+        void stripPromoFieldsFromPayload(Map<String, dynamic> payload) {
+          payload.remove('promocode_id');
+          payload.remove('promocodeValue');
+          payload.remove('promocode_name');
+          payload.remove('discount_type');
+        }
+
+        void stripPromoFromAllAttemptPayloads(double targetTotal) {
+          for (final attempt in attempts) {
+            final payload = attempt['payload'];
+            if (payload is! Map<String, dynamic>) continue;
+            stripPromoFieldsFromPayload(payload);
+            if (payload.containsKey('pays')) {
+              payload['pays'] = normalizePaysToExactTotal(
+                payload['pays'],
+                targetTotal,
+              );
+            }
+          }
+        }
+
+        final retriedAfterPaysAdjustment = <String>{};
+        for (var i = 0; i < attempts.length; i++) {
+          final attempt = attempts[i];
+          final attemptLabel =
+              attempt['label']?.toString() ?? 'unknown_attempt';
+          final runner =
+              attempt['run'] as Future<Map<String, dynamic>> Function();
+          final payload = attempt['payload'];
+          try {
+            final payloadJson =
+                payload is Map ? jsonEncode(payload) : '$payload';
+            print('📤 createInvoice payload [$attemptLabel]: $payloadJson');
+          } catch (e) {
+            print(
+                '📤 createInvoice payload [$attemptLabel]: <non-serializable> ($e)');
+          }
+          try {
+            resolvedInvoice = await runner();
+            resolvedAttemptLabel = attemptLabel;
+            if (payload is Map<String, dynamic>) {
+              final copiedPays = clonePaysList(payload['pays']);
+              if (copiedPays.isNotEmpty) {
+                final paysTotal = sumPaysAmounts(copiedPays);
+                if (paysTotal > 0) {
+                  resolvedAttemptPaysTotal = paysTotal;
+                }
+              }
+            }
+            print('✅ createInvoice success via: $attemptLabel');
+            break;
+          } on ApiException catch (e) {
+            lastInvoiceError = e;
+            final status = e.statusCode ?? 0;
+            // Stop early on auth/permission errors.
+            if (status == 401 || status == 403) rethrow;
+            if (!checkedForExistingInvoice) {
+              checkedForExistingInvoice = true;
+              if (await tryResolveExistingInvoice()) {
+                break;
+              }
+            }
+
+            if (status == 422 &&
+                !promoRemovedDueToExpiry &&
+                isExpiredPromoMessage(e.message)) {
+              promoRemovedDueToExpiry = true;
+              promoCodeId = null;
+              promoCodeValue = null;
+              promoDiscountType = null;
+              clearActivePromoSelectionLocally();
+              appliedDiscountAmount =
+                  _resolveEffectiveDiscountAmount(grossOrderTotal);
+              orderTotal = (grossOrderTotal - appliedDiscountAmount)
+                  .clamp(0.0, double.infinity);
+              payableTotal = double.parse(orderTotal.toStringAsFixed(2));
+              normalizedPays = _buildNormalizedPays(
+                pays,
+                targetTotal: payableTotal,
+              );
+              normalizedPays = _buildUpdatePaysPayload(
+                normalizedPays,
+                payableTotal,
+                preserveCardAmounts: isNearPayCardFlow,
+              );
+              stripPromoFromAllAttemptPayloads(payableTotal);
+              retriedAfterPaysAdjustment.clear();
+              print(
+                '♻️ Promo expired during invoice creation; removed promo and retrying without it',
+              );
+              i--;
+              continue;
+            }
+
+            final expectedTotal =
+                extractExpectedPaysTotalFromMessage(e.message);
+            if (status == 422 &&
+                expectedTotal != null &&
+                payload is Map<String, dynamic> &&
+                payload.containsKey('pays') &&
+                !retriedAfterPaysAdjustment.contains(attemptLabel)) {
+              final currentPays = payload['pays'];
+              final adjustedPays = normalizePaysToExactTotal(
+                currentPays,
+                expectedTotal,
+              );
+              payload['pays'] = adjustedPays;
+              retriedAfterPaysAdjustment.add(attemptLabel);
+              print(
+                '♻️ Adjusted pays for [$attemptLabel] to match backend total=$expectedTotal and retrying same attempt',
+              );
+              i--;
+              continue;
+            }
+
+            print(
+              '⚠️ createInvoice failed [$attemptLabel] status=$status message=${e.message} payloadKeys=${payload is Map ? payload.keys.toList() : 'unknown'}',
+            );
+          } catch (e) {
+            lastInvoiceError = e;
+            print('⚠️ createInvoice failed [$attemptLabel] error=$e');
+          }
+        }
+
+        if (resolvedInvoice == null) {
+          if (lastInvoiceError is ApiException) {
+            final normalizedMessage = lastInvoiceError.message;
+            final bookingAlreadyUsed =
+                normalizedMessage.contains('رقم الحجز') &&
+                    (normalizedMessage.contains('مستخدمة') ||
+                        normalizedMessage.contains('مُستخدمة') ||
+                        normalizedMessage.contains('مستخدم'));
+
+            if (bookingAlreadyUsed) {
+              try {
+                final bookingDetails =
+                    await orderService.getBookingDetails(orderId);
+                final bookingDetailsMap =
+                    asStringKeyMap(bookingDetails['data']);
+                final hasInvoice = bookingDetailsMap?['has_invoice'] == true;
+                final existingInvoiceId =
+                    bookingDetailsMap?['invoice_id']?.toString();
+                if (hasInvoice &&
+                    existingInvoiceId != null &&
+                    existingInvoiceId.isNotEmpty) {
+                  resolvedInvoice =
+                      await orderService.getInvoice(existingInvoiceId);
+                  resolvedAttemptLabel = 'existing_invoice_on_booking';
+                  print(
+                    'ℹ️ booking already has invoice, reusing invoice_id=$existingInvoiceId',
+                  );
+                }
+              } catch (lookupError) {
+                print(
+                  '⚠️ booking already used but existing invoice lookup failed: $lookupError',
+                );
+              }
+            }
+
+            if (resolvedInvoice == null) {
+              throw lastInvoiceError;
+            }
+          }
+          if (resolvedInvoice == null) {
+            throw Exception('فشل إنشاء الفاتورة بعد جميع محاولات الربط');
+          }
+        }
+        if (resolvedAttemptLabel != null) {
+          print('📌 invoice creation strategy used: $resolvedAttemptLabel');
+        }
+        invoiceResponse = resolvedInvoice!;
+        invoiceNumber = invoiceResponse['data']?['invoice_number']?.toString();
+        final invoiceDataMap = asStringKeyMap(invoiceResponse['data']);
+        invoiceId = invoiceDataMap?['id']?.toString();
+        final rawInvoicePayload = invoiceResponse['data'];
+        if (rawInvoicePayload is Map<String, dynamic>) {
+          invoicePayload = rawInvoicePayload;
+        } else if (rawInvoicePayload is Map) {
+          invoicePayload = rawInvoicePayload
+              .map((key, value) => MapEntry(key.toString(), value));
+        }
+
+        if (invoiceId != null && invoiceId.isNotEmpty) {
+          final resolvedPaysTotal = resolvedAttemptPaysTotal;
+          final finalInvoiceTotal =
+              (resolvedPaysTotal != null && resolvedPaysTotal > 0)
+                  ? resolvedPaysTotal
+                  : extractExpectedInvoiceTotal(
+                      invoiceResponse,
+                      payableTotal,
+                    );
+          final updatePaysSource = normalizedPays;
+          var updatePaysPayload =
+              _buildUpdatePaysPayload(updatePaysSource, finalInvoiceTotal);
+          final skipUpdatePays = <String>{
+            'multipart_backend_exact',
+            'json_cash_with_sales_meals',
+            'multipart_cash_with_sales_meals',
+            'json_cash_postman_exact',
+            'multipart_cash_postman_exact',
+            'json_postman_pays_only',
+            'multipart_postman_pays_only',
+            'existing_invoice_on_booking',
+          }.contains(resolvedAttemptLabel);
+
+          final invoiceIdValue = invoiceId;
+          unawaited(() async {
+            if (invoiceIdValue.isEmpty) {
+              return;
+            }
+            try {
+              await orderService.updateInvoiceDate(
+                invoiceId: invoiceIdValue,
+                date: dateStr,
+              );
+
+              if (skipUpdatePays) {
+                print(
+                  'ℹ️ Skipping updatePays for invoice_id=$invoiceId to avoid duplicate/cancelled invoices on backend.',
+                );
+                return;
+              }
+
+              await orderService.updateInvoicePays(
+                invoiceIdValue,
+                pays: updatePaysPayload,
+                date: dateStr,
+              );
+            } on ApiException catch (e) {
+              if (skipUpdatePays) return;
+              final expectedTotal =
+                  extractExpectedPaysTotalFromMessage(e.message);
+              if ((e.statusCode ?? 0) == 422 && expectedTotal != null) {
+                updatePaysPayload = _buildUpdatePaysPayload(
+                  updatePaysSource,
+                  expectedTotal,
+                );
+                print(
+                  '♻️ Adjusted updatePays payload to backend total=$expectedTotal and retrying',
+                );
+                try {
+                  await orderService.updateInvoicePays(
+                    invoiceIdValue,
+                    pays: updatePaysPayload,
+                    date: dateStr,
+                  );
+                } on ApiException catch (retryError) {
+                  final retryExpectedTotal =
+                      extractExpectedPaysTotalFromMessage(
+                            retryError.message,
+                          ) ??
+                          expectedTotal;
+                  if ((retryError.statusCode ?? 0) == 422 &&
+                      retryExpectedTotal > 0) {
+                    final preferredMethod =
+                        updatePaysPayload.first['pay_method']?.toString() ??
+                            normalizedPays
+                                .firstWhere(
+                                  (p) =>
+                                      p['pay_method']
+                                          ?.toString()
+                                          .trim()
+                                          .isNotEmpty ==
+                                      true,
+                                  orElse: () => {'pay_method': 'cash'},
+                                )['pay_method']
+                                .toString();
+                    final forcedPayload = _buildUpdatePaysPayload(
+                      [
+                        {
+                          'name': preferredMethod == 'card'
+                              ? 'البطاقة'
+                              : 'دفع نقدي',
+                          'pay_method': preferredMethod,
+                          'amount': retryExpectedTotal,
+                          'index': 0,
+                        },
+                      ],
+                      retryExpectedTotal,
+                    );
+                    print(
+                      '♻️ Final updatePays fallback with exact backend total=$retryExpectedTotal method=$preferredMethod',
+                    );
+                    await orderService.updateInvoicePays(
+                      invoiceIdValue,
+                      pays: forcedPayload,
+                      date: dateStr,
+                    );
+                  }
+                }
+              }
+            } catch (e) {
+              print(
+                  '⚠️ updateInvoicePays failed for invoice_id=$invoiceId: $e');
+            }
+          }());
+        }
+      }
+
+      if (type == 'payment') {
+        await _recordCashTransaction(normalizedPays);
+        unawaited(
+          _showCashPaymentSuccessOnCds(
+            displayService: displayService,
+            pays: normalizedPays,
+          ),
+        );
+      }
+
+      // Capture table name before it gets cleared by table release
+      final capturedTableNumber = _selectedTable?.number
+          ?? _lastSelectedTable?.number
+          ?? selectedTableForOrder?.number;
+
+      if (type == 'payment') {
+        TableItem? tableToRelease = selectedTableForOrder;
+        if (tableToRelease == null) {
+          final bookingTableMap = asStringKeyMap(bookingDataMap?['table']);
+          final bookingTableId = firstNonEmptyText(
+            [
+              bookingNode?['table_id'],
+              bookingDataMap?['table_id'],
+              bookingTableMap?['id'],
+            ],
+            allowZero: false,
+          );
+          if (bookingTableId != null && bookingTableId.isNotEmpty) {
+            try {
+              tableToRelease =
+                  await _tableService.getTableDetails(bookingTableId);
+              if (tableToRelease == null) {
+                final tables = await _tableService.getTables();
+                for (final candidate in tables) {
+                  if (candidate.id == bookingTableId) {
+                    tableToRelease = candidate;
+                    break;
+                  }
+                }
+              }
+              if (tableToRelease != null) {
+                print(
+                  'ℹ️ Resolved table for release from booking payload table_id=$bookingTableId',
+                );
+              }
+            } catch (e) {
+              print(
+                '⚠️ Could not resolve table for release booking=$orderId table_id=$bookingTableId error=$e',
+              );
+            }
+          }
+        }
+        if (tableToRelease != null) {
+          await _syncTableReservationForOrder(
+            tableToRelease,
+            reserved: false,
+          );
+          if (mounted &&
+              (_selectedTable?.id == tableToRelease.id ||
+                  _lastSelectedTable?.id == tableToRelease.id)) {
+            setState(() {
+              _selectedTable = null;
+              _lastSelectedTable = null;
+            });
+          }
+        }
+      }
+
+      print('💰 DISCOUNT DEBUG: appliedDiscount=$appliedDiscountAmount, orderTotal=$orderTotal, gross=$grossOrderTotal, promo=${_activePromoCode?.code}/${_activePromoCode?.discount}, manualDiscount=$_orderDiscount, isFree=$_isOrderFree');
+
+      // Use payableTotal (server-confirmed) not orderTotal (local estimate)
+      // Use displayOrderRef (daily order number) not orderId (booking ID)
+      final receiptOrderType = (_isMenuListActive && _activeMenuListName.isNotEmpty)
+          ? '$bookingOrderType ($_activeMenuListName)'
+          : bookingOrderType;
+      final receiptData = _buildOrderReceiptData(
+        orderId: displayOrderRef,
+        invoiceNumber: invoiceNumber,
+        orderItems: orderItemsSnapshot,
+        orderTotal: payableTotal,
+        orderType: receiptOrderType,
+        type: type,
+        pays: normalizedPays,
+        invoicePayload: await resolveInvoicePayloadForPreview(
+          invoiceId,
+          invoicePayload,
+        ),
+        carNumber: carNumber,
+        discountAmount:
+            appliedDiscountAmount > 0 ? appliedDiscountAmount : null,
+        discountPercentage: _activePromoCode?.type == DiscountType.percentage
+            ? _activePromoCode?.discount
+            : null,
+        discountName: _activePromoCode != null
+            ? 'برومو كود: ${_activePromoCode!.code}'
+            : (_orderDiscount > 0 ? 'خصم يدوي' : null),
+      );
+
+      unawaited(() async {
+        // Push a final order payload to KDS with resolved invoice/promo/cash-float
+        // so kitchen screens always render the latest financial context.
+        if (_isKdsEnabled && kdsOrderDispatched) {
+          try {
+            displayService.sendOrderToKitchen(
+              orderId: orderId,
+              orderNumber: displayOrderRef,
+              orderType: bookingOrderType,
+              items: kdsItemsPayload,
+              note: _orderNotesController.text.isNotEmpty
+                  ? _orderNotesController.text
+                  : null,
+              total: orderTotal,
+              invoice: _buildKdsInvoicePayload(
+                bookingId: orderId,
+                orderId: backendOrderId,
+                orderNumber: displayOrderRef,
+                invoiceId: invoiceId,
+                invoiceNumber: invoiceNumber,
+                type: type,
+                orderTotal: orderTotal,
+                grossOrderTotal: grossOrderTotal,
+                discountAmount: appliedDiscountAmount,
+                promoCodeId: promoCodeId,
+                promoCode: promoCodeValue,
+                promoDiscountType: promoDiscountType,
+                orderItems: orderItemsSnapshot,
+                cashFloatSnapshot: _buildCashFloatSnapshot(),
+              ),
+              switchMode: false,
+            );
+          } catch (e) {
+            print('⚠️ Failed to push final KDS payload for #$orderId: $e');
+          }
+        }
+
+        // Fallback dispatch in case early dispatch didn't happen.
+        if (_isKdsEnabled && !kdsScreenReceivedOrder) {
+          try {
+            final fallbackDispatchAcked = await _dispatchOrderToKdsWithAck(
+              displayService: displayService,
+              orderId: orderId,
+              orderNumber: displayOrderRef,
+              orderType: bookingOrderType,
+              items: kdsItemsPayload,
+              note: _orderNotesController.text.isNotEmpty
+                  ? _orderNotesController.text
+                  : null,
+              total: orderTotal,
+              invoice: _buildKdsInvoicePayload(
+                bookingId: orderId,
+                orderId: backendOrderId,
+                orderNumber: displayOrderRef,
+                invoiceId: invoiceId,
+                invoiceNumber: invoiceNumber,
+                type: type,
+                orderTotal: orderTotal,
+                grossOrderTotal: grossOrderTotal,
+                discountAmount: appliedDiscountAmount,
+                promoCodeId: promoCodeId,
+                promoCode: promoCodeValue,
+                promoDiscountType: promoDiscountType,
+                orderItems: orderItemsSnapshot,
+                cashFloatSnapshot: _buildCashFloatSnapshot(),
+              ),
+            );
+            kdsOrderDispatched = true;
+            kdsScreenReceivedOrder =
+                kdsScreenReceivedOrder || fallbackDispatchAcked;
+            if (fallbackDispatchAcked) {
+              print('✅ NEW_ORDER fallback dispatch to KDS with ACK: #$orderId');
+            } else {
+              print(
+                '⚠️ Fallback NEW_ORDER dispatch sent but ACK still not confirmed: #$orderId',
+              );
+            }
+          } catch (e) {
+            print('⚠️ Failed fallback dispatching NEW_ORDER #$orderId: $e');
+          }
+        }
+
+        final kdsHandledThisPayment =
+            type == 'payment' && kdsScreenReceivedOrder;
+        final shouldDispatchKitchenPrint =
+            !kdsHandledThisPayment || _allowPrintWithKds;
+        if (shouldDispatchKitchenPrint) {
+          try {
+            // Enrich kitchen items with bilingual names.
+            // Source 1: invoicePayload (available for type=payment)
+            // Source 2: booking details API (fallback for type=later/deferred)
+            List<dynamic> apiItemsList = const [];
+
+            // Try invoicePayload first
+            final invoiceItems = (invoicePayload?['items']) ??
+                (invoicePayload?['sales_meals']) ??
+                (invoicePayload?['meals']);
+            if (invoiceItems is List && invoiceItems.isNotEmpty) {
+              apiItemsList = invoiceItems;
+              print('🔍 ENRICH: using invoicePayload items (${invoiceItems.length})');
+            } else {
+              print('🔍 ENRICH: invoicePayload is ${invoicePayload == null ? "NULL" : "empty items"}');
+            }
+
+            // Fallback: fetch booking details for bilingual names
+            if (apiItemsList.isEmpty && orderId.isNotEmpty) {
+              try {
+                final orderService = getIt<OrderService>();
+                final bookingDetails = await orderService.getBookingDetails(orderId);
+                final bookingData = bookingDetails['data'] ?? bookingDetails;
+                // API returns nested structure: { booking: { meals: [...] }, booking_services: [...] }
+                final bookingNode = (bookingData is Map && bookingData['booking'] is Map)
+                    ? bookingData['booking']
+                    : bookingData;
+                print('🔍 ENRICH: bookingNode keys=${bookingNode is Map ? bookingNode.keys.toList() : "NOT_MAP"}');
+                final bookingItems = (bookingNode is Map)
+                    ? (bookingNode['meals'] ??
+                        bookingNode['items'] ??
+                        bookingNode['sales_meals'] ??
+                        bookingNode['booking_meals'] ??
+                        bookingNode['card'])
+                    : null;
+                if (bookingItems is List && bookingItems.isNotEmpty) {
+                  apiItemsList = bookingItems;
+                  final firstItem = bookingItems[0];
+                  print('🔍 ENRICH: booking items found (${bookingItems.length}), first item keys=${firstItem is Map ? firstItem.keys.toList() : "NOT_MAP"}');
+                  if (firstItem is Map) {
+                    print('🔍 ENRICH: first item_name="${firstItem['item_name']}" meal_name="${firstItem['meal_name']}" name="${firstItem['name']}" name_en="${firstItem['name_en']}"');
+                  }
+                } else {
+                  print('🔍 ENRICH: no booking items found (bookingItems=${bookingItems?.runtimeType})');
+                }
+              } catch (e) {
+                print('⚠️ Could not fetch booking details for bilingual names: $e');
+              }
+            }
+
+            final enrichedItems = orderItemsSnapshot.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final item = Map<String, dynamic>.from(entry.value);
+              final currentNameEn = item['nameEn']?.toString().trim() ?? '';
+              if (currentNameEn.isEmpty && idx < apiItemsList.length) {
+                final apiItem = apiItemsList[idx];
+                if (apiItem is Map) {
+                  // Try item_name (combined bilingual: "عربي - English")
+                  final apiName = (apiItem['item_name'] ??
+                      apiItem['meal_name'] ??
+                      apiItem['name'])?.toString() ?? '';
+                  if (apiName.contains(' - ')) {
+                    item['nameAr'] = apiName.split(' - ').first.trim();
+                    item['nameEn'] = apiName.split(' - ').last.trim();
+                  }
+                  // Also try explicit name_en field
+                  if ((item['nameEn']?.toString().trim() ?? '').isEmpty) {
+                    final explicitEn = (apiItem['name_en'] ??
+                        apiItem['item_name_en'] ??
+                        apiItem['meal_name_en'])?.toString().trim() ?? '';
+                    if (explicitEn.isNotEmpty) {
+                      item['nameEn'] = explicitEn;
+                    }
+                  }
+                }
+              }
+              return item;
+            }).toList();
+
+            await _triggerKitchenPrint(
+              orderId: orderId,
+              invoiceNumber: invoiceNumber,
+              orderItems: enrichedItems,
+              dailyOrderNumber: displayOrderRef,
+              capturedTableNumber: capturedTableNumber,
+              carNumber: carNumber,
+            );
+          } catch (_) {}
+        } else {
+          print(
+            'ℹ️ Kitchen printer dispatch skipped for #$orderId because KDS handled this paid order and print-with-KDS is disabled.',
+          );
+        }
+
+        // Clear Customer Display System after successful order
+        if (_isCdsEnabled &&
+            displayService.isConnected &&
+            displayService.currentMode == DisplayMode.cds) {
+          displayService.clearCart();
+        }
+      }());
+
+      // Close loading
+      if (showLoadingOverlay && mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+
+      if (type == 'payment') {
+        unawaited(
+          _autoPrintReceiptCopies(
+            receiptData: receiptData,
+            invoiceId: invoiceId,
+          ),
+        );
+      }
+
+      if (clearCartOnSuccess) {
+        _clearCart();
+      }
+
+      // Invoice actions must remain payment-only.
+      final allowCashierInvoicePreview = type == 'payment';
+
+      // Show success
+      if (mounted) {
+        final successOrderRef = normalizeDisplayOrderRef(displayOrderRef);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم حفظ الطلب رقم $successOrderRef'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      // Close loading
+      if (showLoadingOverlay && mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+
+      // Show error
+      if (mounted) {
+        final userMessage = ErrorHandler.toUserMessage(
+          e,
+          fallback: 'تعذر حفظ الطلب حاليًا. حاول مرة أخرى.',
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(userMessage),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'إعادة المحاولة',
+              textColor: Colors.white,
+              onPressed: () {
+                unawaited(
+                  _processPayment(
+                    type: type,
+                    pays: pays,
+                    showLoadingOverlay: showLoadingOverlay,
+                    showSuccessDialog: showSuccessDialog,
+                    clearCartOnSuccess: clearCartOnSuccess,
+                    isNearPayCardFlow: isNearPayCardFlow,
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  OrderReceiptData _buildOrderReceiptData({
+    required String orderId,
+    String? invoiceNumber,
+    required List<Map<String, dynamic>> orderItems,
+    required double orderTotal,
+    required String orderType,
+    required String type,
+    required List<Map<String, dynamic>> pays,
+    Map<String, dynamic>? invoicePayload,
+    String carNumber = '',
+    double? discountAmount,
+    double? discountPercentage,
+    String? discountName,
+  }) {
+    final subtotal = _subtotalFromTaxInclusiveTotal(orderTotal);
+    final vat = _taxFromTaxInclusiveTotal(orderTotal);
+    final branch = invoicePayload?['branch'];
+    final seller = invoicePayload?['seller'];
+    final invoice = invoicePayload?['invoice'];
+    final branchMap = branch is Map ? branch : null;
+    final sellerMap = seller is Map ? seller : null;
+    // The API nests seller inside branch (branch.seller), not at root
+    final nestedSeller = branchMap?['seller'];
+    final nestedSellerMap = nestedSeller is Map ? nestedSeller : null;
+    final originalSeller = branchMap?['original_seller'];
+    final originalSellerMap = originalSeller is Map ? originalSeller : null;
+    final invoiceMap = invoice is Map ? invoice : null;
+
+    String? firstNonEmptyString(List<dynamic> values) {
+      for (final value in values) {
+        final text = value?.toString().trim();
+        if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+          return text;
+        }
+      }
+      return null;
+    }
+
+    List<ReceiptPayment> parsePaymentsList(dynamic paysRaw) {
+      final paysList = paysRaw is List ? paysRaw : const [];
+      final parsedPayments = <ReceiptPayment>[];
+
+      double parseNumLocal(dynamic value) {
+        if (value is num) return value.toDouble();
+        if (value is String) return double.tryParse(value) ?? 0.0;
+        return 0.0;
+      }
+
+      for (final pay in paysList) {
+        final map = pay is Map ? pay : null;
+        if (map == null) continue;
+        final method = (map['pay_method'] ?? map['method'] ?? map['name'])
+            ?.toString()
+            .trim()
+            .toLowerCase();
+        final numericAmount = parseNumLocal(map['amount'] ?? map['value'] ?? map['paid'] ?? map['total']);
+        if (method == null || method.isEmpty) continue;
+
+        String label = 'دفع';
+        switch (method) {
+          case 'cash':
+          case 'نقدي':
+          case 'كاش':
+            label = 'نقدي';
+            break;
+          case 'card':
+          case 'mada':
+          case 'visa':
+          case 'benefit':
+          case 'benefit_pay':
+          case 'benefit pay':
+          case 'بطاقة':
+          case 'مدى':
+          case 'فيزا':
+          case 'ماستر':
+          case 'ماستر كارد':
+          case 'بينيفت':
+          case 'بينيفت باي':
+            label = 'بطاقة';
+            break;
+          case 'stc':
+          case 'stc_pay':
+          case 'stc pay':
+          case 'اس تي سي':
+          case 'اس تي سي باي':
+            label = 'STC Pay';
+            break;
+          case 'bank_transfer':
+          case 'bank':
+          case 'bank transfer':
+          case 'تحويل بنكي':
+          case 'تحويل بنكى':
+            label = 'تحويل بنكي';
+            break;
+          case 'wallet':
+          case 'المحفظة':
+          case 'المحفظة الالكترونية':
+          case 'المحفظة الإلكترونية':
+            label = 'محفظة';
+            break;
+          case 'cheque':
+          case 'check':
+          case 'شيك':
+            label = 'شيك';
+            break;
+          case 'petty_cash':
+          case 'petty cash':
+          case 'بيتي كاش':
+            label = 'بيتي كاش';
+            break;
+          case 'pay_later':
+          case 'postpaid':
+          case 'deferred':
+          case 'pay later':
+          case 'الدفع بالآجل':
+          case 'الدفع بالاجل':
+            label = 'الدفع بالآجل';
+            break;
+          case 'tabby':
+          case 'تابي':
+            label = 'تابي';
+            break;
+          case 'tamara':
+          case 'تمارا':
+            label = 'تمارا';
+            break;
+          case 'keeta':
+          case 'كيتا':
+            label = 'كيتا';
+            break;
+          case 'my_fatoorah':
+          case 'myfatoorah':
+          case 'my fatoorah':
+          case 'ماي فاتورة':
+          case 'ماي فاتوره':
+            label = 'ماي فاتورة';
+            break;
+          case 'jahez':
+          case 'جاهز':
+            label = 'جاهز';
+            break;
+          case 'talabat':
+          case 'طلبات':
+            label = 'طلبات';
+            break;
+          default:
+            label = method;
+        }
+        parsedPayments.add(ReceiptPayment(methodLabel: label, amount: numericAmount));
+      }
+      return parsedPayments;
+    }
+
+    // Extract branch address & mobile for receipt header
+    final branchAddress = firstNonEmptyString([
+      branchMap?['address'],
+      branchMap?['district'],
+      sellerMap?['address'],
+      invoiceMap?['branch_address'],
+      invoicePayload?['address'],
+    ]);
+    // English fields from merged payload
+    final branchAddressEn = firstNonEmptyString([
+      invoicePayload?['branch_address_en'],
+      invoicePayload?['branch_district_en'],
+    ]);
+    final sellerNameEn = firstNonEmptyString([
+      invoicePayload?['seller_name_en'],
+    ]);
+    final branchMobile = firstNonEmptyString([
+      branchMap?['mobile'],
+      branchMap?['phone'],
+      sellerMap?['mobile'],
+      sellerMap?['phone'],
+      invoiceMap?['branch_mobile'],
+      invoicePayload?['mobile'],
+    ]);
+
+    // Extract tax number (API nests it in branch.seller.tax_number)
+    final taxNumber = firstNonEmptyString([
+      nestedSellerMap?['tax_number'],
+      originalSellerMap?['tax_number'],
+      branchMap?['tax_number'],
+      sellerMap?['tax_number'],
+      nestedSellerMap?['vat_number'],
+      originalSellerMap?['vat_number'],
+      branchMap?['vat_number'],
+      sellerMap?['vat_number'],
+      invoiceMap?['tax_number'],
+      invoiceMap?['vat_number'],
+      invoicePayload?['tax_number'],
+      invoicePayload?['vat_number'],
+    ]);
+
+    // Extract commercial register number (same nesting pattern)
+    final commercialRegNumber = firstNonEmptyString([
+      nestedSellerMap?['commercial_register_number'],
+      nestedSellerMap?['commercial_register'],
+      originalSellerMap?['commercial_register_number'],
+      originalSellerMap?['commercial_register'],
+      branchMap?['commercial_register_number'],
+      sellerMap?['commercial_register_number'],
+      branchMap?['commercial_register'],
+      sellerMap?['commercial_register'],
+      branchMap?['commercial_number'],
+      sellerMap?['commercial_number'],
+      nestedSellerMap?['cr_number'],
+      originalSellerMap?['cr_number'],
+      branchMap?['cr_number'],
+      sellerMap?['cr_number'],
+      invoiceMap?['commercial_register_number'],
+      invoiceMap?['commercial_register'],
+      invoiceMap?['commercial_number'],
+      invoiceMap?['cr_number'],
+      invoicePayload?['commercial_register_number'],
+      invoicePayload?['commercial_register'],
+      invoicePayload?['commercial_number'],
+      invoicePayload?['cr_number'],
+    ]);
+
+    // Extract QR code (for base64 QR)
+    final qrValue = (invoiceMap?['qr_image'] ??
+            invoiceMap?['zatca_qr_image'] ??
+            invoicePayload?['qr_image'])
+        ?.toString();
+
+    // Extract ZATCA QR image URL (separate from base64 QR)
+    final zatcaQrImageUrl =
+        (invoiceMap?['zatca_qr_image'] ?? invoicePayload?['zatca_qr_image'])
+            ?.toString();
+
+    // Extract seller logo from branch.seller.logo or branch.original_seller.logo
+    String? logoUrl;
+    if (branchMap != null) {
+      final branchSeller = branchMap['seller'];
+      final originalSeller = branchMap['original_seller'];
+
+      if (branchSeller is Map && branchSeller['logo'] != null) {
+        logoUrl = branchSeller['logo'].toString();
+      } else if (originalSeller is Map && originalSeller['logo'] != null) {
+        final logo = originalSeller['logo'].toString();
+        // If logo starts with /, prepend base URL
+        if (logo.startsWith('/')) {
+          logoUrl = 'https://portal.hermosaapp.com$logo';
+        } else {
+          logoUrl = logo;
+        }
+      }
+    }
+
+    final invoiceDateTime = (invoiceMap?['ISO8601'] ??
+            invoiceMap?['date'] ??
+            invoicePayload?['created_at'])
+        ?.toString();
+
+    // Extract cashier name
+    final cashierName = (invoiceMap?['cashier'] is Map
+            ? (invoiceMap?['cashier']['fullname'] ??
+                invoiceMap?['cashier']['name'])
+            : invoiceMap?['cashier_name'] ??
+                invoicePayload?['cashier_name'] ??
+                invoicePayload?['user_name'])
+        ?.toString();
+
+    // Use cashier name as seller name
+    final sellerName = cashierName;
+    final branchName = (branchMap?['seller_name'] ??
+            invoicePayload?['table_name'] ??
+            _selectedTable?.number)
+        ?.toString();
+    // Extract menu list suffix (e.g. "(هنقرستيشن)") from orderType if present
+    String menuListSuffix = '';
+    String baseOrderType = orderType;
+    final parenIdx = orderType.indexOf('(');
+    if (parenIdx > 0) {
+      menuListSuffix = ' ${orderType.substring(parenIdx).trim()}';
+      baseOrderType = orderType.substring(0, parenIdx).trim();
+    }
+    final rawResolvedOrderType = _normalizeOrderTypeValue(
+      firstNonEmptyString([
+            invoiceMap?['type'],
+            invoiceMap?['booking_type'],
+            invoiceMap?['order_type'],
+            invoicePayload?['type'],
+            invoicePayload?['booking_type'],
+            invoicePayload?['order_type'],
+            baseOrderType,
+          ]) ??
+          baseOrderType,
+    );
+    final resolvedOrderType = menuListSuffix.isNotEmpty
+        ? '$rawResolvedOrderType$menuListSuffix'
+        : rawResolvedOrderType;
+
+    // Extract the actual daily order number from the invoice payload.
+    // The API stores it under booking/order sub-objects or at the root level.
+    final bookingNode = invoicePayload?['booking'];
+    final orderNode = invoicePayload?['order'];
+    final bookingNodeMap = bookingNode is Map ? bookingNode : null;
+    final orderNodeMap = orderNode is Map ? orderNode : null;
+    final resolvedDailyOrderNumber = firstNonEmptyString([
+      invoiceMap?['daily_order_number'],
+      invoiceMap?['order_number'],
+      bookingNodeMap?['daily_order_number'],
+      bookingNodeMap?['order_number'],
+      orderNodeMap?['daily_order_number'],
+      orderNodeMap?['order_number'],
+      invoicePayload?['daily_order_number'],
+      invoicePayload?['order_number'],
+    ]);
+
+    // Extract correct invoice number from the payload (not booking ID).
+    final resolvedInvoiceNumber = firstNonEmptyString([
+          invoiceNumber,
+          invoiceMap?['invoice_number'],
+          invoicePayload?['invoice_number'],
+        ]) ??
+        '';
+
+    // Extract English seller name from "تكانة | Takana" or from merged en field
+    String resolvedSellerNameEn;
+    if (sellerNameEn != null && sellerNameEn.isNotEmpty) {
+      resolvedSellerNameEn = sellerNameEn;
+    } else if (sellerName != null && sellerName.contains('|')) {
+      resolvedSellerNameEn = sellerName.split('|').last.trim();
+    } else {
+      resolvedSellerNameEn = sellerName ?? _userName;
+    }
+
+    String resolvedSellerNameAr;
+    if (sellerName != null && sellerName.contains('|')) {
+      resolvedSellerNameAr = sellerName.split('|').first.trim();
+    } else {
+      resolvedSellerNameAr = sellerName ?? _userName;
+    }
+
+    // English address (from merged en payload or fallback)
+    final resolvedBranchAddressEn = branchAddressEn ?? branchAddress ?? '';
+
+    return OrderReceiptData(
+      invoiceNumber: resolvedInvoiceNumber,
+      issueDateTime: invoiceDateTime ?? DateTime.now().toIso8601String(),
+      sellerNameAr: resolvedSellerNameAr,
+      sellerNameEn: resolvedSellerNameEn,
+      vatNumber: taxNumber ?? '',
+      branchName: branchName ?? '',
+      carNumber: carNumber,
+      branchAddressEn: resolvedBranchAddressEn,
+      items: () {
+        // Merge bilingual item names from invoice API into cart items
+        final apiItems = (invoiceMap is Map ? invoiceMap['items'] : null) ??
+            (invoicePayload?['items']);
+        final apiItemsList = apiItems is List ? apiItems : const [];
+
+        return orderItems.asMap().entries.map((entry) {
+          final idx = entry.key;
+          final item = entry.value;
+          final cartName = item['name']?.toString() ?? '';
+
+          // Try to get bilingual name from API (format: "عربي - English")
+          String arName = cartName;
+          String enName = '';
+
+          if (idx < apiItemsList.length) {
+            final apiItem = apiItemsList[idx];
+            final apiName = (apiItem is Map ? apiItem['item_name']?.toString() : null) ?? '';
+            if (apiName.contains(' - ')) {
+              arName = apiName.split(' - ').first.trim();
+              enName = apiName.split(' - ').last.trim();
+            } else if (apiName.isNotEmpty) {
+              arName = apiName;
+            }
+          }
+
+          // Fallback: split cart name if it has " - "
+          if (enName.isEmpty && cartName.contains(' - ')) {
+            arName = cartName.split(' - ').first.trim();
+            enName = cartName.split(' - ').last.trim();
+          }
+
+          final rawQty = (item['quantity'] as num?)?.toDouble() ?? 0;
+          final rawUnitPrice = (item['unitPrice'] as num?)?.toDouble() ?? 0;
+          final rawTotal = (item['total'] as num?)?.toDouble() ?? 0;
+
+          final multiplier = _isTaxEnabled ? (1.0 + _taxRate) : 1.0;
+
+          return ReceiptItem(
+            nameAr: arName,
+            nameEn: enName.isNotEmpty ? enName : arName,
+            quantity: rawQty,
+            unitPrice: rawUnitPrice * multiplier,
+            total: rawTotal * multiplier,
+          );
+        }).toList();
+      }(),
+      totalExclVat: subtotal,
+      vatAmount: vat,
+      totalInclVat: orderTotal,
+      paymentMethod: _buildPaymentMethodLabel(type: type, pays: pays),
+      payments: parsePaymentsList(pays),
+      qrCodeBase64: qrValue ?? '',
+      sellerLogo: logoUrl,
+      zatcaQrImage: zatcaQrImageUrl,
+      branchAddress: branchAddress,
+      branchMobile: branchMobile,
+      commercialRegisterNumber: commercialRegNumber,
+      cashierName: cashierName ?? _userName,
+      orderType: resolvedOrderType,
+      orderNumber: resolvedDailyOrderNumber ?? orderId,  // orderId is now displayOrderRef (daily order#)
+      orderDiscountAmount: discountAmount,
+      orderDiscountPercentage: discountPercentage,
+      orderDiscountName: discountName,
+    );
+  }
+
+  String _payMethodArabicLabel(String method) {
+    switch (method) {
+      case 'cash':
+        return 'نقدي';
+      case 'card':
+        return 'بطاقة';
+      case 'mada':
+        return 'مدى';
+      case 'visa':
+        return 'فيزا';
+      case 'stc':
+        return 'STC Pay';
+      case 'bank_transfer':
+        return 'تحويل بنكي';
+      case 'wallet':
+        return 'محفظة';
+      case 'cheque':
+        return 'شيك';
+      case 'benefit':
+        return 'Benefit Pay';
+      case 'tabby':
+        return 'Tabby';
+      case 'tamara':
+        return 'Tamara';
+      case 'keeta':
+        return 'Keeta';
+      case 'my_fatoorah':
+        return 'ماي فاتورة';
+      case 'jahez':
+        return 'جاهز';
+      case 'talabat':
+        return 'طلبات';
+      case 'petty_cash':
+        return 'بيتي كاش';
+      case 'pay_later':
+        return 'دفع لاحق';
+      default:
+        return method.isNotEmpty ? method : 'دفع';
+    }
+  }
+
+  String _buildPaymentMethodLabel({
+    required String type,
+    required List<Map<String, dynamic>> pays,
+  }) {
+    if (type != 'payment') return 'دفع لاحق';
+    if (pays.isEmpty) return 'دفع';
+
+    // Split payment: show method + amount for each
+    if (pays.length > 1) {
+      final parts = pays.map((pay) {
+        final method = _normalizePayMethod(pay['pay_method']?.toString());
+        final label = _payMethodArabicLabel(method);
+        final amount = pay['amount'];
+        if (amount != null) {
+          final amountStr = (amount is num)
+              ? amount.toStringAsFixed(2)
+              : (double.tryParse(amount.toString()) ?? 0).toStringAsFixed(2);
+          return '$label ($amountStr)';
+        }
+        return label;
+      }).toList();
+      return parts.join(' - ');
+    }
+
+    // Single payment
+    final method = _normalizePayMethod(pays.first['pay_method']?.toString());
+    return _payMethodArabicLabel(method);
+  }
+
+  Map<String, dynamic> _buildKdsInvoicePayload({
+    required String bookingId,
+    String? orderId,
+    String? orderNumber,
+    String? invoiceId,
+    String? invoiceNumber,
+    required String type,
+    required double orderTotal,
+    required double grossOrderTotal,
+    required double discountAmount,
+    String? promoCodeId,
+    String? promoCode,
+    String? promoDiscountType,
+    required List<Map<String, dynamic>> orderItems,
+    Map<String, dynamic>? cashFloatSnapshot,
+  }) {
+    final resolvedOrderId =
+        (orderId ?? '').trim().isNotEmpty ? orderId!.trim() : bookingId;
+    final resolvedOrderNumber = orderNumber?.trim();
+    final originalSubtotal = _subtotalFromTaxInclusiveTotal(grossOrderTotal);
+    final originalVat = _taxFromTaxInclusiveTotal(grossOrderTotal);
+    final discountedSubtotal = _subtotalFromTaxInclusiveTotal(orderTotal);
+    final discountedVat = _taxFromTaxInclusiveTotal(orderTotal);
+    final taxPercentage = double.parse((_taxRate * 100).toStringAsFixed(4));
+
+    return {
+      'bookingId': bookingId,
+      'booking_id': bookingId,
+      'orderId': resolvedOrderId,
+      'order_id': resolvedOrderId,
+      if (resolvedOrderNumber != null && resolvedOrderNumber.isNotEmpty)
+        'orderNumber': resolvedOrderNumber,
+      if (resolvedOrderNumber != null && resolvedOrderNumber.isNotEmpty)
+        'order_number': resolvedOrderNumber,
+      if (invoiceId != null) 'invoiceId': invoiceId,
+      'invoiceNumber': invoiceNumber ?? 'KDS-$bookingId',
+      'source': 'cashier',
+      'invoiceType': type == 'payment' ? 'sales' : 'kitchen',
+      'paymentStatus': type == 'payment' ? 'paid' : 'pending',
+      'subtotal': discountedSubtotal,
+      'tax': discountedVat,
+      'tax_rate': _taxRate,
+      'tax_percentage': taxPercentage,
+      'has_tax': _isTaxEnabled,
+      'total': orderTotal,
+      'original_subtotal': originalSubtotal,
+      'original_tax': originalVat,
+      'original_total': grossOrderTotal,
+      'discount': discountAmount,
+      'createdAt': DateTime.now().toIso8601String(),
+      'items': orderItems
+          .map(
+            (item) => {
+              'name': item['name'],
+              'quantity': item['quantity'],
+              'unitPrice': item['unitPrice'],
+              'total': item['total'],
+              'notes': item['notes'],
+              'extras': item['extras'],
+              // ✅ Include discount details per item
+              'original_unit_price': item['original_unit_price'],
+              'original_total': item['original_total'],
+              'final_total': item['final_total'],
+              'discount': item['discount'],
+              'discount_type': item['discount_type'],
+              'is_free': item['is_free'],
+            },
+          )
+          .toList(),
+      if (promoCode != null && promoCode.isNotEmpty)
+        'promo': {
+          if (promoCodeId != null && promoCodeId.isNotEmpty) 'id': promoCodeId,
+          'code': promoCode,
+          'discount_type': promoDiscountType ?? 'fixed',
+          'discount_amount': discountAmount,
+        },
+      if (cashFloatSnapshot != null) 'cash_float': cashFloatSnapshot,
+    };
+  }
+
+  Map<String, dynamic>? _asStringMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, val) => MapEntry(key.toString(), val));
+    }
+    return null;
+  }
+
+  String? _firstNonEmptyText(Iterable<dynamic> candidates) {
+    for (final candidate in candidates) {
+      final text = candidate?.toString().trim();
+      if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  double _toSafeDouble(dynamic value, {double fallback = 0.0}) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  Map<String, dynamic> _composeKitchenTemplateMeta({
+    Map<String, dynamic>? source,
+    String? fallbackOrderNumber,
+    String? fallbackOrderType,
+    String? fallbackInvoiceNumber,
+    String? fallbackNote,
+  }) {
+    Map<String, dynamic> mapOrEmpty(dynamic value) {
+      return _asStringMap(value) ?? const <String, dynamic>{};
+    }
+
+    final root = source ?? const <String, dynamic>{};
+    final envelope =
+        mapOrEmpty(root['data']).isNotEmpty ? mapOrEmpty(root['data']) : root;
+
+    final invoice = mapOrEmpty(envelope['invoice']).isNotEmpty
+        ? mapOrEmpty(envelope['invoice'])
+        : mapOrEmpty(root['invoice']);
+    final booking = mapOrEmpty(envelope['booking']).isNotEmpty
+        ? mapOrEmpty(envelope['booking'])
+        : mapOrEmpty(invoice['booking']);
+    final branch = mapOrEmpty(envelope['branch']).isNotEmpty
+        ? mapOrEmpty(envelope['branch'])
+        : mapOrEmpty(invoice['branch']);
+    final seller = mapOrEmpty(branch['seller']).isNotEmpty
+        ? mapOrEmpty(branch['seller'])
+        : mapOrEmpty(envelope['seller']);
+    final client = mapOrEmpty(invoice['client']).isNotEmpty
+        ? mapOrEmpty(invoice['client'])
+        : mapOrEmpty(envelope['client']);
+    final typeExtra = mapOrEmpty(booking['type_extra']).isNotEmpty
+        ? mapOrEmpty(booking['type_extra'])
+        : mapOrEmpty(envelope['type_extra']);
+
+    final date = _firstNonEmptyText(<dynamic>[
+      invoice['date'],
+      booking['date'],
+      envelope['date'],
+    ]);
+    final time = _firstNonEmptyText(<dynamic>[
+      invoice['time'],
+      booking['time'],
+      envelope['time'],
+    ]);
+
+    final meta = <String, dynamic>{
+      'language_code': ApiConstants.acceptLanguage,
+    };
+
+    void put(String key, String? value) {
+      if (value != null && value.trim().isNotEmpty) {
+        meta[key] = value.trim();
+      }
+    }
+
+    put(
+        'seller_name',
+        _firstNonEmptyText(<dynamic>[
+          branch['seller_name'],
+          branch['name'],
+          seller['seller_name'],
+          seller['name'],
+        ]));
+    put(
+        'branch_name',
+        _firstNonEmptyText(<dynamic>[
+          branch['name'],
+          branch['seller_name'],
+        ]));
+    put(
+        'branch_address',
+        _firstNonEmptyText(<dynamic>[
+          branch['address'],
+          envelope['address'],
+        ]));
+    put(
+        'branch_mobile',
+        _firstNonEmptyText(<dynamic>[
+          branch['mobile'],
+          branch['phone'],
+          envelope['mobile'],
+        ]));
+    put(
+        'branch_telephone',
+        _firstNonEmptyText(<dynamic>[
+          branch['telephone'],
+          branch['phone'],
+          envelope['telephone'],
+        ]));
+    put(
+        'cashier_name',
+        _firstNonEmptyText(<dynamic>[
+          mapOrEmpty(invoice['cashier'])['fullname'],
+          mapOrEmpty(invoice['cashier'])['name'],
+          envelope['cashier_name'],
+          _userName,
+        ]));
+    put(
+        'order_number',
+        _firstNonEmptyText(<dynamic>[
+          booking['daily_order_number'],
+          booking['order_number'],
+          envelope['order_number'],
+          fallbackOrderNumber,
+        ]));
+    put(
+        'daily_order_number',
+        _firstNonEmptyText(<dynamic>[
+          booking['daily_order_number'],
+          envelope['daily_order_number'],
+        ]));
+    put(
+        'order_type',
+        _firstNonEmptyText(<dynamic>[
+          booking['type'],
+          envelope['type'],
+          fallbackOrderType,
+          _selectedOrderType,
+        ]));
+    put(
+        'invoice_number',
+        _firstNonEmptyText(<dynamic>[
+          invoice['invoice_number'],
+          envelope['invoice_number'],
+          fallbackInvoiceNumber,
+        ]));
+    put(
+        'table_name',
+        _firstNonEmptyText(<dynamic>[
+          typeExtra['table_name'],
+          booking['table_name'],
+          _selectedTable?.number,
+        ]));
+    put(
+        'car_number',
+        _firstNonEmptyText(<dynamic>[
+          typeExtra['car_number'],
+          booking['car_number'],
+          _carNumberController.text.trim(),
+        ]));
+    put(
+        'client_name',
+        _firstNonEmptyText(<dynamic>[
+          client['name'],
+          booking['customer_name'],
+          _selectedCustomer?.name,
+        ]));
+    put(
+        'client_phone',
+        _firstNonEmptyText(<dynamic>[
+          client['mobile'],
+          client['phone'],
+          booking['customer_phone'],
+          _selectedCustomer?.mobile,
+        ]));
+    put(
+        'booking_note',
+        _firstNonEmptyText(<dynamic>[
+          booking['notes'],
+          booking['note'],
+          envelope['notes'],
+          envelope['note'],
+          fallbackNote,
+          _orderNotesController.text.trim(),
+        ]));
+    put('date', date);
+    put('time', time);
+    put(
+        'commercial_register_number',
+        _firstNonEmptyText(<dynamic>[
+          branch['commercial_register_number'],
+          branch['commercial_register'],
+          seller['commercial_register_number'],
+          seller['commercial_register'],
+          envelope['commercial_register_number'],
+        ]));
+
+    return meta;
+  }
+
+  String _normalizeCategoryToken(String value) {
+    return value.trim().toLowerCase();
+  }
+
+  String? _resolveCategoryIdByName(String? categoryName) {
+    final normalizedName = _normalizeCategoryToken(categoryName ?? '');
+    if (normalizedName.isEmpty) return null;
+
+    for (final category in _categories) {
+      final id = category.id.trim();
+      if (id.isEmpty || id.toLowerCase() == 'all') continue;
+
+      final name = _normalizeCategoryToken(category.name);
+      if (name.isEmpty || name == 'all' || name == 'الكل') continue;
+      if (name == normalizedName) {
+        return id;
+      }
+    }
+    return null;
+  }
+
+  String? _resolveCategoryIdFromPrintItem(Map<String, dynamic> item) {
+    final rawCategoryId = _firstNonEmptyText(<dynamic>[
+      item['category_id'],
+      item['categoryId'],
+      item['cat_id'],
+      item['section_id'],
+    ]);
+    if (rawCategoryId != null && rawCategoryId.isNotEmpty) {
+      return rawCategoryId;
+    }
+
+    final categoryName = _firstNonEmptyText(<dynamic>[
+      item['category_name'],
+      item['category'],
+      item['section_name'],
+      item['categoryName'],
+    ]);
+    return _resolveCategoryIdByName(categoryName);
+  }
+
+  Future<bool> _dispatchKitchenPrintByCategoryRouting({
+    required PrintOrchestratorService orchestrator,
+    required CategoryPrinterRouteRegistry categoryRegistry,
+    required List<DeviceConfig> printers,
+    required String orderNumber,
+    required String orderType,
+    required List<Map<String, dynamic>> items,
+    String? note,
+    String? invoiceNumber,
+    Map<String, dynamic>? templateMeta,
+    String? clientName,
+    String? clientPhone,
+    String? tableNumber,
+    String? carNumber,
+    String? cashierName,
+    bool isRtl = true,
+  }) async {
+    cashierName ??= AuthService().getUser()?['name']?.toString();
+    if (printers.isEmpty || items.isEmpty) return false;
+    if (!categoryRegistry.hasAnyAssignments()) return false;
+
+    final printerIds = printers.map((p) => p.id).toList(growable: false);
+    final printerById = <String, DeviceConfig>{
+      for (final printer in printers) printer.id: printer,
+    };
+    final printersWithoutAssignments = printers
+        .where(
+            (printer) => !categoryRegistry.hasAssignmentsForPrinter(printer.id))
+        .toList(growable: false);
+
+    final groupedByPrinter = <String, List<Map<String, dynamic>>>{};
+
+    for (final rawItem in items) {
+      final item = Map<String, dynamic>.from(rawItem);
+      final categoryId = _resolveCategoryIdFromPrintItem(item);
+      List<String> targetPrinterIds = const <String>[];
+      if (categoryId != null && categoryId.isNotEmpty) {
+        targetPrinterIds = categoryRegistry.resolvePrinterIdsForCategoryId(
+          categoryId: categoryId,
+          availablePrinterIds: printerIds,
+        );
+      }
+
+      if (targetPrinterIds.isEmpty) {
+        if (printersWithoutAssignments.isNotEmpty) {
+          // Send to unassigned printers only (not ALL)
+          targetPrinterIds =
+              printersWithoutAssignments.map((printer) => printer.id).toList();
+        } else if (printerIds.isNotEmpty) {
+          // No unassigned printers — send to first printer only (avoid duplicates)
+          targetPrinterIds = [printerIds.first];
+        }
+      }
+
+      for (final printerId in targetPrinterIds) {
+        groupedByPrinter
+            .putIfAbsent(printerId, () => <Map<String, dynamic>>[])
+            .add(item);
+      }
+    }
+
+    var delivered = false;
+    for (final entry in groupedByPrinter.entries) {
+      final printer = printerById[entry.key];
+      if (printer == null || entry.value.isEmpty) continue;
+
+      String? deptName;
+      final assignedCatIds = categoryRegistry.categoryIdsForPrinter(printer.id);
+      if (assignedCatIds.isNotEmpty) {
+        final assignedNames = assignedCatIds.map((id) {
+          try {
+             return _categories.firstWhere((c) => c.id == id).name;
+          } catch(e) {
+             return id;
+          }
+        }).where((n) => n.isNotEmpty).join(' - ');
+        
+        if (assignedNames.isNotEmpty) {
+           deptName = assignedNames;
+        }
+      }
+
+      final result = await orchestrator.enqueueKitchenPrint(
+        printers: <DeviceConfig>[printer],
+        orderNumber: orderNumber,
+        orderType: orderType,
+        items: entry.value,
+        note: note,
+        invoiceNumber: invoiceNumber,
+        templateMeta: templateMeta,
+        clientName: clientName,
+        clientPhone: clientPhone,
+        tableNumber: tableNumber,
+        carNumber: carNumber,
+        cashierName: cashierName,
+        printerName: deptName,
+        isRtl: isRtl,
+      );
+
+      if (result.success) {
+        delivered = true;
+      }
+    }
+
+    return delivered;
+  }
+
+  List<int> _resolveKitchenIdsForReceiptGeneration() {
+    final kitchenIds = <int>{};
+    for (final device in _devices) {
+      if (!device.id.startsWith('kitchen:')) continue;
+      final parsed = int.tryParse(device.id.split(':').last);
+      if (parsed != null && parsed > 0) {
+        kitchenIds.add(parsed);
+      }
+    }
+
+    if (kitchenIds.isEmpty) {
+      kitchenIds.add(1);
+    }
+
+    final sorted = kitchenIds.toList()..sort();
+    return sorted;
+  }
+
+  bool _isKitchenAlreadySentError(Object error) {
+    final raw = error.toString().toLowerCase();
+    if (raw.contains('sended to kitchen in the past')) return true;
+
+    if (error is ApiException) {
+      final joined =
+          '${error.message} ${error.userMessage ?? ''}'.toLowerCase().trim();
+      if (joined.contains('sended to kitchen in the past')) return true;
+    }
+    return false;
+  }
+
+  bool _isNoKitchenMealsError(Object error) {
+    final raw = error.toString().toLowerCase();
+    if (raw.contains('no meals found for this booking')) return true;
+
+    if (error is ApiException) {
+      final joined =
+          '${error.message} ${error.userMessage ?? ''}'.toLowerCase().trim();
+      if (joined.contains('no meals found for this booking')) return true;
+    }
+    return false;
+  }
+
+  List<DeviceConfig> _resolveKitchenPrintersForKitchenRoute({
+    required KitchenPrinterRouteRegistry routeRegistry,
+    required int kitchenId,
+    required List<int> allKitchenIds,
+    required List<DeviceConfig> candidatePrinters,
+  }) {
+    if (candidatePrinters.isEmpty) return const <DeviceConfig>[];
+    final byId = <String, DeviceConfig>{
+      for (final printer in candidatePrinters) printer.id: printer,
+    };
+    final resolvedIds = routeRegistry.resolvePrinterIdsForKitchen(
+      kitchenId: kitchenId,
+      availablePrinterIds: candidatePrinters.map((p) => p.id).toList(),
+      knownKitchenIds: allKitchenIds,
+    );
+    final resolved = <DeviceConfig>[];
+    for (final id in resolvedIds) {
+      final printer = byId[id];
+      if (printer != null) {
+        resolved.add(printer);
+      }
+    }
+    return resolved.isNotEmpty ? resolved : candidatePrinters;
+  }
+
+  String? _readLocalizedText(dynamic value) {
+    if (value == null) return null;
+    if (value is Iterable) {
+      final texts = <String>[];
+      for (final candidate in value) {
+        final text = _readLocalizedText(candidate);
+        if (text != null && text.isNotEmpty) {
+          texts.add(text);
+        }
+      }
+      if (texts.isEmpty) return null;
+
+      for (final text in texts) {
+        final hasArabic = _containsArabicChars(text);
+        if (_useArabicUi && hasArabic) return text;
+        if (!_useArabicUi && !hasArabic) return text;
+      }
+      return texts.first;
+    }
+    if (value is Map) {
+      final map = value.map(
+        (k, v) => MapEntry(k.toString().trim().toLowerCase(), v),
+      );
+      final languageKeys = <String>[
+        _normalizedLanguageCode,
+        if (_useArabicUi) 'ar' else 'en',
+        if (_useArabicUi) 'en' else 'ar',
+      ];
+      final candidates = <dynamic>[
+        for (final code in languageKeys) map[code],
+        for (final code in languageKeys) map['name_$code'],
+        for (final code in languageKeys) map['title_$code'],
+        map['name'],
+        map['name_display'],
+        map['title'],
+        map['label'],
+      ];
+      for (final candidate in candidates) {
+        final text = _readLocalizedText(candidate);
+        if (text != null && text.isNotEmpty) return text;
+      }
+      for (final candidate in map.values) {
+        final text = _readLocalizedText(candidate);
+        if (text != null && text.isNotEmpty) return text;
+      }
+      return null;
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || trimmed.toLowerCase() == 'null') return null;
+      final looksLikeJson =
+          (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+              (trimmed.startsWith('[') && trimmed.endsWith(']'));
+      if (looksLikeJson) {
+        try {
+          final decoded = jsonDecode(trimmed);
+          final parsed = _readLocalizedText(decoded);
+          if (parsed != null && parsed.isNotEmpty) return parsed;
+        } catch (_) {
+          // keep raw text fallback
+        }
+      }
+      final fromLegacyMap = _extractLegacyLocalizedFromString(trimmed);
+      if (fromLegacyMap != null && fromLegacyMap.isNotEmpty) {
+        return fromLegacyMap;
+      }
+      final fromListDump = _extractFirstMeaningfulFromListString(trimmed);
+      if (fromListDump != null && fromListDump.isNotEmpty) {
+        return fromListDump;
+      }
+      final normalized = _stripWrappingQuotes(trimmed);
+      if (normalized.isEmpty || normalized.toLowerCase() == 'null') return null;
+      return normalized;
+    }
+    final text = value.toString().trim();
+    if (text.isEmpty || text.toLowerCase() == 'null') return null;
+    return text;
+  }
+
+  String _normalizePrinterToken(String input) {
+    return input.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  List<DeviceConfig> _resolveSectionTargetPrinters({
+    required Map<String, dynamic> section,
+    required List<DeviceConfig> candidates,
+  }) {
+    if (candidates.isEmpty) return const <DeviceConfig>[];
+
+    final targetIp = _firstNonEmptyText(<dynamic>[
+      section['ip'],
+      section['printer_ip'],
+      section['ip_address'],
+    ]);
+    final targetName = _firstNonEmptyText(<dynamic>[
+      section['printer'],
+      section['printer_name'],
+      section['name'],
+    ]);
+
+    if (targetIp != null && targetIp.isNotEmpty) {
+      final normalizedIp = targetIp.trim().toLowerCase();
+      final isLoopback =
+          normalizedIp == 'localhost' || normalizedIp.startsWith('127.');
+      if (!isLoopback) {
+        final byIp = candidates
+            .where((printer) => printer.ip.trim() == targetIp.trim())
+            .toList(growable: false);
+        if (byIp.isNotEmpty) return byIp;
+      }
+    }
+
+    if (targetName != null && targetName.isNotEmpty) {
+      final normalizedTarget = _normalizePrinterToken(targetName);
+      final exact = candidates
+          .where(
+            (printer) =>
+                _normalizePrinterToken(printer.name) == normalizedTarget,
+          )
+          .toList(growable: false);
+      if (exact.isNotEmpty) return exact;
+
+      final fuzzy = candidates.where((printer) {
+        final token = _normalizePrinterToken(printer.name);
+        return token.contains(normalizedTarget) ||
+            normalizedTarget.contains(token);
+      }).toList(growable: false);
+      if (fuzzy.isNotEmpty) return fuzzy;
+    }
+
+    return const <DeviceConfig>[];
+  }
+
+  List<Map<String, dynamic>> _normalizeBookingSectionItems({
+    required dynamic rawItems,
+    String? sectionCategoryId,
+    String? sectionCategoryName,
+  }) {
+    if (rawItems is! List || rawItems.isEmpty) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final items = <Map<String, dynamic>>[];
+    for (final raw in rawItems) {
+      final item = _asStringMap(raw);
+      if (item == null) continue;
+      final meal = _asStringMap(item['meal']);
+
+      final nameAr = _firstNonEmptyText(<dynamic>[
+        item['name_ar'],
+        item['meal_name_ar'],
+        meal?['name_ar'],
+        item['name'],
+        item['meal_name'],
+      ]) ?? '';
+
+      final nameEn = _firstNonEmptyText(<dynamic>[
+        item['name_en'],
+        item['meal_name_en'],
+        meal?['name_en'],
+        item['item_name_en'],
+      ]) ?? '';
+      
+      if (nameAr.isEmpty && nameEn.isEmpty) continue;
+
+      final quantity = _toSafeDouble(
+        item['quantity'] ?? item['qty'] ?? item['count'],
+        fallback: 1.0,
+      );
+      final unitPrice = _toSafeDouble(
+        item['unit_price'] ?? item['modified_unit_price'] ?? item['price'],
+      );
+      final total = _toSafeDouble(
+        item['total'] ?? item['line_total'] ?? item['price_total'],
+        fallback: quantity * unitPrice,
+      );
+
+      final note = _firstNonEmptyText(<dynamic>[item['notes'], item['note']]);
+      final categoryId = _firstNonEmptyText(<dynamic>[
+            item['category_id'],
+            meal?['category_id'],
+            sectionCategoryId,
+          ]) ??
+          _resolveCategoryIdByName(sectionCategoryName);
+      final categoryName = _firstNonEmptyText(<dynamic>[
+            item['category_name'],
+            sectionCategoryName,
+          ]) ??
+          _readLocalizedText(meal?['category']?['name']);
+
+      final extrasRaw = item['addons'] ?? item['extras'];
+      final extras = extrasRaw is List
+          ? extrasRaw
+              .map((entry) => _asStringMap(entry))
+              .whereType<Map<String, dynamic>>()
+              .map((entry) {
+                final extraName = _firstNonEmptyText(<dynamic>[
+                      entry['name'],
+                      entry['addon_name'],
+                      entry['operation_name'],
+                      _asStringMap(entry['meal_option'])?['name'],
+                    ]) ??
+                    _readLocalizedText(entry['name']) ??
+                    '';
+                return {'name': extraName};
+              })
+              .where((entry) =>
+                  entry['name']?.toString().trim().isNotEmpty == true)
+              .toList(growable: false)
+          : const <Map<String, dynamic>>[];
+
+      items.add({
+        'nameAr': nameAr,
+        'nameEn': nameEn,
+        'name': nameAr.isNotEmpty ? nameAr : nameEn,
+        if (categoryId != null && categoryId.isNotEmpty)
+          'category_id': categoryId,
+        if (categoryName != null && categoryName.isNotEmpty)
+          'category_name': categoryName,
+        'quantity': quantity,
+        'unitPrice': unitPrice,
+        'total': total,
+        if (note != null && note.isNotEmpty) 'notes': note,
+        if (extras.isNotEmpty) 'extras': extras,
+      });
+    }
+
+    return items;
+  }
+
+  Future<bool> _dispatchKitchenPrintFromBookingSections({
+    required OrderService orderService,
+    required PrintOrchestratorService orchestrator,
+    required CategoryPrinterRouteRegistry categoryRegistry,
+    required List<DeviceConfig> printers,
+    required String orderId,
+    required String fallbackOrderType,
+    String? fallbackNote,
+    String? fallbackInvoiceNumber,
+    Map<String, dynamic>? baseTemplateMeta,
+    String? clientName,
+    String? clientPhone,
+    String? tableNumber,
+    String? carNumber,
+  }) async {
+    final cashierName = AuthService().getUser()?['name']?.toString();
+    if (printers.isEmpty) return false;
+
+    Map<String, dynamic> detailsResponse;
+    try {
+      detailsResponse = await orderService.getBookingDetails(orderId);
+    } catch (e) {
+      print('⚠️ Failed to fetch booking details for sections #$orderId: $e');
+      return false;
+    }
+
+    final data = _asStringMap(detailsResponse['data']) ?? detailsResponse;
+    final detailsTemplateMeta = _composeKitchenTemplateMeta(
+      source: detailsResponse,
+      fallbackOrderNumber: '#$orderId',
+      fallbackOrderType: fallbackOrderType,
+      fallbackInvoiceNumber: fallbackInvoiceNumber,
+      fallbackNote: fallbackNote,
+    );
+    final mergedBaseMeta = <String, dynamic>{
+      ...?baseTemplateMeta,
+      ...detailsTemplateMeta,
+    };
+    final rawSections = data['sections'];
+    if (rawSections is! List || rawSections.isEmpty) {
+      return false;
+    }
+
+    var orderNumber = _firstNonEmptyText(<dynamic>[
+          data['booking_number'],
+          data['daily_order_number'],
+          data['order_number'],
+          data['id'],
+        ]) ??
+        '#$orderId';
+    if (RegExp(r'^\d+$').hasMatch(orderNumber)) {
+      orderNumber = '#$orderNumber';
+    }
+    final orderType = _firstNonEmptyText(<dynamic>[
+          data['type_text'],
+          data['type'],
+        ]) ??
+        fallbackOrderType;
+    final bookingNote = _firstNonEmptyText(<dynamic>[
+          data['notes'],
+          data['note'],
+        ]) ??
+        fallbackNote;
+
+    var deliveredAny = false;
+    for (final rawSection in rawSections) {
+      final section = _asStringMap(rawSection);
+      if (section == null) continue;
+
+      final sectionCategoryId = _firstNonEmptyText(<dynamic>[
+        section['category_id'],
+      ]);
+      final sectionCategoryName = _firstNonEmptyText(<dynamic>[
+            section['category_name'],
+          ]) ??
+          _readLocalizedText(_asStringMap(section['category'])?['name']);
+
+      final sectionItems = _normalizeBookingSectionItems(
+        rawItems: section['items'],
+        sectionCategoryId: sectionCategoryId,
+        sectionCategoryName: sectionCategoryName,
+      );
+      if (sectionItems.isEmpty) continue;
+
+      final sectionTemplateMeta = <String, dynamic>{
+        ...mergedBaseMeta,
+        'order_number': orderNumber,
+        'order_type': orderType,
+      };
+      if (bookingNote != null && bookingNote.isNotEmpty) {
+        sectionTemplateMeta['booking_note'] = bookingNote;
+      }
+
+      var targetPrinters = _resolveSectionTargetPrinters(
+        section: section,
+        candidates: printers,
+      );
+
+      if (targetPrinters.isEmpty && categoryRegistry.hasAnyAssignments()) {
+        final deliveredViaCategory =
+            await _dispatchKitchenPrintByCategoryRouting(
+          orchestrator: orchestrator,
+          categoryRegistry: categoryRegistry,
+          printers: printers,
+          orderNumber: orderNumber,
+          orderType: orderType,
+          items: sectionItems,
+          note: bookingNote,
+          invoiceNumber: fallbackInvoiceNumber,
+          templateMeta: sectionTemplateMeta,
+          clientName: clientName,
+          clientPhone: clientPhone,
+          tableNumber: tableNumber,
+          carNumber: carNumber,
+          cashierName: cashierName,
+          isRtl: _useArabicUi,
+        );
+        if (deliveredViaCategory) {
+          deliveredAny = true;
+          continue;
+        }
+      }
+
+      if (targetPrinters.isEmpty) {
+        targetPrinters = printers;
+      }
+
+      try {
+        final result = await orchestrator.enqueueKitchenPrint(
+          printers: targetPrinters,
+          orderNumber: orderNumber,
+          orderType: orderType,
+          items: sectionItems,
+          note: bookingNote,
+          invoiceNumber: fallbackInvoiceNumber,
+          templateMeta: sectionTemplateMeta,
+          clientName: clientName,
+          clientPhone: clientPhone,
+          tableNumber: tableNumber,
+          carNumber: carNumber,
+          cashierName: cashierName,
+          printerName: targetPrinters.length == 1 ? targetPrinters.first.name : null,
+          isRtl: _useArabicUi,
+        );
+        if (result.success) {
+          deliveredAny = true;
+        }
+      } catch (e) {
+        print('⚠️ Failed section dispatch for booking=$orderId: $e');
+      }
+    }
+
+    if (deliveredAny) {
+      print('✅ Kitchen print dispatched using backend sections for #$orderId');
+    }
+    return deliveredAny;
+  }
+
+  Map<String, dynamic>? _selectBestKitchenReceiptNode(dynamic root) {
+    final stack = <dynamic>[root];
+    Map<String, dynamic>? best;
+    var bestScore = -1;
+
+    int score(Map<String, dynamic> map) {
+      var value = 0;
+      if (map['items'] is List) value += 8;
+      if (map['booking_meals'] is List) value += 8;
+      if (map['meals'] is List) value += 8;
+      if (map['products'] is List) value += 4;
+      if (map['card'] is List) value += 4;
+      if (map.containsKey('order_number') || map.containsKey('orderNumber')) {
+        value += 3;
+      }
+      if (map.containsKey('booking_id') || map.containsKey('order_id')) {
+        value += 3;
+      }
+      if (map.containsKey('invoice_number') ||
+          map.containsKey('invoiceNumber')) {
+        value += 2;
+      }
+      if (map.containsKey('note') || map.containsKey('notes')) {
+        value += 1;
+      }
+      return value;
+    }
+
+    while (stack.isNotEmpty) {
+      final node = stack.removeLast();
+      if (node is List) {
+        stack.addAll(node);
+        continue;
+      }
+
+      final map = _asStringMap(node);
+      if (map == null) continue;
+
+      final currentScore = score(map);
+      if (currentScore > bestScore) {
+        bestScore = currentScore;
+        best = map;
+      }
+
+      for (final value in map.values) {
+        if (value is Map || value is List) {
+          stack.add(value);
+        }
+      }
+    }
+
+    return best;
+  }
+
+  List<Map<String, dynamic>> _normalizeKitchenReceiptItems(
+    dynamic rawItems,
+    List<Map<String, dynamic>> fallbackItems,
+  ) {
+    final fallback = fallbackItems
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+
+    if (rawItems is! List || rawItems.isEmpty) return fallback;
+
+    final items = <Map<String, dynamic>>[];
+    for (final raw in rawItems) {
+      final item = _asStringMap(raw);
+      if (item == null) continue;
+
+      final nameAr = _firstNonEmptyText(<dynamic>[
+        item['name_ar'],
+        item['nameAr'],
+        item['name'],
+        item['meal_name'],
+        item['item_name'],
+      ]) ?? '';
+
+      final nameEn = _firstNonEmptyText(<dynamic>[
+        item['name_en'],
+        item['nameEn'],
+        item['item_name_en'],
+      ]) ?? '';
+
+      String resolvedAr = nameAr;
+      String resolvedEn = nameEn;
+      
+      if (resolvedEn.trim().isEmpty && resolvedAr.contains(' - ')) {
+        resolvedAr = nameAr.split(' - ').first.trim();
+        resolvedEn = nameAr.split(' - ').last.trim();
+      }
+
+      if (resolvedAr.isEmpty && resolvedEn.isEmpty) continue;
+
+      final quantity = _toSafeDouble(
+        item['quantity'] ?? item['qty'] ?? item['count'],
+        fallback: 1.0,
+      );
+      final unitPrice = _toSafeDouble(
+        item['unit_price'] ?? item['unitPrice'] ?? item['price'],
+      );
+      final total = _toSafeDouble(
+        item['total'] ?? item['line_total'] ?? item['price_total'],
+        fallback: unitPrice * quantity,
+      );
+      final categoryName = _firstNonEmptyText(
+            <dynamic>[
+              item['category_name'],
+              item['category'],
+              item['section_name'],
+              item['categoryName'],
+            ],
+          ) ??
+          '';
+      final categoryId = _firstNonEmptyText(
+            <dynamic>[
+              item['category_id'],
+              item['categoryId'],
+              item['cat_id'],
+              item['section_id'],
+            ],
+          ) ??
+          _resolveCategoryIdByName(categoryName);
+      final notes =
+          _firstNonEmptyText(<dynamic>[item['notes'], item['note']]) ?? '';
+
+      final extrasRaw = item['extras'];
+      final extras = extrasRaw is List
+          ? extrasRaw
+              .whereType<Map>()
+              .map((entry) {
+                final extra = _asStringMap(entry);
+                if (extra == null) return <String, dynamic>{};
+                return {
+                  'name': _firstNonEmptyText(
+                        <dynamic>[extra['name'], extra['title']],
+                      ) ??
+                      '',
+                };
+              })
+              .where((entry) => (entry['name']?.toString().isNotEmpty ?? false))
+              .toList(growable: false)
+          : const <Map<String, dynamic>>[];
+
+      items.add({
+        'nameAr': resolvedAr,
+        'nameEn': resolvedEn,
+        'name': resolvedAr.isNotEmpty ? resolvedAr : resolvedEn,
+        if (categoryName.isNotEmpty) 'category_name': categoryName,
+        if (categoryId != null && categoryId.isNotEmpty)
+          'category_id': categoryId,
+        'quantity': quantity,
+        'unitPrice': unitPrice,
+        'total': total,
+        if (notes.isNotEmpty) 'notes': notes,
+        if (extras.isNotEmpty) 'extras': extras,
+      });
+    }
+
+    return items.isEmpty ? fallback : items;
+  }
+
+  Map<String, dynamic> _resolveKitchenPrintPayloadFromApi({
+    required Map<String, dynamic> apiResponse,
+    required String fallbackOrderId,
+    required String fallbackOrderType,
+    required List<Map<String, dynamic>> fallbackItems,
+    String? fallbackNote,
+    String? fallbackInvoiceNumber,
+  }) {
+    final node = _selectBestKitchenReceiptNode(apiResponse) ?? const {};
+
+    final rawItems = node['items'] ??
+        node['booking_meals'] ??
+        node['meals'] ??
+        node['products'] ??
+        node['card'];
+    final items = _normalizeKitchenReceiptItems(rawItems, fallbackItems);
+
+    var orderNumber = _firstNonEmptyText(<dynamic>[
+          node['order_number'],
+          node['orderNumber'],
+          node['booking_number'],
+          node['booking_id'],
+          node['order_id'],
+        ]) ??
+        '#$fallbackOrderId';
+    if (RegExp(r'^\d+$').hasMatch(orderNumber)) {
+      orderNumber = '#$orderNumber';
+    }
+
+    final orderType = _firstNonEmptyText(<dynamic>[
+          node['type'],
+          node['order_type'],
+          node['booking_type'],
+        ]) ??
+        fallbackOrderType;
+    final note = _firstNonEmptyText(<dynamic>[
+          node['note'],
+          node['notes'],
+          node['kitchen_note'],
+        ]) ??
+        fallbackNote;
+    final invoiceNumber = _firstNonEmptyText(<dynamic>[
+          node['invoice_number'],
+          node['invoiceNumber'],
+        ]) ??
+        fallbackInvoiceNumber;
+
+    final templateMeta = _composeKitchenTemplateMeta(
+      source: apiResponse,
+      fallbackOrderNumber: orderNumber,
+      fallbackOrderType: orderType,
+      fallbackInvoiceNumber: invoiceNumber,
+      fallbackNote: note,
+    );
+
+    return {
+      'orderNumber': orderNumber,
+      'orderType': orderType,
+      'items': items,
+      'note': note,
+      'invoiceNumber': invoiceNumber,
+      'templateMeta': templateMeta,
+    };
+  }
+
+  Future<void> _triggerKitchenPrint({
+    required String orderId,
+    String? invoiceNumber,
+    required List<Map<String, dynamic>> orderItems,
+    String? dailyOrderNumber,
+    String? capturedTableNumber,
+    String? carNumber,
+  }) async {
+    if (!_printKitchenInvoices) return;
+
+    List<DeviceConfig> kitchenPrinters = const [];
+    try {
+      final deviceService = getIt<DeviceService>();
+      kitchenPrinters =
+          (await deviceService.getDevices()).where(_isUsablePrinter).toList();
+    } catch (e) {
+      debugPrint('⚠️ Failed to load printers for kitchen print: $e');
+    }
+    if (kitchenPrinters.isEmpty) {
+      kitchenPrinters =
+          _devices.where(_isUsablePrinter).toList(growable: false);
+    }
+    if (kitchenPrinters.isEmpty) {
+      _showMissingPrinterSnackBar();
+      return;
+    }
+
+    final orchestrator = getIt<PrintOrchestratorService>();
+    final orderService = getIt<OrderService>();
+    final categoryRouteRegistry = getIt<CategoryPrinterRouteRegistry>();
+    final kitchenRouteRegistry = getIt<KitchenPrinterRouteRegistry>();
+    final roleRegistry = getIt<PrinterRoleRegistry>();
+    await Future.wait(<Future<void>>[
+      categoryRouteRegistry.initialize(),
+      kitchenRouteRegistry.initialize(),
+      roleRegistry.initialize(),
+    ]);
+
+    // Kitchen tickets go ONLY to kitchen/kds/bar printers — never cashier or general.
+    kitchenPrinters = kitchenPrinters.where((p) {
+      final role = roleRegistry.resolveRole(p);
+      return role == PrinterRole.kitchen ||
+          role == PrinterRole.kds ||
+          role == PrinterRole.bar;
+    }).toList(growable: false);
+    if (kitchenPrinters.isEmpty) {
+      debugPrint('ℹ️ No kitchen-role printer found, skipping kitchen ticket');
+      return;
+    }
+    final hasCategoryAssignments = categoryRouteRegistry.hasAnyAssignments();
+
+    final generalNote = _orderNotesController.text.trim().isEmpty
+        ? null
+        : _orderNotesController.text.trim();
+    final effectiveOrderNumber = (dailyOrderNumber?.trim().isNotEmpty == true)
+        ? dailyOrderNumber!
+        : '#$orderId';
+    final String? cashierName = _userName;
+
+    // Build kitchen order type with menu list name suffix (same as invoice)
+    final kitchenOrderType = (_isMenuListActive && _activeMenuListName.isNotEmpty)
+        ? '$_selectedOrderType ($_activeMenuListName)'
+        : _selectedOrderType;
+    final kitchenSuffix = (_isMenuListActive && _activeMenuListName.isNotEmpty)
+        ? _activeMenuListName
+        : '';
+
+    final baseTemplateMeta = _composeKitchenTemplateMeta(
+      fallbackOrderNumber: effectiveOrderNumber,
+      fallbackOrderType: kitchenOrderType,
+      fallbackInvoiceNumber: invoiceNumber,
+      fallbackNote: generalNote,
+    );
+    final kitchenIds = _resolveKitchenIdsForReceiptGeneration();
+    final localFallbackItems = orderItems
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+
+    final dispatchedBySections = await _dispatchKitchenPrintFromBookingSections(
+      orderService: orderService,
+      orchestrator: orchestrator,
+      categoryRegistry: categoryRouteRegistry,
+      printers: kitchenPrinters,
+      orderId: orderId,
+      fallbackOrderType: kitchenOrderType,
+      fallbackNote: generalNote,
+      fallbackInvoiceNumber: invoiceNumber,
+      baseTemplateMeta: baseTemplateMeta,
+      clientName: _selectedCustomer?.name,
+      clientPhone: _selectedCustomer?.mobile,
+      tableNumber: capturedTableNumber,
+      carNumber: carNumber,
+    );
+    if (dispatchedBySections) return;
+
+    var printedAny = false;
+    var apiAttempted = false;
+    var onlyKnownSkipErrors = true;
+
+    final String? clientName = _selectedCustomer?.name;
+    final String? clientPhone = _selectedCustomer?.mobile;
+    final String? tableNumber = capturedTableNumber;
+
+    for (final kitchenId in kitchenIds) {
+      apiAttempted = true;
+
+      Map<String, dynamic> kitchenReceipt;
+      try {
+        kitchenReceipt = await orderService.generateKitchenReceiptByBooking(
+          bookingId: orderId,
+          kitchenId: kitchenId,
+        );
+      } catch (e) {
+        final isKnownSkipError =
+            _isKitchenAlreadySentError(e) || _isNoKitchenMealsError(e);
+        if (isKnownSkipError) {
+          print(
+            'ℹ️ generate-by-booking skipped for booking=$orderId kitchen_id=$kitchenId (already sent/no meals).',
+          );
+          continue;
+        }
+        onlyKnownSkipErrors = false;
+        print(
+          '⚠️ generate-by-booking failed for booking=$orderId kitchen_id=$kitchenId: $e',
+        );
+        continue;
+      }
+
+      final resolvedPayload = _resolveKitchenPrintPayloadFromApi(
+        apiResponse: kitchenReceipt,
+        fallbackOrderId: orderId,
+        fallbackOrderType: _selectedOrderType,
+        fallbackItems: hasCategoryAssignments
+            ? localFallbackItems
+            : const <Map<String, dynamic>>[],
+        fallbackNote: generalNote,
+        fallbackInvoiceNumber: invoiceNumber,
+      );
+
+      final resolvedItems =
+          (resolvedPayload['items'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map>()
+              .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
+              .toList(growable: false);
+
+      final resolvedOrderNumber = effectiveOrderNumber;
+      final rawApiOrderType =
+          resolvedPayload['orderType']?.toString() ?? _selectedOrderType;
+      // Append menu list / table suffix same as invoice
+      final resolvedOrderType = kitchenSuffix.isNotEmpty
+          ? '$rawApiOrderType ($kitchenSuffix)'
+          : rawApiOrderType;
+      final resolvedNote = resolvedPayload['note']?.toString() ?? generalNote;
+      final resolvedInvoiceNumber =
+          resolvedPayload['invoiceNumber']?.toString() ?? invoiceNumber;
+      final resolvedTemplateMetaRaw = _asStringMap(
+        resolvedPayload['templateMeta'],
+      );
+      final resolvedTemplateMeta = <String, dynamic>{
+        ...baseTemplateMeta,
+        if (resolvedTemplateMetaRaw != null) ...resolvedTemplateMetaRaw,
+      };
+
+      if (hasCategoryAssignments) {
+        final itemsForCategoryDispatch =
+            resolvedItems.isNotEmpty ? resolvedItems : localFallbackItems;
+        try {
+          final delivered = await _dispatchKitchenPrintByCategoryRouting(
+            orchestrator: orchestrator,
+            categoryRegistry: categoryRouteRegistry,
+            printers: kitchenPrinters,
+            orderNumber: resolvedOrderNumber,
+            orderType: resolvedOrderType,
+            items: itemsForCategoryDispatch,
+            note: resolvedNote,
+            invoiceNumber: resolvedInvoiceNumber,
+            templateMeta: resolvedTemplateMeta,
+            clientName: clientName,
+            clientPhone: clientPhone,
+            tableNumber: tableNumber,
+            carNumber: carNumber,
+            cashierName: cashierName,
+            isRtl: _useArabicUi,
+          );
+          if (delivered) {
+            printedAny = true;
+            print(
+              '✅ Category-routed kitchen print dispatched for booking=$orderId',
+            );
+          } else {
+            onlyKnownSkipErrors = false;
+          }
+        } catch (e) {
+          onlyKnownSkipErrors = false;
+          print(
+            '⚠️ Failed category-routed kitchen print for booking=$orderId: $e',
+          );
+        }
+        break;
+      }
+
+      if (resolvedItems.isEmpty) {
+        // Successful API call with no items for this kitchen route.
+        // Keep fallback path available in case parsing/shape differs by account.
+        onlyKnownSkipErrors = false;
+        print(
+          'ℹ️ Kitchen receipt has no items for booking=$orderId kitchen_id=$kitchenId',
+        );
+        continue;
+      }
+
+      final routePrinters = _resolveKitchenPrintersForKitchenRoute(
+        routeRegistry: kitchenRouteRegistry,
+        kitchenId: kitchenId,
+        allKitchenIds: kitchenIds,
+        candidatePrinters: kitchenPrinters,
+      );
+
+      try {
+        final result = await orchestrator.enqueueKitchenPrint(
+          printers: routePrinters,
+          orderNumber: resolvedOrderNumber,
+          orderType: resolvedOrderType,
+          items: resolvedItems,
+          note: resolvedNote,
+          invoiceNumber: resolvedInvoiceNumber,
+          templateMeta: resolvedTemplateMeta,
+          clientName: clientName,
+          clientPhone: clientPhone,
+          tableNumber: tableNumber,
+          carNumber: carNumber,
+          cashierName: cashierName,
+          isRtl: _useArabicUi,
+        );
+        if (result.success) {
+          printedAny = true;
+          print(
+            '✅ Kitchen print dispatched for booking=$orderId kitchen_id=$kitchenId printers=${routePrinters.map((p) => p.name).join(', ')}',
+          );
+          continue;
+        }
+
+        onlyKnownSkipErrors = false;
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.userMessage ?? 'تعذر الطباعة — تحقق من اتصال الطابعة',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } catch (e) {
+        onlyKnownSkipErrors = false;
+        print(
+          '⚠️ Failed to enqueue kitchen print for booking=$orderId kitchen_id=$kitchenId: $e',
+        );
+      }
+    }
+
+    if (printedAny) return;
+
+    // If backend explicitly says "already sent" or "no meals", avoid local reprint.
+    if (apiAttempted && onlyKnownSkipErrors) {
+      print(
+        'ℹ️ Kitchen printing skipped for booking=$orderId due to known backend state (already sent/no meals).',
+      );
+      return;
+    }
+
+
+    if (hasCategoryAssignments) {
+      try {
+        final delivered = await _dispatchKitchenPrintByCategoryRouting(
+          orchestrator: orchestrator,
+          categoryRegistry: categoryRouteRegistry,
+          printers: kitchenPrinters,
+          orderNumber: effectiveOrderNumber,
+          orderType: kitchenOrderType,
+          items: localFallbackItems,
+          note: generalNote,
+          invoiceNumber: invoiceNumber,
+          templateMeta: baseTemplateMeta,
+          clientName: clientName,
+          clientPhone: clientPhone,
+          tableNumber: capturedTableNumber,
+          carNumber: carNumber,
+          cashierName: cashierName,
+          isRtl: _useArabicUi,
+        );
+        if (delivered) {
+          print('✅ Category-routed fallback print dispatched for #$orderId');
+          return;
+        }
+      } catch (e) {
+        print('⚠️ Failed category-routed fallback print for #$orderId: $e');
+      }
+    }
+
+    try {
+      final fallbackResult = await orchestrator.enqueueKitchenPrint(
+        printers: kitchenPrinters,
+        orderNumber: effectiveOrderNumber,
+        orderType: kitchenOrderType,
+        items: localFallbackItems,
+        note: generalNote,
+        invoiceNumber: invoiceNumber,
+        templateMeta: baseTemplateMeta,
+        clientName: clientName,
+        clientPhone: clientPhone,
+        tableNumber: capturedTableNumber,
+        carNumber: carNumber,
+        cashierName: cashierName,
+        printerName: null,
+        isRtl: _useArabicUi,
+      );
+      if (!mounted) return;
+      if (!fallbackResult.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              fallbackResult.userMessage ??
+                  'تعذر الطباعة — تحقق من اتصال الطابعة',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      print('⚠️ Failed to enqueue kitchen fallback print for #$orderId: $e');
+    }
+  }
+
+  bool _isDisplayDeviceType(String type) {
+    final normalized = type.trim().toLowerCase();
+    return normalized == 'kds' ||
+        normalized == 'kitchen_screen' ||
+        normalized == 'order_viewer' ||
+        normalized == 'cds' ||
+        normalized == 'customer_display';
+  }
+
+  bool _isPhysicalPrinter(DeviceConfig device) {
+    final normalized = device.type.trim().toLowerCase();
+    if (device.id.startsWith('kitchen:')) return false;
+    if (_isDisplayDeviceType(normalized)) return false;
+    return normalized == 'printer';
+  }
+
+  bool _isUsablePrinter(DeviceConfig device) {
+    if (!_isPhysicalPrinter(device)) return false;
+    if (device.connectionType == PrinterConnectionType.bluetooth) {
+      return device.bluetoothAddress?.trim().isNotEmpty == true;
+    }
+    return device.ip.trim().isNotEmpty;
+  }
+
+  DisplayMode _displayModeForDevice(DeviceConfig device) {
+    final normalized = device.type.trim().toLowerCase();
+    if (device.id.startsWith('kitchen:')) {
+      final isExplicitCds =
+          normalized == 'cds' || normalized == 'customer_display';
+      return isExplicitCds ? DisplayMode.cds : DisplayMode.kds;
+    }
+    if (normalized == 'cds' ||
+        normalized == 'customer_display' ||
+        normalized == 'order_viewer') {
+      return DisplayMode.cds;
+    }
+    return DisplayMode.kds;
+  }
+
+  bool _deviceMatchesDisplayEndpoint(
+    DeviceConfig device, {
+    String? ip,
+    int? port,
+  }) =>
+      matchesDisplayEndpoint(device, ip: ip, port: port);
+
+  DeviceConfig? _connectedDisplayDevice(DisplayAppService displayService) {
+    final connectedIp = displayService.connectedIp?.trim();
+    if (connectedIp == null || connectedIp.isEmpty) return null;
+
+    return findConfiguredDisplayDevice(
+      _devices,
+      isDisplayDevice: (device) => _isDisplayDeviceType(device.type),
+      ip: connectedIp,
+      port: displayService.connectedPort,
+    );
+  }
+
+  DeviceConfig? _pickPreferredDeviceForCdsAutoConnect() {
+    final displayService = getIt<DisplayAppService>();
+    return pickPreferredCdsDisplayDevice(
+      _devices,
+      modeForDevice: _displayModeForDevice,
+      preferredIp: displayService.connectedIp,
+      preferredPort: displayService.connectedPort,
+    );
+  }
+
+  Future<bool> _ensureCdsAutoConnected() async {
+    if (!_isCdsEnabled) return false;
+
+    final displayService = getIt<DisplayAppService>();
+    DeviceConfig? connectedDisplayDevice() =>
+        _connectedDisplayDevice(displayService);
+
+    bool canReuseCurrentConnection() =>
+        canReuseCurrentConnectionForCdsAutoConnect(
+          currentMode: displayService.currentMode,
+          connectedDevice: connectedDisplayDevice(),
+          modeForDevice: _displayModeForDevice,
+        );
+
+    Future<bool> connectPreferredCdsDevice() async {
+      final targetDevice = _pickPreferredDeviceForCdsAutoConnect();
+      if (targetDevice == null) return false;
+
+      final parsedPort = int.tryParse(targetDevice.port) ?? 8080;
+      final sameEndpoint = displayService.isConnected &&
+          _deviceMatchesDisplayEndpoint(
+            targetDevice,
+            ip: displayService.connectedIp,
+            port: displayService.connectedPort,
+          );
+
+      try {
+        if (sameEndpoint) {
+          if (!canReuseCurrentConnection()) {
+            debugPrint(
+              '⚠️ Refusing to auto-switch the current ${displayService.currentMode} session to CDS.',
+            );
+            return false;
+          }
+          if (displayService.currentMode != DisplayMode.cds) {
+            displayService.setMode(DisplayMode.cds);
+          }
+          return true;
+        }
+
+        if (displayService.isConnected ||
+            displayService.isConnecting ||
+            displayService.isReconnecting) {
+          displayService.disconnect(clearEndpoint: false);
+        }
+
+        await displayService.connectWithMode(
+          targetDevice.ip,
+          port: parsedPort,
+          mode: DisplayMode.cds,
+        );
+        return displayService.isConnected &&
+            displayService.currentMode == DisplayMode.cds;
+      } catch (e) {
+        debugPrint('⚠️ Failed to auto-connect CDS device: $e');
+        return false;
+      }
+    }
+
+    bool shouldReconnectToDedicatedCdsDevice() => requiresDedicatedCdsReconnect(
+          connectedDisplayDevice(),
+          modeForDevice: _displayModeForDevice,
+        );
+
+    if (displayService.isConnected) {
+      if (displayService.currentMode == DisplayMode.cds) {
+        return true;
+      }
+      if (shouldReconnectToDedicatedCdsDevice()) {
+        return connectPreferredCdsDevice();
+      }
+      if (!canReuseCurrentConnection()) {
+        debugPrint(
+          '⚠️ Current display connection is not reusable for CDS auto-connect; aborting automatic mode switch.',
+        );
+        return false;
+      }
+      displayService.setMode(DisplayMode.cds);
+      return true;
+    }
+
+    if (displayService.isConnecting || displayService.isReconnecting) {
+      final connected = await displayService.waitUntilConnected();
+      if (!connected) return false;
+      if (displayService.currentMode == DisplayMode.cds) {
+        return true;
+      }
+      if (shouldReconnectToDedicatedCdsDevice()) {
+        return connectPreferredCdsDevice();
+      }
+      if (!canReuseCurrentConnection()) {
+        debugPrint(
+          '⚠️ Connected display session resolved to KDS; refusing automatic CDS switch after reconnect.',
+        );
+        return false;
+      }
+      displayService.setMode(DisplayMode.cds);
+      return true;
+    }
+
+    return connectPreferredCdsDevice();
+  }
+
+  Future<void> _openInvoicePreview({
+    required BuildContext hostContext,
+    required OrderReceiptData receiptData,
+    String? invoiceId,
+    String? orderType,
+  }) async {
+    if (!hostContext.mounted) return;
+
+    final availablePrinters =
+        _devices.where(_isUsablePrinter).toList(growable: false);
+    final cashierPrinters = await _resolvePrintersForRole(
+      role: PrinterRole.cashierReceipt,
+      printers: availablePrinters,
+    );
+    final previewPrinters =
+        cashierPrinters.isNotEmpty ? cashierPrinters : availablePrinters;
+    final selectedPrinter = previewPrinters.cast<DeviceConfig?>().firstWhere(
+          (d) => d != null && _isPhysicalPrinter(d),
+          orElse: () => null,
+        );
+
+    // If we have an invoiceId, use InvoiceHtmlPdfService to generate the real
+    // HTML invoice (same template used for printing via flutter_html_to_pdf_plus)
+    // and display it in PdfPreviewScreen for a faithful preview.
+    if (invoiceId != null && invoiceId.trim().isNotEmpty) {
+      try {
+        final invoiceHtmlPdfService = getIt<InvoiceHtmlPdfService>();
+        final htmlContent = await invoiceHtmlPdfService.generateHtmlString(
+          invoiceId,
+          paperWidthMm: selectedPrinter?.paperWidthMm,
+        );
+
+        if (!hostContext.mounted) return;
+
+        final titleLabel = _buildInvoicePreviewTitle(
+          receiptData: receiptData,
+          invoiceId: invoiceId,
+        );
+        await Navigator.push(
+          hostContext,
+          MaterialPageRoute(
+            builder: (_) => PdfPreviewScreen(
+              receiptData: receiptData,
+              printer: selectedPrinter,
+              htmlContent: htmlContent,
+              title: titleLabel,
+              carNumber: receiptData.carNumber.isNotEmpty
+                  ? receiptData.carNumber
+                  : null,
+              orderType: orderType,
+              // Auto-print already ran at payment time; preview is for viewing
+              // only — user can reprint manually via the print button.
+              promptPrinterSelectionOnOpen: false,
+            ),
+          ),
+        );
+        return;
+      } catch (e) {
+        debugPrint('⚠️ Failed to generate HTML invoice preview: $e');
+        // Fall through to PdfPreviewScreen as fallback.
+      }
+    }
+
+    // Fallback: use PdfPreviewScreen when no invoiceId or HTML generation failed.
+    if (!hostContext.mounted) return;
+
+    final titleLabel = _buildInvoicePreviewTitle(
+      receiptData: receiptData,
+      invoiceId: invoiceId,
+    );
+    await Navigator.push(
+      hostContext,
+      MaterialPageRoute(
+        builder: (context) => PdfPreviewScreen(
+          receiptData: receiptData,
+          printer: selectedPrinter,
+          carNumber:
+              receiptData.carNumber.isNotEmpty ? receiptData.carNumber : null,
+          title: titleLabel,
+          orderType: orderType,
+          promptPrinterSelectionOnOpen: false,
+        ),
+      ),
+    );
+  }
+
+  String _buildInvoicePreviewTitle({
+    required OrderReceiptData receiptData,
+    String? invoiceId,
+  }) {
+    String label = receiptData.invoiceNumber.trim();
+    if (label.isEmpty) {
+      label = invoiceId?.trim() ?? '';
+    }
+    if (label.isNotEmpty && !label.startsWith('#')) {
+      label = '#$label';
+    }
+    return label.isNotEmpty ? 'معاينة الفاتورة $label' : 'معاينة الفاتورة';
+  }
+
+
+  void _showPaymentSuccess({
+    required String type,
+    required String orderType,
+    required String orderId,
+    String? invoiceId,
+    required OrderReceiptData receiptData,
+    bool allowInvoiceActions = true,
+    bool autoOpenInvoicePreview = false,
+  }) {
+    final normalizedOrderId = orderId.trim();
+    final orderLabel = normalizedOrderId.isEmpty
+        ? '#-'
+        : (normalizedOrderId.startsWith('#')
+            ? normalizedOrderId
+            : '#$normalizedOrderId');
+
+    // مسح السلة أولاً
+    _clearCart();
+
+    // عرض صفحة "تم الدفع" الكاملة
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => PaymentSuccessView(
+        amount: receiptData.totalInclVat,
+        orderId: orderLabel,
+        type: type,
+        showInvoiceButton: allowInvoiceActions,
+        onNewOrder: () {
+          Navigator.of(dialogContext).pop();
+        },
+        onPrint: () {
+          Navigator.of(dialogContext).pop();
+          unawaited(
+            _openInvoicePreview(
+              hostContext: context,
+              receiptData: receiptData,
+              invoiceId: invoiceId,
+              orderType: orderType,
+            ),
+          );
+        },
+        onGoToOrders: type == 'later'
+            ? () {
+                Navigator.of(dialogContext).pop();
+                // Navigate to orders tab
+                setState(() => _activeTab = 'orders');
+              }
+            : null,
+      ),
+    );
+  }
+
+  Future<void> _autoPrintReceiptCopies({
+    required OrderReceiptData receiptData,
+    String? invoiceId,
+  }) async {
+    final shouldPrintCashier = _autoPrintCashier;
+    final shouldPrintCustomer = _autoPrintCustomer;
+
+    if (!shouldPrintCashier && !shouldPrintCustomer) return;
+
+    List<DeviceConfig> printers = const [];
+    try {
+      final deviceService = getIt<DeviceService>();
+      printers =
+          (await deviceService.getDevices()).where(_isUsablePrinter).toList();
+    } catch (e) {
+      debugPrint('⚠️ Failed to load printers for auto-print: $e');
+    }
+    if (printers.isEmpty) {
+      printers = _devices.where(_isUsablePrinter).toList(growable: false);
+    }
+    if (printers.isEmpty) {
+      _showMissingPrinterSnackBar();
+      return;
+    }
+
+    printJobCacheService.cacheReceiptJob(
+      receiptData: receiptData,
+      invoiceId: invoiceId,
+    );
+
+    bool cashierSuccess = true;
+    if (shouldPrintCashier) {
+      final cashierPrinters = await _resolvePrintersForRole(
+        role: PrinterRole.cashierReceipt,
+        printers: printers,
+      );
+      // NEVER fall back to kitchen/kds printers for cashier receipts
+      if (cashierPrinters.isEmpty) {
+        debugPrint('ℹ️ No cashier-role printer found, skipping cashier receipt');
+        cashierSuccess = false;
+      } else {
+        cashierSuccess = await _printReceiptToPrinters(
+          printers: cashierPrinters,
+          receiptData: receiptData,
+          invoiceId: invoiceId,
+          jobType: 'cashier',
+        );
+      }
+      if (!cashierSuccess) {
+        _showPrintFailureSnackBar();
+      }
+    }
+
+    if (shouldPrintCustomer && (cashierSuccess || !shouldPrintCashier)) {
+      final customerPrinters = await _resolvePrintersForRole(
+        role: PrinterRole.general,
+        printers: printers,
+      );
+      // NEVER fall back to kitchen/kds printers for customer receipts
+      if (customerPrinters.isEmpty) {
+        debugPrint('ℹ️ No customer-role printer found, skipping customer receipt');
+      } else {
+        final customerSuccess = await _printReceiptToPrinters(
+          printers: customerPrinters,
+          receiptData: receiptData,
+          invoiceId: invoiceId,
+          jobType: 'customer',
+        );
+        if (!customerSuccess) {
+          _showPrintFailureSnackBar();
+        }
+      }
+    }
+  }
+
+  Future<List<DeviceConfig>> _resolvePrintersForRole({
+    required PrinterRole role,
+    required List<DeviceConfig> printers,
+  }) async {
+    final registry = getIt<PrinterRoleRegistry>();
+    await registry.initialize();
+
+    final physical = printers.where(_isPhysicalPrinter).toList(growable: false);
+    if (physical.isEmpty) return const <DeviceConfig>[];
+
+    final matches = physical
+        .where((printer) => registry.resolveRole(printer) == role)
+        .toList(growable: false);
+    if (matches.isNotEmpty) {
+      matches.sort((a, b) => a.name.compareTo(b.name));
+      return matches;
+    }
+
+    // Only return non-kitchen printers as fallback — NEVER send cashier receipts to kitchen
+    final nonKitchen = physical.where((printer) {
+      final resolved = registry.resolveRole(printer);
+      return resolved != PrinterRole.kitchen &&
+          resolved != PrinterRole.kds &&
+          resolved != PrinterRole.bar;
+    }).toList(growable: false);
+    if (nonKitchen.isNotEmpty) {
+      nonKitchen.sort((a, b) => a.name.compareTo(b.name));
+      return nonKitchen;
+    }
+
+    // No matching printers found — return empty (don't fall back to kitchen printers)
+    return const <DeviceConfig>[];
+  }
+
+  Future<bool> _printReceiptToPrinters({
+    required List<DeviceConfig> printers,
+    required OrderReceiptData receiptData,
+    String? invoiceId,
+    required String jobType,
+  }) async {
+    if (printers.isEmpty) return false;
+
+    final results = await Future.wait(printers.map((printer) async {
+      var anySuccess = false;
+      final copies = printer.copies <= 0 ? 1 : printer.copies;
+      for (var copy = 0; copy < copies; copy++) {
+        final success = await _printReceiptToPrinter(
+          printer: printer,
+          receiptData: receiptData,
+          invoiceId: invoiceId,
+          jobType: jobType,
+        );
+        if (success) anySuccess = true;
+      }
+      return anySuccess;
+    }));
+
+    return results.any((s) => s);
+  }
+
+  Future<bool> _printReceiptToPrinter({
+    required DeviceConfig printer,
+    required OrderReceiptData receiptData,
+    String? invoiceId,
+    required String jobType,
+  }) async {
+    try {
+      final printerService = getIt<PrinterService>();
+      await printerService.printReceipt(
+        printer,
+        receiptData,
+        jobType: jobType,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ Print failed on ${printer.name}: $e');
+      return false;
+    }
+  }
+
+  void _showPrintFailureSnackBar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تعذر الطباعة — تحقق من اتصال الطابعة'),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _showMissingPrinterSnackBar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('⚠️ يجب ربط طابعة لطباعة الفواتير'),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<void> _loadCachedDevicesThenRefresh() async {
+    // Phase 1: Serve cached/local devices INSTANTLY (no network wait)
+    try {
+      final deviceService = getIt<DeviceService>();
+      final cached = await deviceService.getCachedDevices();
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _devices
+            ..clear()
+            ..addAll(cached);
+        });
+      }
+    } catch (_) {}
+
+    // Phase 2: Refresh from API in background
+    await _loadDevicesFromApi();
+  }
+
+  Future<void> _loadDevicesFromApi() async {
+    if (!_canCallBranchApis()) return;
+
+    final deviceService = getIt<DeviceService>();
+    final devices = await deviceService.getDevices();
+    if (!mounted) return;
+    setState(() {
+      _devices
+        ..clear()
+        ..addAll(devices);
+    });
+
+    final displayService = getIt<DisplayAppService>();
+    if (!_isCdsEnabled && !_isKdsEnabled) {
+      if (displayService.isConnected) {
+        displayService.disconnect();
+      }
+      return;
+    }
+
+    // Never override a live session during background/data refresh.
+    if (displayService.isConnected ||
+        displayService.isConnecting ||
+        displayService.isReconnecting) {
+      return;
+    }
+    final preferredIp = displayService.connectedIp?.trim();
+    final displayDevices = devices
+        .where((d) => _isDisplayDeviceType(d.type) && d.ip.trim().isNotEmpty)
+        .where((d) => _isDisplayModeEnabled(_displayModeForDevice(d)))
+        .toList(growable: false);
+    final kitchenScreen = displayDevices.cast<DeviceConfig?>().firstWhere(
+          (d) =>
+              d != null &&
+              preferredIp != null &&
+              preferredIp.isNotEmpty &&
+              d.ip.trim() == preferredIp,
+          orElse: () => displayDevices.isNotEmpty ? displayDevices.first : null,
+        );
+    if (kitchenScreen != null) {
+      final parsedPort = int.tryParse(kitchenScreen.port) ?? 8080;
+      final targetMode = _displayModeForDevice(kitchenScreen);
+      try {
+        final sameEndpoint =
+            displayService.connectedIp?.trim() == kitchenScreen.ip.trim() &&
+                displayService.connectedPort == parsedPort;
+        if (displayService.isConnected && sameEndpoint) {
+          if (displayService.currentMode != targetMode) {
+            displayService.setMode(targetMode);
+          }
+        } else {
+          await displayService.connectWithMode(
+            kitchenScreen.ip,
+            port: parsedPort,
+            mode: targetMode,
+          );
+        }
+      } catch (e) {
+        debugPrint('⚠️ Failed to auto-connect display device: $e');
+      }
+    }
+  }
+
+  Future<void> _addDevice(DeviceConfig device) async {
+    print('🖥️ [MainScreen] _addDevice called with: ${device.toJson()}');
+    final deviceService = getIt<DeviceService>();
+    print('🖥️ [MainScreen] Creating device via DeviceService...');
+    final created = await deviceService.createDevice(device);
+    print('🖥️ [MainScreen] Device created: ${created.toJson()}');
+    if (!mounted) {
+      print('🖥️ [MainScreen] Not mounted, returning');
+      return;
+    }
+    setState(() => _devices.add(created));
+    print('🖥️ [MainScreen] Device added to _devices list');
+
+    if (_isDisplayDeviceType(created.type) && created.ip.isNotEmpty) {
+      final displayService = getIt<DisplayAppService>();
+      final parsedPort = int.tryParse(created.port) ?? 8080;
+      final targetMode = _displayModeForDevice(created);
+      if (!_isDisplayModeEnabled(targetMode)) {
+        return;
+      }
+      final sameEndpoint =
+          displayService.connectedIp?.trim() == created.ip.trim() &&
+              displayService.connectedPort == parsedPort;
+      if (displayService.isConnected && sameEndpoint) {
+        if (displayService.currentMode != targetMode) {
+          displayService.setMode(targetMode);
+        }
+      } else {
+        try {
+          await displayService.connectWithMode(
+            created.ip,
+            port: parsedPort,
+            mode: targetMode,
+          );
+        } catch (e) {
+          print(
+              '🖥️ [MainScreen] Display connection failed (device saved): $e');
+        }
+      }
+    }
+  }
+
+  Future<void> _removeDevice(String id) async {
+    final deviceService = getIt<DeviceService>();
+    await deviceService.deleteDevice(id);
+    if (!mounted) return;
+    setState(() => _devices.removeWhere((d) => d.id == id));
+  }
+
+  void _updateDiscount(String cartId, double discount, DiscountType type) {
+    setState(() {
+      final index = _cart.indexWhere((item) => item.cartId == cartId);
+      if (index >= 0) {
+        _cart[index].discount =
+            _clampCartItemDiscount(_cart[index], discount, type);
+        _cart[index].discountType = type;
+        if (_cart[index].isFree && _cart[index].discount > 0) {
+          _cart[index].isFree = false;
+        }
+      }
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  void _toggleFree(String cartId) {
+    setState(() {
+      final index = _cart.indexWhere((item) => item.cartId == cartId);
+      if (index >= 0) {
+        _cart[index].isFree = !_cart[index].isFree;
+        if (_cart[index].isFree) {
+          _cart[index].discount = 0.0;
+        }
+      }
+    });
+    _syncDisplayCartFromMain();
+  }
+
+  Future<void> _showBookingDetails(String cartId) async {
+    if (_cart.isEmpty) return;
+    final orderId = _lastCreatedBookingId;
+    if (orderId == null || orderId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لا يوجد رقم طلب محفوظ بعد. احفظ الطلب أولاً.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final orderService = getIt<OrderService>();
+      final bookingDetails = await orderService.getBookingDetails(orderId);
+
+      if (mounted) Navigator.pop(context);
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) =>
+              BookingDetailsDialog(bookingData: bookingDetails),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('فشل تحميل تفاصيل الطلب: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showMealDetailsForCartItem(CartItem item) {
+    showDialog(
+      context: context,
+      builder: (context) => MealDetailsDialog(product: item.product),
+    );
+  }
+
+  // --- UI Builders ---
+
+  Widget _buildContent() {
+    return _isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : _error != null
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      LucideIcons.alertCircle,
+                      size: 48,
+                      color: Colors.red,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '${translationService.t('error')}: $_error',
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: _loadData,
+                      child: Text(translationService.t('try_again')),
+                    ),
+                  ],
+                ),
+              )
+            : Column(
+                children: [
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        if (constraints.maxWidth <= 0) {
+                          return const SizedBox.shrink();
+                        }
+                        // نحسب الـ filtered products مرة واحدة بس بدل ما نحسبها 6 مرات
+                        final products = _filteredProducts;
+                        if (products.isEmpty) {
+                          return Center(
+                            child: Text(
+                              translationService.t('no_products'),
+                              style: const TextStyle(
+                                fontSize: 18,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          );
+                        }
+                        final availableWidth = constraints.maxWidth;
+                        final availableHeight = constraints.maxHeight;
+                        final isPhoneLike = availableWidth < 700;
+                        final iconScale = _mealIconScale.clamp(0.85, 1.15);
+                        final gridPadding =
+                            (availableWidth * 0.02).clamp(10.0, 24.0);
+                        final gridSpacing =
+                            (availableWidth * 0.012).clamp(8.0, 16.0);
+                        final preferredTileWidth = isPhoneLike
+                            ? (availableWidth * 0.36).clamp(120.0, 210.0) *
+                                iconScale
+                            : (availableWidth * 0.18).clamp(140.0, 220.0) *
+                                iconScale;
+
+                        final rawCount = ((availableWidth -
+                                    (gridPadding * 2) +
+                                    gridSpacing) /
+                                (preferredTileWidth + gridSpacing))
+                            .floor();
+                        final crossAxisCount = isPhoneLike
+                            ? rawCount.clamp(1, 4)
+                            : rawCount.clamp(3, 5);
+
+                        final tileWidth = (availableWidth -
+                                (gridPadding * 2) -
+                                (gridSpacing * (crossAxisCount - 1))) /
+                            crossAxisCount;
+                        final baseTileHeight = (!isPhoneLike &&
+                                availableHeight.isFinite &&
+                                availableHeight > 0)
+                            ? ((availableHeight -
+                                    (gridPadding * 2) -
+                                    (gridSpacing * 2)) /
+                                3)
+                            : (tileWidth * 1.35);
+                        final tileHeight = (isPhoneLike
+                                ? baseTileHeight
+                                : baseTileHeight * iconScale)
+                            .clamp(170.0, 360.0);
+                        final childAspectRatio = tileWidth / tileHeight;
+
+                        return CustomScrollView(
+                          controller: _productsScrollController,
+                          physics: const BouncingScrollPhysics(),
+                          slivers: [
+                            SliverPadding(
+                              padding: EdgeInsets.all(gridPadding),
+                              sliver: SliverGrid(
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, index) {
+                                    final product = products[index];
+                                    return ProductCard(
+                                      product: product,
+                                      isDisabled: _mealAvailabilityService
+                                          .isMealDisabled(
+                                        product.id,
+                                      ),
+                                      taxRate: _isTaxEnabled ? _taxRate : 0.0,
+                                      onTap: () => _onProductTap(product),
+                                      onQuickAdd: () => _addToCartWithExtras(
+                                        product,
+                                        const <Extra>[],
+                                        1.0,
+                                        '',
+                                      ),
+                                    );
+                                  },
+                                  childCount: products.length,
+                                ),
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: crossAxisCount,
+                                  childAspectRatio: childAspectRatio,
+                                  crossAxisSpacing: gridSpacing,
+                                  mainAxisSpacing: gridSpacing,
+                                ),
+                              ),
+                            ),
+                            if (!_isLastPage && _isLoadingMore)
+                              const SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFFF58220),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+  }
+
+  Widget _buildSearchHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 940;
+          final searchMaxWidth = isNarrow ? constraints.maxWidth : 420.0;
+          final userInfo = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _userName,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    Text(
+                      _userRole,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFFF7ED),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    _initials,
+                    style: const TextStyle(
+                      color: Color(0xFFC2410C),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+
+          final searchInput = Container(
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: TextField(
+              onChanged: (val) => setState(() => _searchQuery = val),
+              decoration: InputDecoration(
+                hintText: translationService.t('search_products'),
+                prefixIcon: const Icon(LucideIcons.search, size: 20),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 0,
+                  horizontal: 16,
+                ),
+              ),
+            ),
+          );
+
+          final searchField = SizedBox(
+            width: searchMaxWidth,
+            child: Row(
+              children: [
+                _buildMoreMenu(),
+                const SizedBox(width: 8),
+                Expanded(child: searchInput),
+              ],
+            ),
+          );
+
+          if (isNarrow) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                searchField,
+                const SizedBox(height: 12),
+                Align(alignment: Alignment.centerLeft, child: userInfo),
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: searchField,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Flexible(
+                  child:
+                      Align(alignment: Alignment.centerRight, child: userInfo)),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHungerstationBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 4),
+      color: _isMenuListActive ? const Color(0xFFFFF7ED) : Colors.transparent,
+      child: Row(
+        children: [
+          // Menu selector button
+          InkWell(
+            onTap: _showMenuListPicker,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: _isMenuListActive
+                    ? const Color(0xFFF58220)
+                    : const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isMenuListActive ? Icons.restaurant_menu : Icons.storefront,
+                    size: 16,
+                    color: _isMenuListActive ? Colors.white : const Color(0xFF64748B),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _isMenuListActive
+                        ? _activeMenuListName
+                        : _trUi('المينو الأساسي', 'Main Menu'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: _isMenuListActive ? Colors.white : const Color(0xFF64748B),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.arrow_drop_down,
+                    size: 18,
+                    color: _isMenuListActive ? Colors.white : const Color(0xFF64748B),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Price type selector (only when a menu list is active)
+          if (_isMenuListActive) ...[
+            const SizedBox(width: 12),
+            _buildPriceTypeChip(
+              label: _trUi('توصيل', 'Delivery'),
+              value: 'delivery',
+              icon: Icons.delivery_dining,
+            ),
+            const SizedBox(width: 6),
+            _buildPriceTypeChip(
+              label: _trUi('استلام', 'Pickup'),
+              value: 'pickup',
+              icon: Icons.shopping_bag_outlined,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPriceTypeChip({
+    required String label,
+    required String value,
+    required IconData icon,
+  }) {
+    final isActive = _menuListPriceType == value;
+    return InkWell(
+      onTap: () => _switchMenuListPriceType(value),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isActive ? const Color(0xFF2563EB) : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isActive ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: isActive ? Colors.white : const Color(0xFF64748B)),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: isActive ? Colors.white : const Color(0xFF64748B),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryBar() {
+    if (_categories.isEmpty) return const SizedBox.shrink();
+    // ترتيب: "الكل" أولاً دائماً، ثم المثبتة، ثم الباقي
+    final sorted = List<CategoryModel>.from(_categories)
+      ..sort((a, b) {
+        if (a.id == 'all') return -1;
+        if (b.id == 'all') return 1;
+        final aPinned = _pinnedCategoryIds.contains(a.id) ? 0 : 1;
+        final bPinned = _pinnedCategoryIds.contains(b.id) ? 0 : 1;
+        return aPinned.compareTo(bPinned);
+      });
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final screenWidth = constraints.maxWidth;
+        // Responsive sizes
+        final boxWidth = screenWidth < 600 ? 80.0 : (screenWidth < 1000 ? 95.0 : 110.0);
+        final boxHeight = screenWidth < 600 ? 78.0 : (screenWidth < 1000 ? 90.0 : 100.0);
+        final fontSize = screenWidth < 600 ? 11.0 : (screenWidth < 1000 ? 12.0 : 13.0);
+        final spacing = screenWidth < 600 ? 10.0 : (screenWidth < 1000 ? 12.0 : 14.0);
+        final borderRadius = screenWidth < 600 ? 12.0 : 14.0;
+        final pinSize = screenWidth < 600 ? 18.0 : 22.0;
+        final pinIconSize = screenWidth < 600 ? 10.0 : 12.0;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 4),
+          child: Directionality(
+            textDirection: translationService.isRTL ? ui.TextDirection.rtl : ui.TextDirection.ltr,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+              children: List.generate(sorted.length, (index) {
+                final item = sorted[index];
+                final isActive = _selectedCategory == item.id && _activeTab == 'home';
+                final isPinned = _pinnedCategoryIds.contains(item.id);
+                return Padding(
+                  padding: EdgeInsets.only(right: index < sorted.length - 1 ? spacing : 0),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: GestureDetector(
+                      onLongPress: () {
+                        setState(() {
+                          if (_pinnedCategoryIds.contains(item.id)) {
+                            _pinnedCategoryIds.remove(item.id);
+                          } else {
+                            _pinnedCategoryIds.add(item.id);
+                          }
+                        });
+                      },
+                      child: InkWell(
+                        onTap: () => _switchCategory(item.id),
+                        borderRadius: BorderRadius.circular(borderRadius),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              width: boxWidth,
+                              height: boxHeight,
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isActive ? const Color(0xFFF58220) : Colors.white,
+                                borderRadius: BorderRadius.circular(borderRadius),
+                                border: Border.all(
+                                  color: isActive
+                                      ? const Color(0xFFF58220)
+                                      : const Color(0xFFE2E8F0),
+                                ),
+                                boxShadow: isActive
+                                    ? [
+                                        BoxShadow(
+                                          color: const Color(0xFFF58220).withValues(alpha: 0.3),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: Text(
+                                    item.name,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: isActive
+                                          ? Colors.white
+                                          : const Color(0xFF475569),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: fontSize,
+                                      height: 1.2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (isPinned)
+                              Positioned(
+                                top: -4,
+                                right: -4,
+                                child: Container(
+                                  width: pinSize,
+                                  height: pinSize,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF3B82F6),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white, width: 1.5),
+                                  ),
+                                  child: Icon(
+                                    LucideIcons.pin,
+                                    size: pinIconSize,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMoreMenu({Color? iconColor}) {
+    return PopupMenuButton<String>(
+      icon: Icon(LucideIcons.menu, color: iconColor ?? const Color(0xFF64748B)),
+      tooltip: translationService.t('settings'),
+      onSelected: (value) {
+        switch (value) {
+          case 'settings':
+            setState(() => _activeTab = 'settings');
+            break;
+          case 'switch_branch':
+            _handleSwitchBranch();
+            break;
+          case 'logout':
+            _handleLogout();
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'switch_branch',
+          child: Row(
+            children: [
+              const Icon(LucideIcons.repeat, size: 18, color: Color(0xFF64748B)),
+              const SizedBox(width: 12),
+              Text(translationService.t('switch_branch')),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'settings',
+          child: Row(
+            children: [
+              const Icon(LucideIcons.settings, size: 18, color: Color(0xFF64748B)),
+              const SizedBox(width: 12),
+              Text(translationService.t('settings')),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'logout',
+          child: Row(
+            children: [
+              const Icon(LucideIcons.logOut, size: 18, color: Colors.red),
+              const SizedBox(width: 12),
+              Text(
+                translationService.t('logout'),
+                style: const TextStyle(color: Colors.red),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavTabs() {
+    return Container(
+      height: 80,
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: navItems.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final item = navItems[index];
+          final isSelected = _activeTab == item.id;
+          final tabLabel = _navLabel(item.id);
+          return InkWell(
+            onTap: () => setState(() => _activeTab = item.id),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFFF58220) : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected
+                      ? const Color(0xFFF58220)
+                      : const Color(0xFFE2E8F0),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    item.icon,
+                    size: 18,
+                    color: isSelected ? Colors.white : const Color(0xFF475569),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    tabLabel,
+                    style: TextStyle(
+                      color:
+                          isSelected ? Colors.white : const Color(0xFF475569),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  String _navLabel(String id) {
+    switch (id) {
+      case 'home':
+        return translationService.t('home');
+      case 'orders':
+        return translationService.t('orders');
+      case 'invoices':
+        return translationService.t('invoices');
+      case 'tables':
+        return translationService.t('tables');
+      case 'customers':
+        return translationService.t('customers');
+      case 'reports':
+        return translationService.t('reports');
+      case 'settings':
+        return translationService.t('settings');
+      default:
+        return id;
+    }
+  }
+
+  double _resolveOrderPanelWidth(
+    double viewportWidth, {
+    required bool hasPinnedSidebar,
+  }) {
+    final proposed = viewportWidth * (hasPinnedSidebar ? 0.30 : 0.35);
+    final maxWidth = hasPinnedSidebar ? 430.0 : 390.0;
+    return proposed.clamp(300.0, maxWidth).toDouble();
+  }
+
+  Widget _buildOrderPanel() {
+    return OrderPanel(
+      cart: _cart,
+      totalAmount: _totalAmount,
+      onUpdateQuantity: _updateQuantity,
+      onRemove: _removeFromCart,
+      onDiscount: _updateDiscount,
+      onToggleFree: _toggleFree,
+      onClear: _clearCart,
+      onOrderDiscount: _setOrderDiscount,
+      onToggleOrderFree: _toggleOrderFreeState,
+      isOrderFree: _isOrderFree,
+      orderDiscount: _orderDiscount,
+      selectedTable: _selectedTable,
+      onCancelTable: () => setState(() {
+        _selectedTable = null;
+        _lastSelectedTable = null;
+      }),
+      selectedCustomer: _selectedCustomer,
+      onSelectCustomer: (customer) =>
+          setState(() => _selectedCustomer = customer),
+      onPay: _handlePay,
+      onPayLater: _handlePayLater,
+      onBookingLongPress: _showBookingDetails,
+      onShowItemDetails: _showMealDetailsForCartItem,
+      selectedOrderType: _selectedOrderType,
+      typeOptions: _orderTypeOptions, // Pass real options
+      cdsEnabled: _isCdsEnabled,
+      kdsEnabled: _isKdsEnabled,
+      taxRate: _taxRate,
+      onOrderTypeChanged: (v) {
+        setState(() {
+          _selectedOrderType = v;
+          if (!_isCarOrderType(v)) {
+            _carNumberController.clear();
+          }
+          if (!_isTableOrderType(v)) {
+            _selectedTable = null;
+            _lastSelectedTable = null;
+          }
+          if (_isTableOrderType(v) && _selectedTable == null) {
+            _activeTab = 'tables';
+          }
+        });
+      },
+      onBrowsePromocodes: _showPromocodesSheet,
+      appliedPromoCode: _activePromoCode,
+      onClearPromoCode: () => _applyPromoCode(null),
+      requireCustomerSelection: _requireCustomerSelection,
+      carNumberController: _carNumberController,
+      onApplyCoupon: (code) async {
+        final normalizedCode = code.trim();
+        if (normalizedCode.isEmpty) {
+          await _showPromocodesSheet();
+          return;
+        }
+
+        // Show loading
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) =>
+              const Center(child: CircularProgressIndicator()),
+        );
+
+        try {
+          final promoService = PromoCodeService();
+          final promo = await promoService.getPromoCodeByCode(normalizedCode);
+
+          if (mounted) Navigator.pop(context); // Close loading
+
+          if (promo != null && mounted) {
+            _applyPromoCode(promo);
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    translationService.t(
+                      'promo_applied',
+                      args: {'code': promo.code},
+                    ),
+                  ),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          } else {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(translationService.t('promo_invalid')),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        } catch (e) {
+          if (mounted) Navigator.pop(context);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  translationService.t(
+                    'promo_apply_error',
+                    args: {'error': e},
+                  ),
+                ),
+              ),
+            );
+          }
+        }
+      },
+      orderNotesController: _orderNotesController,
+    );
+  }
+
+  Future<void> _showPromocodesSheet() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final promoService = PromoCodeService();
+      final promocodes = await promoService.getAllPromoCodes();
+
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+
+      if (!mounted) return;
+      if (promocodes.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(translationService.t('promo_none_available')),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final selected = await showDialog<PromoCode>(
+        context: context,
+        builder: (context) => _PromoCodesDialog(
+          promocodes: promocodes,
+          activePromoId: _activePromoCode?.id,
+        ),
+      );
+
+      if (selected != null && mounted) {
+        _applyPromoCode(selected);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              translationService.t(
+                'promo_applied',
+                args: {'code': selected.code},
+              ),
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              translationService.t(
+                'promo_fetch_error',
+                args: {'error': e},
+              ),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. Handle Full Screen Tabs (Tables, Customers, Settings)
+    if (_activeTab == 'tables') {
+      return TableManagementScreen(
+        onBack: () => setState(() => _activeTab = 'home'),
+        onTableTap: (table) {
+          print(
+            '🧾 [PAY] table tapped id=${table.id} number=${table.number} activeTab=$_activeTab pending=$_pendingPaymentTypeAfterTableSelection',
+          );
+          final pendingType = _pendingPaymentTypeAfterTableSelection;
+          final pendingPays = _pendingPaymentPaysAfterTableSelection;
+          final pendingShowLoading =
+              _pendingPaymentShowLoadingAfterTableSelection;
+          final pendingShowSuccess =
+              _pendingPaymentShowSuccessAfterTableSelection;
+          final pendingClearCart = _pendingPaymentClearCartAfterTableSelection;
+          final pendingNearPay = _pendingPaymentNearPayAfterTableSelection;
+          _clearPendingPaymentAfterTableSelection();
+
+          setState(() {
+            _selectedTable = table;
+            _lastSelectedTable = table;
+            _selectedOrderType = _resolveOrderTypeForBooking(table);
+            _activeTab = 'home';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                translationService.t(
+                  'table_selected',
+                  args: {'number': table.number},
+                ),
+              ),
+              backgroundColor: const Color(0xFFF58220),
+              action: SnackBarAction(
+                label: translationService.t('cancel'),
+                textColor: Colors.white,
+                onPressed: () => setState(() {
+                  _selectedTable = null;
+                  _lastSelectedTable = null;
+                }),
+              ),
+            ),
+          );
+
+          if (pendingType == 'payment') {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              print('🧾 [PAY] resume pending payment after table select');
+              unawaited(
+                _processPayment(
+                  type: pendingType!,
+                  pays: pendingPays,
+                  showLoadingOverlay: pendingShowLoading,
+                  showSuccessDialog: pendingShowSuccess,
+                  clearCartOnSuccess: pendingClearCart,
+                  isNearPayCardFlow: pendingNearPay,
+                ),
+              );
+            });
+          } else if (pendingType == 'open_tender') {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              print('🧾 [PAY] resume pending open_tender after table select');
+              unawaited(_handlePay());
+            });
+          }
+        },
+      );
+    }
+
+    if (_activeTab == 'orders') {
+      return OrdersScreen(
+        onBack: () => setState(() => _activeTab = 'home'),
+        onNavigateToInvoices: () => setState(() => _activeTab = 'invoices'),
+      );
+    }
+
+    if (_activeTab == 'invoices') {
+      return InvoicesScreen(onBack: () => setState(() => _activeTab = 'home'));
+    }
+
+    if (_activeTab == 'customers') {
+      return CustomersScreen(onBack: () => setState(() => _activeTab = 'home'));
+    }
+
+    if (_activeTab == 'settings') {
+      return SettingsView(
+        devices: _devices,
+        categories: _categories,
+        onAddDevice: _addDevice,
+        onRemoveDevice: _removeDevice,
+        requireCustomerSelection: _requireCustomerSelection,
+        onRequireCustomerSelectionChanged: _setRequireCustomerSelection,
+        cdsEnabled: _isCdsEnabled,
+        kdsEnabled: _isKdsEnabled,
+        onCdsEnabledChanged: _setCdsEnabled,
+        onKdsEnabledChanged: _setKdsEnabled,
+        autoPrintCashier: _autoPrintCashier,
+        onAutoPrintCashierChanged: _setAutoPrintCashier,
+        autoPrintCustomer: _autoPrintCustomer,
+        onAutoPrintCustomerChanged: _setAutoPrintCustomer,
+        printKitchenInvoices: _printKitchenInvoices,
+        onPrintKitchenInvoicesChanged: _setPrintKitchenInvoices,
+        allowPrintWithKds: _allowPrintWithKds,
+        onAllowPrintWithKdsChanged: _setAllowPrintWithKds,
+        mealIconScale: _mealIconScale,
+        onMealIconScaleChanged: _setMealIconScale,
+        sidebarIconScale: _sidebarIconScale,
+        onSidebarIconScaleChanged: _setSidebarIconScale,
+        onBack: () => setState(() => _activeTab = 'home'),
+        onSwitchBranch: _handleSwitchBranch,
+      );
+    }
+
+    // 2. Handle Reports (Layout similar to Main but specific)
+    if (_activeTab == 'reports') {
+      return Scaffold(
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            final isSmallScreen = constraints.maxWidth < 900;
+            if (isSmallScreen) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: Text(translationService.t('reports')),
+                  leading: IconButton(
+                    icon: const Icon(LucideIcons.chevronRight),
+                    onPressed: () => setState(() => _activeTab = 'home'),
+                  ),
+                ),
+                body: const ReportsScreen(),
+              );
+            }
+            return Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 16,
+                  ),
+                  color: Colors.white,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(LucideIcons.chevronRight),
+                        onPressed: () =>
+                            setState(() => _activeTab = 'home'),
+                      ),
+                      Text(
+                        translationService.t('back_to_main'),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Expanded(child: ReportsScreen()),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    // 3. Handle Home Screen (Responsive)
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isPhone = constraints.maxWidth < 700;
+        final hasPinnedSidebar = constraints.maxWidth >= 1180;
+        final orderPanelWidth = _resolveOrderPanelWidth(
+          constraints.maxWidth,
+          hasPinnedSidebar: hasPinnedSidebar,
+        );
+        final cartBadgeLabel =
+            _cart.length > 99 ? '99+' : _cart.length.toString();
+
+        if (isPhone) {
+          // Mobile Layout
+          return Scaffold(
+            key: _scaffoldKey,
+            backgroundColor: const Color(0xFFF1F5F9),
+            appBar: AppBar(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              leading: _buildMoreMenu(iconColor: Colors.black),
+              title: Container(
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: TextField(
+                  onChanged: (val) => setState(() => _searchQuery = val),
+                  decoration: InputDecoration(
+                    hintText: translationService.t('search_placeholder'),
+                    prefixIcon: const Icon(
+                      LucideIcons.search,
+                      size: 18,
+                      color: Colors.grey,
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+              actions: [
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    IconButton(
+                      padding: const EdgeInsets.all(12),
+                      constraints: const BoxConstraints(
+                        minWidth: 48,
+                        minHeight: 48,
+                      ),
+                      icon: const Icon(
+                        LucideIcons.shoppingBag,
+                        color: Colors.black,
+                      ),
+                      onPressed: () =>
+                          _scaffoldKey.currentState?.openEndDrawer(),
+                    ),
+                    if (_cart.isNotEmpty)
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: IgnorePointer(
+                          ignoring: true,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 18,
+                              minHeight: 18,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: Colors.white,
+                                width: 1.2,
+                              ),
+                            ),
+                            child: Text(
+                              cartBadgeLabel,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                height: 1.0,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            endDrawer: Drawer(
+              width:
+                  constraints.maxWidth > 400 ? 380 : constraints.maxWidth * 0.9,
+              child: _buildOrderPanel(),
+            ),
+            body: Column(
+              children: [
+                // Nav Tabs for Mobile
+                SizedBox(
+                  height: 60,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    itemCount: navItems.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      final item = navItems[index];
+                      final isSelected = _activeTab == item.id;
+                      return ChoiceChip(
+                        label: Text(_navLabel(item.id)),
+                        selected: isSelected,
+                        onSelected: (selected) {
+                          if (selected) setState(() => _activeTab = item.id);
+                        },
+                        avatar: Icon(item.icon, size: 16),
+                      );
+                    },
+                  ),
+                ),
+                // Hungerstation Toggle + Category Bar
+                _buildHungerstationBar(),
+                _buildCategoryBar(),
+
+                Expanded(child: _buildContent()),
+              ],
+            ),
+          );
+        }
+
+        // Tablet/Desktop Layout
+        return Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: const Color(0xFFF1F5F9),
+          body: Row(
+            children: [
+              // Main Content
+              Expanded(
+                child: Column(
+                  children: [
+                    // Header
+                    _buildSearchHeader(),
+
+                    // Nav Tabs
+                    _buildNavTabs(),
+
+                    // Hungerstation Toggle + Category Bar
+                    _buildHungerstationBar(),
+                    _buildCategoryBar(),
+
+                    // Main Body
+                    Expanded(child: _buildContent()),
+                  ],
+                ),
+              ),
+
+              // 3. Order Panel (always visible for tablet and larger)
+              SizedBox(
+                width: orderPanelWidth,
+                child: _buildOrderPanel(),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Promo Codes Dialog with search
+// ---------------------------------------------------------------------------
+class _PromoCodesDialog extends StatefulWidget {
+  final List<PromoCode> promocodes;
+  final String? activePromoId;
+
+  const _PromoCodesDialog({
+    required this.promocodes,
+    this.activePromoId,
+  });
+
+  @override
+  State<_PromoCodesDialog> createState() => _PromoCodesDialogState();
+}
+
+class _PromoCodesDialogState extends State<_PromoCodesDialog> {
+  final _searchController = TextEditingController();
+  List<PromoCode> _filtered = [];
+  bool _isSearching = false;
+  Timer? _debounce;
+
+  bool get _useArabicUi {
+    final code = translationService.currentLanguageCode.trim().toLowerCase();
+    return code.startsWith('ar') || code.startsWith('ur');
+  }
+
+  String _tr(String ar, String en) => _useArabicUi ? ar : en;
+
+  @override
+  void initState() {
+    super.initState();
+    _filtered = widget.promocodes;
+    _searchController.addListener(_onSearch);
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearch() {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      setState(() {
+        _filtered = widget.promocodes;
+        _isSearching = false;
+      });
+      return;
+    }
+
+    // بحث محلي أولاً بالاسم
+    final localResults = widget.promocodes
+        .where((p) => p.code.toLowerCase().contains(query))
+        .toList();
+    setState(() => _filtered = localResults);
+
+    // بحث بالكود من الـ API بعد تأخير
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      if (!mounted) return;
+      setState(() => _isSearching = true);
+      try {
+        final promoService = PromoCodeService();
+        final apiResult = await promoService.getPromoCodeByCode(query);
+        if (!mounted) return;
+        if (apiResult != null) {
+          // أضف النتيجة من الـ API لو مش موجودة محلياً
+          final exists = localResults.any((p) => p.id == apiResult.id);
+          if (!exists) {
+            setState(() {
+              _filtered = [apiResult, ...localResults];
+            });
+          }
+        }
+      } catch (_) {}
+      if (mounted) setState(() => _isSearching = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 480,
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+              decoration: const BoxDecoration(
+                color: Color(0xFFF58220),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(LucideIcons.badgePercent,
+                      color: Colors.white, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _tr('الكوبونات والعروض', 'Coupons & Offers'),
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(LucideIcons.x,
+                        color: Colors.white, size: 20),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+
+            // Search bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: _tr('ابحث عن كوبون...', 'Search coupon...'),
+                  hintStyle:
+                      const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                  prefixIcon: const Icon(LucideIcons.search,
+                      size: 18, color: Color(0xFF94A3B8)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFFF58220)),
+                  ),
+                ),
+              ),
+            ),
+
+            // Loading indicator
+            if (_isSearching)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4),
+                child: LinearProgressIndicator(
+                  minHeight: 2,
+                  color: Color(0xFFF58220),
+                ),
+              ),
+
+            // List
+            Flexible(
+              child: _filtered.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(LucideIcons.searchX,
+                                size: 40, color: Color(0xFFCBD5E1)),
+                            const SizedBox(height: 12),
+                            Text(
+                              _tr('لا توجد كوبونات', 'No coupons found'),
+                              style: const TextStyle(
+                                  color: Color(0xFF94A3B8), fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      itemCount: _filtered.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final promo = _filtered[index];
+                        return _buildPromoCard(promo);
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPromoCard(PromoCode promo) {
+    final isCurrentlyApplied = widget.activePromoId == promo.id;
+    final isActive = promo.isActive;
+
+    // Discount text
+    final discountText = promo.type == DiscountType.percentage
+        ? '${promo.discount.toStringAsFixed(0)}%'
+        : '${promo.discount.toStringAsFixed(2)} ${ApiConstants.currency}';
+
+    return GestureDetector(
+      onTap: isActive
+          ? () => Navigator.pop(context, promo)
+          : null,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isCurrentlyApplied
+              ? const Color(0xFFFFF7ED)
+              : (isActive ? Colors.white : const Color(0xFFF8FAFC)),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isCurrentlyApplied
+                ? const Color(0xFFF58220)
+                : (isActive
+                    ? const Color(0xFFE2E8F0)
+                    : const Color(0xFFE2E8F0)),
+            width: isCurrentlyApplied ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            // Discount badge
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? const Color(0xFFF58220).withValues(alpha: 0.1)
+                    : const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                discountText,
+                style: TextStyle(
+                  fontSize: promo.type == DiscountType.percentage ? 18 : 13,
+                  fontWeight: FontWeight.bold,
+                  color: isActive
+                      ? const Color(0xFFF58220)
+                      : const Color(0xFF94A3B8),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(width: 12),
+
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          promo.code,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: isActive
+                                ? const Color(0xFF1E293B)
+                                : const Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ),
+                      if (isCurrentlyApplied)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF22C55E),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            _tr('مطبّق', 'Applied'),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      else if (!isActive)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            _tr('منتهي', 'Expired'),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFFEF4444),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+
+                  // Details row
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 4,
+                    children: [
+                      // Discount type
+                      _infoChip(
+                        icon: LucideIcons.percent,
+                        text: promo.type == DiscountType.percentage
+                            ? _tr('خصم نسبة', 'Percentage')
+                            : _tr('خصم ثابت', 'Fixed'),
+                      ),
+                      // Max discount
+                      if (promo.maxDiscount != null)
+                        _infoChip(
+                          icon: LucideIcons.arrowUpCircle,
+                          text:
+                              '${_tr('حد أقصى', 'Max')}: ${promo.maxDiscountDisplay ?? '${promo.maxDiscount!.toStringAsFixed(2)} ${ApiConstants.currency}'}',
+                        ),
+                      // Min pay
+                      if (promo.minPay != null)
+                        _infoChip(
+                          icon: LucideIcons.wallet,
+                          text:
+                              '${_tr('حد أدنى', 'Min')}: ${promo.minPayDisplay ?? '${promo.minPay!.toStringAsFixed(2)} ${ApiConstants.currency}'}',
+                        ),
+                      // Max uses
+                      if (promo.maxUse != null)
+                        _infoChip(
+                          icon: LucideIcons.repeat,
+                          text:
+                              '${_tr('عدد الاستخدام', 'Uses')}: ${promo.maxUse}',
+                        ),
+                    ],
+                  ),
+
+                  // Validity dates
+                  if (promo.durationFrom != null ||
+                      promo.durationTo != null) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(LucideIcons.calendar,
+                            size: 12, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            _formatDateRange(
+                                promo.durationFrom, promo.durationTo),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF94A3B8),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            // Apply arrow
+            if (isActive && !isCurrentlyApplied)
+              const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Icon(LucideIcons.chevronLeft,
+                    size: 20, color: Color(0xFFF58220)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoChip({required IconData icon, required String text}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 11, color: const Color(0xFF94A3B8)),
+        const SizedBox(width: 3),
+        Text(
+          text,
+          style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+        ),
+      ],
+    );
+  }
+
+  String _formatDateRange(String? from, String? to) {
+    String formatDate(String raw) {
+      try {
+        final dt = DateTime.parse(raw);
+        return DateFormat('yyyy/MM/dd').format(dt);
+      } catch (_) {
+        return raw.length > 10 ? raw.substring(0, 10) : raw;
+      }
+    }
+
+    if (from != null && to != null) {
+      return '${formatDate(from)} - ${formatDate(to)}';
+    } else if (from != null) {
+      return '${_tr('من', 'From')}: ${formatDate(from)}';
+    } else if (to != null) {
+      return '${_tr('حتى', 'Until')}: ${formatDate(to)}';
+    }
+    return '';
+  }
+}

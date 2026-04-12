@@ -1,0 +1,429 @@
+{
+  "data": [
+    {
+      "id": 442752,
+      "booking_number": "#BOK-442752",
+      "daily_order_number": 1,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "restaurant_pickup",
+      "type_text": "استلام",
+      "notes": null,
+      "status": 2,
+      "status_display": "بدأ",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-04-03 17:41:30",
+      "updated_at": "17:41:32",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 20
+    },
+    {
+      "id": 442738,
+      "booking_number": "#BOK-442738",
+      "daily_order_number": 1,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "restaurant_pickup",
+      "type_text": "استلام",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-04-02 22:13:33",
+      "updated_at": "22:13:34",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 20
+    },
+    {
+      "id": 442696,
+      "booking_number": "#BOK-442696",
+      "daily_order_number": 26,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:56:43",
+      "updated_at": "16:56:53",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 18
+    },
+    {
+      "id": 442691,
+      "booking_number": "#BOK-442691",
+      "daily_order_number": 25,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:50:56",
+      "updated_at": "16:51:14",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 10
+    },
+    {
+      "id": 442689,
+      "booking_number": "#BOK-442689",
+      "daily_order_number": 24,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:43:55",
+      "updated_at": "16:44:14",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 1
+    },
+    {
+      "id": 442684,
+      "booking_number": "#BOK-442684",
+      "daily_order_number": 23,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:41:07",
+      "updated_at": "16:41:20",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 36
+    },
+    {
+      "id": 442682,
+      "booking_number": "#BOK-442682",
+      "daily_order_number": 22,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:36:16",
+      "updated_at": "16:36:35",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 5
+    },
+    {
+      "id": 442671,
+      "booking_number": "#BOK-442671",
+      "daily_order_number": 21,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:14:16",
+      "updated_at": "16:14:38",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 20
+    },
+    {
+      "id": 442669,
+      "booking_number": "#BOK-442669",
+      "daily_order_number": 20,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:05:47",
+      "updated_at": "16:05:58",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 2
+    },
+    {
+      "id": 442667,
+      "booking_number": "#BOK-442667",
+      "daily_order_number": 19,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:05:26",
+      "updated_at": "16:05:37",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 28
+    },
+    {
+      "id": 442666,
+      "booking_number": "#BOK-442666",
+      "daily_order_number": 18,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:05:02",
+      "updated_at": "16:05:17",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 8
+    },
+    {
+      "id": 442665,
+      "booking_number": "#BOK-442665",
+      "daily_order_number": 17,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:04:36",
+      "updated_at": "16:04:53",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 1
+    },
+    {
+      "id": 442664,
+      "booking_number": "#BOK-442664",
+      "daily_order_number": 16,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:04:05",
+      "updated_at": "16:04:18",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 10
+    },
+    {
+      "id": 442663,
+      "booking_number": "#BOK-442663",
+      "daily_order_number": 15,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:03:39",
+      "updated_at": "16:03:50",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 13
+    },
+    {
+      "id": 442662,
+      "booking_number": "#BOK-442662",
+      "daily_order_number": 14,
+      "customer": null,
+      "platform": "dashboard",
+      "type": "services",
+      "type_text": "خدمات",
+      "notes": null,
+      "status": 7,
+      "status_display": "مكتمل",
+      "has_cancelled": false,
+      "book_appointment": false,
+      "created_at": "2026-03-30 16:03:11",
+      "updated_at": "16:03:28",
+      "delivery_man": {
+        "id": null,
+        "name": null,
+        "mobile": null
+      },
+      "total_price": 8
+    }
+  ],
+  "links": {
+    "first": "https://api.hermosaapp.com/seller/branches/87/bookings?page=1",
+    "last": "https://api.hermosaapp.com/seller/branches/87/bookings?page=336",
+    "prev": null,
+    "next": "https://api.hermosaapp.com/seller/branches/87/bookings?page=2"
+  },
+  "meta": {
+    "current_page": 1,
+    "from": 1,
+    "last_page": 336,
+    "links": [
+      {
+        "url": null,
+        "label": "&laquo; Previous",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=1",
+        "label": "1",
+        "active": true
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=2",
+        "label": "2",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=3",
+        "label": "3",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=4",
+        "label": "4",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=5",
+        "label": "5",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=6",
+        "label": "6",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=7",
+        "label": "7",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=8",
+        "label": "8",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=9",
+        "label": "9",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=10",
+        "label": "10",
+        "active": false
+      },
+      {
+        "url": null,
+        "label": "...",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=335",
+        "label": "335",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=336",
+        "label": "336",
+        "active": false
+      },
+      {
+        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=2",
+        "label": "Next &raquo;",
+        "active": false
+      }
+    ],
+    "path": "https://api.hermosaapp.com/seller/branches/87/bookings",
+    "per_page": 15,
+    "to": 15,
+    "total": 5036
+  },
+  "status": 200,
+  "maintenance": null,
+  "today": "2026-04-12"
+}

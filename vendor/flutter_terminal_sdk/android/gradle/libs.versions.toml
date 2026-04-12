@@ -1,0 +1,135 @@
+[versions]
+flutter_embedding = "1.0.0"
+flutter_embedding_debug = "3.9.0"
+kotlinStdlib = "1.8.10"
+kotlinStdlibVersion = "1.9.24"
+kotlinTest = "1.7.21"
+mockitoCore = "5.0.0"
+mockitoCoreVersion = "4.11.0"
+terminalsdk = "0.0.25"
+cardreaderUiMockDebug = "0.3.13"
+
+agp = "8.1.1"
+androidxJunit = "1.1.5"
+androidxLifecycleRuntimeKtx = "2.5.1"
+appcompatVersion = "1.4.1"
+coreKtxVersion = "1.8.0"
+espressoCoreVersion = "3.5.1"
+insetter = "0.6.1"
+kotlin = "1.7.21"
+kotlinBom = "1.8.0"
+kotlinxCoroutinesAndroid = "1.7.3"
+kotlinxCoroutinesCore = "1.6.3"
+kotlinxSerializationJson = "1.4.1"
+lifecycleLivedataKtxVersion = "2.2.0"
+loggingInterceptor = "5.0.0-alpha.2"
+materialVersion = "1.6.0"
+navigationFragmentKtxVersion = "2.5.3"
+navigationUiKtxVersion = "2.5.3"
+recyclerview = "1.3.2"
+safeargsPlugin = "2.7.7"
+coreKtx = "1.10.1"
+junit = "4.13.2"
+junitVersion = "1.2.1"
+espressoCore = "3.6.1"
+appcompat = "1.6.1"
+kotlinBomVersion = "1.9.20"
+lifecycleLivedataKtx = "2.8.4"
+lifecycleRuntimeKtxVersion = "2.8.4"
+loggingInterceptorVersion = "5.0.0-alpha.10"
+material = "1.9.0"
+constraintlayout = "2.1.4"
+navigationFragmentKtx = "2.7.7"
+navigationUiKtx = "2.7.7"
+activity = "1.5.1"
+nearpayPlugin = "0.4.5-SNAPSHOT"
+sdpAndroid = "1.1.1"
+serialization = "1.5.1"
+sspAndroidVersion = "1.1.1"
+terminalsdkRelease = "0.0.74"
+timber = "5.0.1"
+gradleplugin = "8.0.0"
+workRuntimeKtx = "2.7.1"
+workRuntimeKtxVersion = "2.9.1"
+javax = "1"
+daggerHilt = "2.46.1"
+
+googleLocation = "20.0.0"
+huaweiLocation = "6.4.0.300"
+googlePlayIntegrity = "1.3.0"
+huaweiSafetyDetect = "6.4.0.301"
+huaweiAppService = "6.10.0.300"
+googlePlayAppUpdate = "2.1.0"
+
+workManager = "2.7.1"
+hiltWork = "1.0.0"
+
+retrofit2 = "2.9.0"
+okhttp3 = "5.0.0-alpha.10"
+retrofitSerialization = "1.0.0"
+navigationFragment = "2.8.3"
+navigationUi = "2.8.3"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
+cardreader-ui-mock-debug = { module = "io.nearpay:cardreader-ui-mock-debug", version.ref = "cardreaderUiMockDebug" }
+flutter_embedding = { module = "io.flutter:flutter_embedding", version.ref = "flutter_embedding" }
+flutter_embedding_debug = { module = "io.flutter:flutter_embedding_debug", version.ref = "flutter_embedding_debug" }
+insetter = { module = "dev.chrisbanes.insetter:insetter", version.ref = "insetter" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+kotlin-stdlib-v1810 = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlinStdlib" }
+kotlin-stdlib-v1924 = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlinStdlibVersion" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlinStdlib" }
+kotlin-test-v1721 = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlinTest" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutinesAndroid" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutinesCore" }
+kotlin-reflection = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
+material = { module = "com.google.android.material:material", version.ref = "material" }
+androidx-constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "constraintlayout" }
+androidx-navigation-fragment-ktx = { group = "androidx.navigation", name = "navigation-fragment-ktx", version.ref = "navigationFragmentKtx" }
+androidx-navigation-ui-ktx = { group = "androidx.navigation", name = "navigation-ui-ktx", version.ref = "navigationUiKtx" }
+androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
+
+kotlin-serialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+javax-inject = { module = "javax.inject:javax.inject", version.ref = "javax" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockitoCore" }
+mockito-core-v4110 = { module = "org.mockito:mockito-core", version.ref = "mockitoCoreVersion" }
+nearpay-plugin = { module = "io.nearpay:nearpay-plugin", version.ref = "nearpayPlugin" }
+other-timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
+sdp-android = { module = "com.intuit.sdp:sdp-android", version.ref = "sdpAndroid" }
+
+androidX-workManager = { module = "androidx.work:work-runtime-ktx", version.ref = "workManager" }
+androidX-hiltWork = { module = "androidx.hilt:hilt-work", version.ref = "hiltWork" }
+androidX-hiltWorkCompiler = { module = "androidx.hilt:hilt-compiler", version.ref = "hiltWork" }
+
+mobileService-googleLocation = { module = "com.google.android.gms:play-services-location", version.ref = "googleLocation" }
+mobileService-huaweiLocation = { module = "com.huawei.hms:location", version.ref = "huaweiLocation" }
+mobileService-googlePlayIntegrity = { module = "com.google.android.play:integrity", version.ref = "googlePlayIntegrity" }
+mobileService-huaweiSafetyDetect = { module = "com.huawei.hms:safetydetect", version.ref = "huaweiSafetyDetect" }
+mobileService-googlePlayAppUpdate = { module = "com.google.android.play:app-update", version.ref = "googlePlayAppUpdate" }
+mobileService-googlePlayAppUpdateKtx = { module = "com.google.android.play:app-update-ktx", version.ref = "googlePlayAppUpdate" }
+mobileService-huaweiAppService = { module = "com.huawei.hms:appservice", version.ref = "huaweiAppService" }
+
+network-retrofit = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit2" }
+network-okhttp = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp3" }
+network-okhttpSSE = { module = "com.squareup.okhttp3:okhttp-sse", version.ref = "okhttp3" }
+network-retrofitSerialization = { module = "com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter", version.ref = "retrofitSerialization" }
+kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
+terminalsdk-debug = { group = "io.nearpay", name = "terminalsdk-debug" ,  version.ref = "terminalsdk" }
+#terminalsdk-release = { module = "io.nearpay.terminalsdk-release", version.ref = "terminalsdk" }
+
+
+############################################
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+navigation-safeargs = { id = "androidx.navigation.safeargs.kotlin", version.ref = "safeargsPlugin" }
+kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }
+kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "daggerHilt" }
+############################################
+android-library = { id = "com.android.library", version.ref = "gradleplugin" }

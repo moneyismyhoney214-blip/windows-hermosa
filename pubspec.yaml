@@ -1,0 +1,93 @@
+name: hermosa_pos
+description: A modern POS system converted from React.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  
+  # For the Tajawal font
+  google_fonts: ^8.0.1
+  
+  # For the icons used in the UI
+  # For the icons used in the UI
+  lucide_icons: ^0.257.0
+
+  # For internationalization utilities
+  intl: any # Allow any version compatible with flutter_localizations
+  mobile_scanner: ^3.5.5  # للماسح الضوئي QR
+  esc_pos_utils_plus: ^2.0.4
+  esc_pos_printer_plus: ^0.1.1
+  qr_flutter: ^4.1.0
+  screenshot: ^3.0.0
+  path_provider: ^2.1.5
+  image: ^4.1.0
+  http: ^1.6.0
+  crypto: ^3.0.3
+  json_annotation: ^4.10.0
+  get_it: ^9.2.0
+  shared_preferences: ^2.2.3
+  web_socket_channel: ^2.4.0
+  dart_jsonwebtoken: ^3.2.0
+  permission_handler: ^11.3.1
+  uuid: ^4.5.1
+  geolocator: ^12.0.0
+  audioplayers: ^6.0.0
+  url_launcher: ^6.3.1
+  webview_flutter: ^4.13.0
+  flutter_html_to_pdf_plus: ^0.3.0
+  printing: ^5.13.4
+  pdf: ^3.11.0
+  flutter_widget_from_html_core: ^0.15.2
+  flutter_bluetooth_printer: ^2.20.0
+
+  # Customer Display & Presentation API dependencies
+  provider: ^6.0.0
+  wakelock_plus: ^1.1.0
+  sqflite: ^2.3.0
+  connectivity_plus: ^5.0.0
+  device_info_plus: ^9.0.0
+  nfc_manager: any
+  video_player: any
+
+  # NearPay Terminal SDK (vendor)
+  flutter_terminal_sdk:
+    path: vendor/flutter_terminal_sdk
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  build_runner: ^2.11.1
+  json_serializable: ^6.12.0
+  mockito: ^5.6.3
+  sqflite_common_ffi: ^2.3.0
+
+  async: any
+  stream_channel: any
+dependency_overrides:
+  image: ^4.1.0
+
+flutter:
+
+  uses-material-design: true
+
+  assets:
+    - assets/sounds/
+
+    - assets/splash/logo.png
+
+    - assets/splash/butterfly.gif
+    - assets/templates/PrintInvoice.vue
+    - assets/templates/PrintOrdertokitchen.vue
+    - assets/certs/
+    - assets/hermosa app ico.png
+    - assets/animation/Success.gif
