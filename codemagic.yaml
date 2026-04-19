@@ -4,33 +4,29 @@ workflows:
     instance_type: windows_x2
     max_build_duration: 90
     environment:
-      flutter: 3.41.1
       vars:
+        FLUTTER_VERSION: "3.41.1"
         BUILD_DIR: "build\\windows\\x64\\runner\\Release"
     scripts:
-      - name: System info
+      - name: Install Flutter 3.41.1 from Git
         script: |
-          echo "=== Flutter version ==="
-          flutter --version
-          echo "=== Flutter doctor ==="
-          flutter doctor -v
+          git clone https://github.com/flutter/flutter.git -b $env:FLUTTER_VERSION --depth 1 C:\flutter
+          echo "C:\flutter\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $env:PATH = "C:\flutter\bin;" + $env:PATH
+          C:\flutter\bin\flutter.bat --version
+          C:\flutter\bin\flutter.bat precache --windows
+      - name: Flutter doctor
+        script: C:\flutter\bin\flutter.bat doctor -v
       - name: Enable Windows desktop
-        script: flutter config --enable-windows-desktop
+        script: C:\flutter\bin\flutter.bat config --enable-windows-desktop
       - name: Clean project
-        script: flutter clean
-      - name: Get Flutter packages (verbose)
-        script: flutter pub get --verbose
-      - name: Analyze dependencies for Windows
-        script: |
-          echo "=== Plugins that will register for Windows ==="
-          type windows\flutter\generated_plugin_registrant.cc
-        ignore_failure: true
-      - name: Build Windows Release (verbose)
-        script: flutter build windows --release --verbose
+        script: C:\flutter\bin\flutter.bat clean
+      - name: Get Flutter packages
+        script: C:\flutter\bin\flutter.bat pub get --verbose
+      - name: Build Windows Release
+        script: C:\flutter\bin\flutter.bat build windows --release --verbose
       - name: List build output
-        script: |
-          echo "=== Build output ==="
-          dir build\windows\x64\runner\Release
+        script: dir build\windows\x64\runner\Release
         ignore_failure: true
       - name: Package as ZIP
         script: |
@@ -40,7 +36,6 @@ workflows:
       - hermosa-windows.zip
       - build/windows/x64/runner/Release/**/*.exe
       - build/windows/x64/runner/Release/**/*.dll
-      - flutter_drive.log
     publishing:
       email:
         recipients:
