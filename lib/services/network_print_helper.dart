@@ -82,6 +82,23 @@ class NetworkPrintHelper {
     }
   }
 
+  /// Encodes a PNG [imageBytes] as ESC/POS raster bytes ready for any
+  /// transport (TCP or Bluetooth). Exposed so Bluetooth printing can reuse the
+  /// exact same thermal pipeline that network printing uses.
+  static Future<Uint8List> encodeImageToEscPos({
+    required Uint8List imageBytes,
+    required int paperWidthMm,
+    int addFeeds = 4,
+  }) async {
+    final dots = dotsPerLine(paperWidthMm);
+    final bytes = await compute(_encodePayload, {
+      'bytes': imageBytes,
+      'dotsPerLine': dots,
+      'addFeeds': addFeeds,
+    });
+    return bytes;
+  }
+
   /// Tests connectivity to a network printer.
   static Future<bool> testConnection(String ip, int port, {Duration timeout = const Duration(seconds: 3)}) async {
     try {

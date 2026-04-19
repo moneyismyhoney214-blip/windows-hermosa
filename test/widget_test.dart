@@ -89,7 +89,7 @@ void main() {
 
   group('API Constants Tests', () {
     test('Base URL is correct', () {
-      expect(ApiConstants.baseUrl, 'https://api.hermosaapp.com');
+      expect(ApiConstants.baseUrl, 'https://portal.hermosaapp.com');
     });
 
     test('Branch ID is configured', () {

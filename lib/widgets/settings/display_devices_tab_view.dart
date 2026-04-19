@@ -6,6 +6,7 @@ import '../../models.dart';
 import '../../services/api/error_handler.dart';
 import '../../services/display_app_service.dart';
 import '../../services/language_service.dart';
+import '../../services/app_themes.dart';
 
 class DisplayDevicesTabView extends StatefulWidget {
   final List<DeviceConfig> devices;
@@ -130,11 +131,20 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFFFF7ED), Color(0xFFFFFBEB)],
+        gradient: LinearGradient(
+          colors: context.isDark
+              ? [
+                  context.appPrimary.withValues(alpha: 0.15),
+                  context.appPrimary.withValues(alpha: 0.08),
+                ]
+              : const [Color(0xFFFFF7ED), Color(0xFFFFFBEB)],
         ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFED7AA)),
+        border: Border.all(
+          color: context.isDark
+              ? context.appPrimary.withValues(alpha: 0.4)
+              : const Color(0xFFFED7AA),
+        ),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -146,7 +156,7 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
                 width: compact ? 36 : 42,
                 height: compact ? 36 : 42,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: context.appCardBg,
                   borderRadius: BorderRadius.circular(compact ? 8 : 10),
                 ),
                 child: Icon(LucideIcons.monitor,
@@ -210,9 +220,9 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appCardBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: context.appBorder),
       ),
       child: Column(
         children: [
@@ -279,9 +289,9 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
             ),
           ),
           Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFFF8FAFC),
-              border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+            decoration: BoxDecoration(
+              color: context.appSurfaceAlt,
+              border: Border(top: BorderSide(color: context.appBorder)),
             ),
             child: Row(
               children: [
@@ -297,7 +307,7 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
                         : Text(_t('reconnect')),
                   ),
                 ),
-                const VerticalDivider(width: 1),
+                VerticalDivider(width: 1, color: context.appBorder),
                 Expanded(
                   child: TextButton(
                     onPressed: () => widget.onRemoveDevice(d.id),
@@ -325,7 +335,7 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
         final compact = constraints.maxWidth < 900;
 
         return Container(
-          color: const Color(0xFFF8FAFC),
+          color: context.appBg,
           child: Column(
             children: [
               _buildHeader(),
@@ -506,14 +516,14 @@ class _AddDisplayDialogState extends State<_AddDisplayDialog> {
                   onSaved: (v) => _name = v ?? '',
                 ),
                 TextFormField(
-                  decoration: const InputDecoration(labelText: 'IP'),
+                  decoration: InputDecoration(labelText: translationService.t('ip_label')),
                   validator: (v) =>
                       (v == null || v.isEmpty) ? _t('required') : null,
                   onSaved: (v) => _ip = v ?? '',
                 ),
                 TextFormField(
                   initialValue: _port,
-                  decoration: const InputDecoration(labelText: 'Port'),
+                  decoration: InputDecoration(labelText: translationService.t('port_label')),
                   validator: (v) =>
                       (v == null || v.isEmpty) ? _t('required') : null,
                   onSaved: (v) => _port = v ?? '8080',

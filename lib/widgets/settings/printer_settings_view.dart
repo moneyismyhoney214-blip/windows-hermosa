@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../models.dart';
+import '../../services/app_themes.dart';
 import '../../services/display_app_service.dart';
 import '../../services/printer_service.dart';
 import '../../locator.dart';
@@ -209,9 +210,9 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
 
             return Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.appCardBg,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(color: context.appBorder),
                 boxShadow: [
                   BoxShadow(
                       color: Colors.black.withValues(alpha: 0.02),
@@ -289,7 +290,7 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 8, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFF8FAFC),
+                                    color: context.appBg,
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
@@ -323,9 +324,9 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                     ),
                   ),
                   Container(
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF8FAFC),
-                      border: Border(top: BorderSide(color: Color(0xFFF1F5F9))),
+                    decoration: BoxDecoration(
+                      color: context.appBg,
+                      border: Border(top: BorderSide(color: context.appSurfaceAlt)),
                     ),
                     child: Row(
                       children: [
@@ -351,7 +352,7 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                         Container(
                             width: 1,
                             height: 24,
-                            color: const Color(0xFFE2E8F0)),
+                            color: context.appBorder),
                         if (_isPrinterType(device.type)) ...[
                           Expanded(
                             child: TextButton.icon(
@@ -406,7 +407,7 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                           Container(
                               width: 1,
                               height: 24,
-                              color: const Color(0xFFE2E8F0)),
+                              color: context.appBorder),
                         ],
                         Expanded(
                           child: TextButton.icon(
@@ -524,9 +525,9 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
               margin: const EdgeInsets.only(bottom: 28),
               padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 18),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.appCardBg,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(color: context.appBorder),
               ),
               child: const Text(
                 'لا توجد أجهزة في هذا القسم',
@@ -553,7 +554,7 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
 
     return Container(
       padding: const EdgeInsets.all(24),
-      color: const Color(0xFFF8FAFC),
+      color: context.appBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -763,7 +764,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         padding: const EdgeInsets.all(0),
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appCardBg,
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
@@ -772,9 +773,9 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
             // Header
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
-                border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+              decoration: BoxDecoration(
+                color: context.appSurfaceAlt,
+                border: Border(bottom: BorderSide(color: context.appBorder)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -887,10 +888,10 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                                     margin: const EdgeInsets.only(top: 8),
                                     padding: const EdgeInsets.all(10),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFF8FAFC),
+                                      color: context.appBg,
                                       borderRadius: BorderRadius.circular(10),
                                       border: Border.all(
-                                          color: const Color(0xFFE2E8F0)),
+                                          color: context.appBorder),
                                     ),
                                     child: Column(
                                       crossAxisAlignment:
@@ -1063,7 +1064,7 @@ class _AddDisplayDialogState extends State<_AddDisplayDialog> {
         width: 460,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appCardBg,
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(

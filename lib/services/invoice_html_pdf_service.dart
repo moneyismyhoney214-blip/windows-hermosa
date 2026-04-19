@@ -130,10 +130,21 @@ class InvoiceHtmlPdfService {
     final model =
         await _buildModel(invoiceId, forcedKind: 'refundSalesInvoice');
 
-    // Replace items with only the refunded items
+    // Replace items with only the refunded items. The fallback name picks
+    // the primary invoice language so an unnamed line never shows stray
+    // Arabic on a Spanish/English/etc. receipt.
+    final fallbackItemName = _mainLbl(
+      model.language,
+      ar: 'عنصر',
+      en: 'Item',
+      hi: 'आइटम',
+      ur: 'آئٹم',
+      es: 'Artículo',
+      tr: 'Ürün',
+    );
     final creditItems = refundedItems.map((item) {
       return <String, dynamic>{
-        'name': item['name'] ?? 'عنصر',
+        'name': item['name'] ?? fallbackItemName,
         'quantity': item['quantity'] ?? 1,
         'price': item['unit_price'] ?? item['total'] ?? 0,
         'total': item['total'] ?? 0,
@@ -141,8 +152,14 @@ class InvoiceHtmlPdfService {
       };
     }).toList();
 
-    // Compute tax (15% VAT)
-    final totalBeforeTax = refundTotal / 1.15;
+    // Compute tax using the branch's configured rate — credit notes for
+    // tax-free branches should not synthesize a 15% VAT split.
+    final creditTaxRate =
+        _branchService.cachedHasTax ? _branchService.cachedTaxRate : 0.0;
+    final creditTaxMultiplier = 1.0 + creditTaxRate;
+    final totalBeforeTax = creditTaxMultiplier > 0
+        ? refundTotal / creditTaxMultiplier
+        : refundTotal;
     final taxAmount = refundTotal - totalBeforeTax;
 
     final creditModel = _PrintInvoiceModel(
@@ -168,10 +185,9 @@ class InvoiceHtmlPdfService {
       type: model.type,
       module: model.module,
       kind: 'refundSalesInvoice',
-      title: const _InvoiceTitle(
-        text: 'فاتورة دائن',
-        textAlt: 'Credit Note',
-      ),
+      // Title follows the invoice language like every other title in the
+      // template — _resolveTitle returns primary + Arabic regulatory alt.
+      title: _resolveTitle('refundSalesInvoice', model.language.primary),
       orderNumber: model.orderNumber,
       dailyOrderNumber: model.dailyOrderNumber,
       bookingDate: model.bookingDate,
@@ -793,118 +809,118 @@ class InvoiceHtmlPdfService {
     // Cashier
     if (cashierName.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>الكاشير</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'الكاشير', en: 'Cashier', hi: 'कैशियर', ur: 'کیشیئر', es: 'Cajero', tr: 'Kasiyer')}</p>');
       b.writeln('<p>${_escapeHtml(cashierName)}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'कैशियर', ur: 'کیشیئر', en: 'Cashier'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'الكاشير', en: 'Cashier', hi: 'कैशियर', ur: 'کیشیئر', es: 'Cajero', tr: 'Kasiyer'))}</p>');
       b.writeln('</div>');
     }
 
     // Tax number
     b.writeln('<div class="info-bottom-item">');
-    b.writeln('<p>الرقم الضريبي</p>');
+    b.writeln('<p>${_mainLbl(model.language, ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası')}</p>');
     b.writeln('<p>${_escapeHtml(taxNumber)}</p>');
     b.writeln(
-        '<p>${_escapeHtml(_altLabel(model.language, hi: 'कर संख्या', ur: 'ٹیکس نمبر', en: 'Tax Number'))}</p>');
+        '<p>${_escapeHtml(_altLabel(model.language, ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası'))}</p>');
     b.writeln('</div>');
 
     // Commercial number
     if (commercialNumber.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>رقم السجل التجاري</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'رقم السجل التجاري', en: 'Commercial Register Number', hi: 'व्यावसायिक रजिस्टर संख्या', ur: 'تجارتی رجسٹر نمبر', tr: 'Ticari Sicil Numarası', es: 'Número de Registro Comercial')}</p>');
       b.writeln('<p>${_escapeHtml(commercialNumber)}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'व्यावसायिक रजिस्टर संख्या', ur: 'تجارتی رجسٹر نمبر', tr: 'Ticari Sicil Numarası', en: 'Commercial Register Number'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'رقم السجل التجاري', en: 'Commercial Register Number', hi: 'व्यावसायिक रजिस्टर संख्या', ur: 'تجارتی رجسٹر نمبر', tr: 'Ticari Sicil Numarası', es: 'Número de Registro Comercial'))}</p>');
       b.writeln('</div>');
     }
 
     // Date
     b.writeln('<div class="info-bottom-item">');
-    b.writeln('<p>التاريخ</p>');
+    b.writeln('<p>${_mainLbl(model.language, ar: 'التاريخ', en: 'Date', hi: 'दिनांक', ur: 'تاریخ', es: 'Fecha', tr: 'Tarih')}</p>');
     b.writeln('<p>${_escapeHtml(model.date)}</p>');
     b.writeln(
-        '<p>${_escapeHtml(_altLabel(model.language, hi: 'दिनांक', ur: 'تاریخ', en: 'Date'))}</p>');
+        '<p>${_escapeHtml(_altLabel(model.language, ar: 'التاريخ', en: 'Date', hi: 'दिनांक', ur: 'تاریخ', es: 'Fecha', tr: 'Tarih'))}</p>');
     b.writeln('</div>');
 
     // Time
     b.writeln('<div class="info-bottom-item">');
-    b.writeln('<p>الوقت</p>');
+    b.writeln('<p>${_mainLbl(model.language, ar: 'الوقت', en: 'Time', hi: 'समय', ur: 'وقت', es: 'Hora', tr: 'Saat')}</p>');
     b.writeln('<p class="force-ltr">${_escapeHtml(model.time)}</p>');
     b.writeln(
-        '<p>${_escapeHtml(_altLabel(model.language, hi: 'समय', ur: 'وقت', en: 'Time'))}</p>');
+        '<p>${_escapeHtml(_altLabel(model.language, ar: 'الوقت', en: 'Time', hi: 'समय', ur: 'وقت', es: 'Hora', tr: 'Saat'))}</p>');
     b.writeln('</div>');
 
     // Order number (restaurant only)
     if (model.type.isNotEmpty && model.type.contains('restaurant')) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>رقم الطلب</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'رقم الطلب', en: 'Order Number', hi: 'ऑर्डर संख्या', ur: 'آرڈر نمبر', es: 'Número de Pedido', tr: 'Sipariş Numarası')}</p>');
       b.writeln('<p class="force-ltr">${_escapeHtml(_firstNonEmptyString([
                 _pick(model.booking, const ['daily_order_number']),
                 model.dailyOrderNumber
               ]) ?? '')}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'ऑर्डर संख्या', ur: 'آرڈر نمبر', en: 'Order Number'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'رقم الطلب', en: 'Order Number', hi: 'ऑर्डर संख्या', ur: 'آرڈر نمبر', es: 'Número de Pedido', tr: 'Sipariş Numarası'))}</p>');
       b.writeln('</div>');
     }
 
     // Parent invoice
     if (parentInvoiceNumber.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>الفاتورة الأب</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'الفاتورة الأب', en: 'Parent Invoice', hi: 'पेरेंट इनवॉइस', ur: 'پیرنٹ انوائس', es: 'Factura Principal', tr: 'Ana Fatura')}</p>');
       b.writeln('<p class="force-ltr">${_escapeHtml(parentInvoiceNumber)}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'पेरेंट इनवॉइस', ur: 'پیرنٹ انوائس', en: 'Parent Invoice'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'الفاتورة الأب', en: 'Parent Invoice', hi: 'पेरेंट इनवॉइस', ur: 'پیرنٹ انوائس', es: 'Factura Principal', tr: 'Ana Fatura'))}</p>');
       b.writeln('</div>');
     }
 
     // Order type
     if (model.type.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>نوع الطلب</p>');
-      b.writeln('<p>${_escapeHtml(_resolveOrderTypeLabel(model.type))}</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü')}</p>');
+      b.writeln('<p>${_escapeHtml(_resolveOrderTypeLabel(model.type, model.language.primary))}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', en: 'order type'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü'))}</p>');
       b.writeln('</div>');
     }
 
     // Table number (restaurant_internal)
     if (model.type == 'restaurant_internal' && tableName.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>رقم الطاوله</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'رقم الطاوله', en: 'Table Number', hi: 'टेबल संख्या', ur: 'ٹیبل نمبر', es: 'Número de Mesa', tr: 'Masa Numarası')}</p>');
       b.writeln('<p>${_escapeHtml(tableName)}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'टेबल संख्या', ur: 'ٹیبل نمبر', en: 'Table number'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'رقم الطاوله', en: 'Table Number', hi: 'टेबल संख्या', ur: 'ٹیبل نمبر', es: 'Número de Mesa', tr: 'Masa Numarası'))}</p>');
       b.writeln('</div>');
     }
 
     // Car number (restaurant_parking)
     if (model.type == 'restaurant_parking' && carNumber.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>رقم السياره</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'رقم السياره', en: 'Car Number', hi: 'कार संख्या', ur: 'کار نمبر', es: 'Número de Auto', tr: 'Araç Numarası')}</p>');
       b.writeln('<p>${_escapeHtml(carNumber)}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'कार संख्या', ur: 'کار نمبر', en: 'car number'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'رقم السياره', en: 'Car Number', hi: 'कार संख्या', ur: 'کار نمبر', es: 'Número de Auto', tr: 'Araç Numarası'))}</p>');
       b.writeln('</div>');
     }
 
     // Original invoice number (refund)
     if (originalInvoiceNumber.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>رقم فاتورة الاسترجاع</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'رقم فاتورة الاسترجاع', en: 'Refund Invoice ID', hi: 'रिफंड इनवॉइस आईडी', ur: 'ریفنڈ انوائس آئی ڈی', es: 'ID de Factura de Reembolso', tr: 'İade Fatura Kimliği')}</p>');
       b.writeln(
           '<p class="force-ltr">${_escapeHtml(originalInvoiceNumber)}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'रिफंड इनवॉइस आईडी', ur: 'ریفنڈ انوائس آئی ڈی', en: 'Refund Invoice ID'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'رقم فاتورة الاسترجاع', en: 'Refund Invoice ID', hi: 'रिफंड इनवॉइस आईडी', ur: 'ریفنڈ انوائس آئی ڈی', es: 'ID de Factura de Reembolso', tr: 'İade Fatura Kimliği'))}</p>');
       b.writeln('</div>');
     }
 
     // Booking date
     if (model.bookingDate.isNotEmpty) {
       b.writeln('<div class="info-bottom-item">');
-      b.writeln('<p>تاريخ الحجز</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'تاريخ الحجز', en: 'Booking Date', hi: 'बुकिंग दिनांक', ur: 'بکنگ تاریخ', es: 'Fecha de Reserva', tr: 'Rezervasyon Tarihi')}</p>');
       b.writeln('<p>${_escapeHtml(model.bookingDate)}</p>');
       b.writeln(
-          '<p>${_escapeHtml(_altLabel(model.language, hi: 'बुकिंग दिनांक', ur: 'بکنگ تاریخ', en: 'Booking Date'))}</p>');
+          '<p>${_escapeHtml(_altLabel(model.language, ar: 'تاريخ الحجز', en: 'Booking Date', hi: 'बुकिंग दिनांक', ur: 'بکنگ تاریخ', es: 'Fecha de Reserva', tr: 'Rezervasyon Tarihi'))}</p>');
       b.writeln('</div>');
     }
 
@@ -960,17 +976,17 @@ class InvoiceHtmlPdfService {
     b.writeln('<div>');
     b.writeln('<div class="client-info">');
     b.writeln('<div class="client-info-item">');
-    b.writeln('<p class="font-bold">اسم العميل</p>');
+    b.writeln('<p class="font-bold">${_mainLbl(model.language, ar: 'اسم العميل', en: 'Client Name', hi: 'ग्राहक का नाम', ur: 'کلائنٹ کا نام', es: 'Nombre del Cliente', tr: 'Müşteri Adı')}</p>');
     b.writeln(
-      '<p class="font-bold">${_escapeHtml(_altLabel(model.language, hi: 'ग्राहक का नाम', ur: 'کلائنٹ کا نام', tr: 'Müşteri Adı', en: 'Client Name'))}</p>',
+      '<p class="font-bold">${_escapeHtml(_altLabel(model.language, ar: 'اسم العميل', en: 'Client Name', hi: 'ग्राहक का नाम', ur: 'کلائنٹ کا نام', es: 'Nombre del Cliente', tr: 'Müşteri Adı'))}</p>',
     );
     b.writeln('<p>${_escapeHtml(clientName)}</p>');
     b.writeln('</div>');
 
     b.writeln('<div class="client-info-item">');
-    b.writeln('<p class="font-bold">جوال العميل</p>');
+    b.writeln('<p class="font-bold">${_mainLbl(model.language, ar: 'جوال العميل', en: 'Client Phone', hi: 'ग्राहक फोन', ur: 'کلائنٹ فون', es: 'Teléfono del Cliente', tr: 'Müşteri Telefonu')}</p>');
     b.writeln(
-      '<p class="font-bold">${_escapeHtml(_altLabel(model.language, hi: 'ग्राहक फोन', ur: 'کلائنٹ فون', tr: 'Müşteri Telefonu', en: 'Client Phone'))}</p>',
+      '<p class="font-bold">${_escapeHtml(_altLabel(model.language, ar: 'جوال العميل', en: 'Client Phone', hi: 'ग्राहक फोन', ur: 'کلائنٹ فون', es: 'Teléfono del Cliente', tr: 'Müşteri Telefonu'))}</p>',
     );
     b.writeln('<p style="direction: ltr">${_escapeHtml(clientMobile)}</p>');
     b.writeln('</div>');
@@ -980,9 +996,9 @@ class InvoiceHtmlPdfService {
 
     if (clientTax.isNotEmpty) {
       b.writeln('<div class="client-info-item">');
-      b.writeln('<p class="font-bold">الرقم الضريبي</p>');
+      b.writeln('<p class="font-bold">${_mainLbl(model.language, ar: 'الرقم الضريبي', en: 'Tax number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası')}</p>');
       b.writeln(
-        '<p class="font-bold">${_escapeHtml(_altLabel(model.language, hi: 'कर संख्या', ur: 'ٹیکس نمبر', tr: 'Vergi Numarası', en: 'Tax number'))}</p>',
+        '<p class="font-bold">${_escapeHtml(_altLabel(model.language, ar: 'الرقم الضريبي', en: 'Tax number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası'))}</p>',
       );
       b.writeln('<p>${_escapeHtml(clientTax)}</p>');
       b.writeln('</div>');
@@ -990,9 +1006,9 @@ class InvoiceHtmlPdfService {
 
     if (clientCommercial.isNotEmpty) {
       b.writeln('<div class="client-info-item">');
-      b.writeln('<p class="font-bold">السجل التجاري</p>');
+      b.writeln('<p class="font-bold">${_mainLbl(model.language, ar: 'السجل التجاري', en: 'Commercial register', hi: 'व्यावसायिक रजिस्टर', ur: 'تجارتی رجسٹر', es: 'Registro Comercial', tr: 'Ticari Sicil')}</p>');
       b.writeln(
-        '<p class="font-bold">${_escapeHtml(_altLabel(model.language, hi: 'व्यावसायिक रजिस्टर', ur: 'تجارتی رجسٹر', tr: 'Ticari Sicil', en: 'Commercial register'))}</p>',
+        '<p class="font-bold">${_escapeHtml(_altLabel(model.language, ar: 'السجل التجاري', en: 'Commercial register', hi: 'व्यावसायिक रजيس्टर', ur: 'تجارتی رجسٹر', es: 'Registro Comercial', tr: 'Ticari Sicil'))}</p>',
       );
       b.writeln(
           '<p style="direction: ltr">${_escapeHtml(clientCommercial)}</p>');
@@ -1019,19 +1035,21 @@ class InvoiceHtmlPdfService {
       '<th colspan="2" class="border border-gray-300 px-2 py-1 bg-gray-50 text-center font-bold text-sm">',
     );
     b.writeln(
-        'معلومات السيارة ${_escapeHtml(_altLabel(model.language, hi: 'कार की जानकारी', ur: 'کار کی معلومات', tr: 'Araç Bilgileri', en: 'Car Information'))}');
+        '${_mainLbl(model.language, ar: 'معلومات السيارة', en: 'Car Information', hi: 'कार की जानकारी', ur: 'کار کی معلومات', es: 'Información del Vehículo', tr: 'Araç Bilgileri')} ${_escapeHtml(_altLabel(model.language, ar: 'معلومات السيارة', en: 'Car Information', hi: 'कार की जानकारी', ur: 'کار کی معلومات', es: 'Información del Vehículo', tr: 'Araç Bilgileri'))}');
     b.writeln('</th></tr></thead>');
 
     b.writeln('<tbody>');
     b.writeln(_carInfoRow(
       model,
-      ar: 'الماركة',
+      ar: _mainLbl(model.language, ar: 'الماركة', en: 'Brand', hi: 'ब्रांड', ur: 'برانڈ', es: 'Marca', tr: 'Marka'),
       alt: _altLabel(
         model.language,
+        ar: 'الماركة',
         hi: 'ब्रांड',
         ur: 'برانڈ',
         tr: 'Marka',
         en: 'Brand',
+        es: 'Marca',
       ),
       value: _firstNonEmptyString([
             _pick(model.carInfo, const ['brand'])
@@ -1040,13 +1058,15 @@ class InvoiceHtmlPdfService {
     ));
     b.writeln(_carInfoRow(
       model,
-      ar: 'الموديل',
+      ar: _mainLbl(model.language, ar: 'الموديل', en: 'Model', hi: 'मॉडल', ur: 'ماڈل', es: 'Modelo', tr: 'Model'),
       alt: _altLabel(
         model.language,
+        ar: 'الموديل',
         hi: 'मॉडल',
         ur: 'ماڈل',
         tr: 'Model',
         en: 'Model',
+        es: 'Modelo',
       ),
       value: _firstNonEmptyString([
             _pick(model.carInfo, const ['model'])
@@ -1055,13 +1075,15 @@ class InvoiceHtmlPdfService {
     ));
     b.writeln(_carInfoRow(
       model,
-      ar: 'رقم اللوحة',
+      ar: _mainLbl(model.language, ar: 'رقم اللوحة', en: 'Plate Number', hi: 'प्लेट नंबर', ur: 'پلیٹ نمبر', es: 'Número de Placa', tr: 'Plaka Numarası'),
       alt: _altLabel(
         model.language,
+        ar: 'رقم اللوحة',
         hi: 'प्लेट नंबर',
         ur: 'پلیٹ نمبر',
         tr: 'Plaka Numarası',
         en: 'Plate Number',
+        es: 'Número de Placa',
       ),
       value: _firstNonEmptyString([
             _pick(model.carInfo, const ['plate'])
@@ -1076,13 +1098,15 @@ class InvoiceHtmlPdfService {
     if (year.isNotEmpty) {
       b.writeln(_carInfoRow(
         model,
-        ar: 'السنة',
+        ar: _mainLbl(model.language, ar: 'السنة', en: 'Year', hi: 'साल', ur: 'سال', es: 'Año', tr: 'Yıl'),
         alt: _altLabel(
           model.language,
+          ar: 'السنة',
           hi: 'साल',
           ur: 'سال',
           tr: 'Yıl',
           en: 'Year',
+          es: 'Año',
         ),
         value: year,
       ));
@@ -1130,73 +1154,73 @@ class InvoiceHtmlPdfService {
     b.writeln('<table>');
 
     b.writeln('<thead><tr>');
-    if (showItemName) b.writeln('<th>الصنف</th>');
-    if (showCode) b.writeln('<th>كود الهدية</th>');
-    if (showExpiry) b.writeln('<th>تاريخ الانتهاء</th>');
-    if (showService) b.writeln('<th>الخدمة</th>');
-    if (showEmployee) b.writeln('<th>الموظف/ة</th>');
-    if (showQuantity) b.writeln('<th>الكمية</th>');
-    if (showDiscount) b.writeln('<th>الخصم</th>');
-    if (showTotal) b.writeln('<th>الاجمالي</th>');
-    if (showDate) b.writeln('<th>التاريخ</th>');
-    if (showTime) b.writeln('<th>الوقت</th>');
-    if (showOrder) b.writeln('<th>الدور</th>');
+    if (showItemName) b.writeln('<th>${_mainLbl(model.language, ar: 'الصنف', en: 'Item', hi: 'वस्तु', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün')}</th>');
+    if (showCode) b.writeln('<th>${_mainLbl(model.language, ar: 'كود الهدية', en: 'Gift Card Code', hi: 'गिफ्ट कार्ड कोड', ur: 'گفٹ کارڈ کوڈ', es: 'Código de Tarjeta Regalo', tr: 'Hediye Kartı Kodu')}</th>');
+    if (showExpiry) b.writeln('<th>${_mainLbl(model.language, ar: 'تاريخ الانتهاء', en: 'Expiry Date', hi: 'समाप्ति तिथि', ur: 'ختم ہونے کی تاریخ', es: 'Fecha de Vencimiento', tr: 'Son Kullanma Tarihi')}</th>');
+    if (showService) b.writeln('<th>${_mainLbl(model.language, ar: 'الخدمة', en: 'Service', hi: 'सेवा', ur: 'سروس', es: 'Servicio', tr: 'Hizmet')}</th>');
+    if (showEmployee) b.writeln('<th>${_mainLbl(model.language, ar: 'الموظف/ة', en: 'Employee', hi: 'कर्मचारी', ur: 'ملازم', es: 'Empleado', tr: 'Çalışan')}</th>');
+    if (showQuantity) b.writeln('<th>${_mainLbl(model.language, ar: 'الكمية', en: 'Quantity', hi: 'मात्रा', ur: 'مقدار', es: 'Cantidad', tr: 'Miktar')}</th>');
+    if (showDiscount) b.writeln('<th>${_mainLbl(model.language, ar: 'الخصم', en: 'Discount', hi: 'छूट', ur: 'ڈسکاؤنٹ', es: 'Descuento', tr: 'İndirim')}</th>');
+    if (showTotal) b.writeln('<th>${_mainLbl(model.language, ar: 'الاجمالي', en: 'Price', hi: 'कुल', ur: 'کل', es: 'Precio', tr: 'Toplam')}</th>');
+    if (showDate) b.writeln('<th>${_mainLbl(model.language, ar: 'التاريخ', en: 'Date', hi: 'दिनांक', ur: 'تاریخ', es: 'Fecha', tr: 'Tarih')}</th>');
+    if (showTime) b.writeln('<th>${_mainLbl(model.language, ar: 'الوقت', en: 'Time', hi: 'समय', ur: 'وقت', es: 'Hora', tr: 'Saat')}</th>');
+    if (showOrder) b.writeln('<th>${_mainLbl(model.language, ar: 'الدور', en: 'Order', hi: 'क्रम', ur: 'آرڈر', es: 'Orden', tr: 'Sıra')}</th>');
     b.writeln('</tr></thead>');
 
     b.writeln('<thead><tr>');
     if (showItemName) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'वस्तु', ur: 'آئٹم', tr: 'Ürün', en: 'Item'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الصنف', hi: 'वस्तु', ur: 'آئٹم', tr: 'Ürün', en: 'Item', es: 'Artículo'))}</th>',
       );
     }
     if (showCode) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'गिफ्ट कार्ड कोड', ur: 'گفٹ کارڈ کوڈ', tr: 'Hediye Kartı Kodu', en: 'Gift Card Code'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'كود الهدية', hi: 'गिफ्ट कार्ड कोड', ur: 'گفٹ کارڈ کوڈ', tr: 'Hediye Kartı Kodu', en: 'Gift Card Code', es: 'Código de Tarjeta Regalo'))}</th>',
       );
     }
     if (showExpiry) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'समाप्ति तिथि', ur: 'ختم ہونے کی تاریخ', tr: 'Son Kullanma Tarihi', en: 'Expiry Date'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'تاريخ الانتهاء', hi: 'समाप्ति तिथि', ur: 'ختم ہونے کی تاریخ', tr: 'Son Kullanma Tarihi', en: 'Expiry Date', es: 'Fecha de Vencimiento'))}</th>',
       );
     }
     if (showService) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'सेवा', ur: 'سروس', tr: 'Hizmet', en: 'Service'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الخدمة', hi: 'सेवा', ur: 'سروس', tr: 'Hizmet', en: 'Service', es: 'Servicio'))}</th>',
       );
     }
     if (showEmployee) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'कर्मचारी', ur: 'ملازم', tr: 'Çalışan', en: 'Employee'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الموظف/ة', hi: 'कर्मचारी', ur: 'ملازم', tr: 'Çalışan', en: 'Employee', es: 'Empleado'))}</th>',
       );
     }
     if (showQuantity) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'मात्रा', ur: 'مقدار', tr: 'Miktar', en: 'Quantity'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الكمية', hi: 'मात्रा', ur: 'مقدار', tr: 'Miktar', en: 'Quantity', es: 'Cantidad'))}</th>',
       );
     }
     if (showDiscount) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'छूट', ur: 'ڈسکاؤنٹ', tr: 'İndirim', en: 'Discount'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الخصم', hi: 'छूट', ur: 'ڈسکاؤنٹ', tr: 'İndirim', en: 'Discount', es: 'Descuento'))}</th>',
       );
     }
     if (showTotal) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'कुल', ur: 'کل', tr: 'Toplam', en: 'Price'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الاجمالي', hi: 'कुल', ur: 'کل', tr: 'Toplam', en: 'Price', es: 'Precio'))}</th>',
       );
     }
     if (showDate) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'दिनांक', ur: 'تاریخ', tr: 'Tarih', en: 'Date'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'التاريخ', hi: 'दिनांक', ur: 'تاریخ', tr: 'Tarih', en: 'Date', es: 'Fecha'))}</th>',
       );
     }
     if (showTime) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'समय', ur: 'وقت', tr: 'Saat', en: 'Time'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الوقت', hi: 'समय', ur: 'وقت', tr: 'Saat', en: 'Time', es: 'Hora'))}</th>',
       );
     }
     if (showOrder) {
       b.writeln(
-        '<th>${_escapeHtml(_altLabel(model.language, hi: 'क्रम', ur: 'آرڈر', tr: 'Sıra', en: 'Order'))}</th>',
+        '<th>${_escapeHtml(_altLabel(model.language, ar: 'الدور', hi: 'क्रम', ur: 'آرڈر', tr: 'Sıra', en: 'Order', es: 'Orden'))}</th>',
       );
     }
     b.writeln('</tr></thead>');
@@ -1253,12 +1277,35 @@ class InvoiceHtmlPdfService {
           row.write('</td></tr>');
 
           for (final addon in addons) {
-            final attribute = _displayValue(_pick(addon, const ['attribute']));
-            final option = _displayValue(_pick(addon, const ['option']));
+            // `attribute` and `option` are language-keyed maps (e.g.
+            // `{ar: "نوع الطهي", en: "Cooking type"}`). Resolve them through
+            // the invoice language picker so the PDF/HTML invoice matches
+            // the cashier's chosen primary/secondary language.
+            final attributePrimary = _localizedValue(
+                _pick(addon, const ['attribute']), model.language.primary);
+            final optionPrimary = _localizedValue(
+                _pick(addon, const ['option']), model.language.primary);
+            final attributeSecondary = model.language.allowSecondary &&
+                    model.language.secondary != model.language.primary
+                ? _localizedValue(
+                    _pick(addon, const ['attribute']), model.language.secondary)
+                : '';
+            final optionSecondary = model.language.allowSecondary &&
+                    model.language.secondary != model.language.primary
+                ? _localizedValue(
+                    _pick(addon, const ['option']), model.language.secondary)
+                : '';
             final total = _displayValue(_pick(addon, const ['total']));
+            final primaryLabel = '$attributePrimary $optionPrimary'.trim();
+            final secondaryLabel = '$attributeSecondary $optionSecondary'.trim();
             row.write('<tr>');
             row.write(
-                '<td class="addon-item addon-size">${_escapeHtml('$attribute $option'.trim())}</td>');
+                '<td class="addon-item addon-size">${_escapeHtml(primaryLabel)}');
+            if (secondaryLabel.isNotEmpty && secondaryLabel != primaryLabel) {
+              row.write(
+                  '<br><span class="addon-size-alt">${_escapeHtml(secondaryLabel)}</span>');
+            }
+            row.write('</td>');
             row.write(
                 '<td class="addon-size text-center">${_escapeHtml(total)}</td>');
             row.write('</tr>');
@@ -1317,13 +1364,15 @@ class InvoiceHtmlPdfService {
       b.writeln(_invoiceAmountRow(
         model,
         value: _displayValue(_pick(invoice, const ['pre_paid'])),
-        titleAr: 'الدفع المسبق',
+        titleAr: _mainLbl(model.language, ar: 'الدفع المسبق', en: 'Pre Paid Amount', hi: 'पूर्व भुगतान राशि', ur: 'پری پیڈ رقم', es: 'Monto Prepagado', tr: 'Ön Ödeme Tutarı'),
         titleAlt: _altLabel(
           model.language,
+          ar: 'الدفع المسبق',
           hi: 'पूर्व भुगतान राशि',
           ur: 'پری پیڈ رقم',
           tr: 'Ön Ödeme Tutarı',
           en: 'Pre Paid Amount',
+          es: 'Monto Prepagado',
         ),
       ));
     }
@@ -1332,13 +1381,15 @@ class InvoiceHtmlPdfService {
       b.writeln(_invoiceAmountRow(
         model,
         value: model.calculatedPriceBeforeTax,
-        titleAr: 'الاجمالي قبل الضريبة',
+        titleAr: _mainLbl(model.language, ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total antes de Impuesto', tr: 'Vergi Öncesi Toplam'),
         titleAlt: _altLabel(
           model.language,
+          ar: 'الاجمالي قبل الضريبة',
           hi: 'कर से पहले कुल',
           ur: 'ٹیکس سے پہلے کل',
           tr: 'Vergi Öncesi Toplam',
           en: 'Total Before Tax',
+          es: 'Total antes de Impuesto',
         ),
       ));
     }
@@ -1347,13 +1398,15 @@ class InvoiceHtmlPdfService {
       b.writeln(_invoiceAmountRow(
         model,
         value: _displayValue(_pick(invoice, const ['discount'])),
-        titleAr: 'قيمة الخصم',
+        titleAr: _mainLbl(model.language, ar: 'قيمة الخصم', en: 'Discount Amount', hi: 'छूट राशि', ur: 'ڈسکاؤنٹ رقم', es: 'Monto de Descuento', tr: 'İndirim Tutarı'),
         titleAlt: _altLabel(
           model.language,
+          ar: 'قيمة الخصم',
           hi: 'छूट राशि',
           ur: 'ڈسکاؤنٹ رقم',
           tr: 'İndirim Tutarı',
           en: 'Discount Amount',
+          es: 'Monto de Descuento',
         ),
       ));
     }
@@ -1363,13 +1416,15 @@ class InvoiceHtmlPdfService {
       b.writeln(_invoiceAmountRow(
         model,
         value: _displayValue(_pick(invoice, const ['total_items_discount'])),
-        titleAr: 'إجمالي خصم الأصناف',
+        titleAr: _mainLbl(model.language, ar: 'إجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹم ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
         titleAlt: _altLabel(
           model.language,
+          ar: 'إجمالي خصم الأصناف',
           hi: 'कुल आइटम छूट',
           ur: 'کل آئٹم ڈسکاؤنٹ',
           tr: 'Toplam Ürün İndirimi',
           en: 'Total Items Discount',
+          es: 'Descuento Total de Artículos',
         ),
       ));
     }
@@ -1378,13 +1433,15 @@ class InvoiceHtmlPdfService {
       b.writeln(_invoiceAmountRow(
         model,
         value: _displayValue(_pick(invoice, const ['price_after_discount'])),
-        titleAr: 'الاجمالي بعد الخصم',
+        titleAr: _mainLbl(model.language, ar: 'الاجمالي بعد الخصم', en: 'Total After Discount', hi: 'छूट के बाद कुल', ur: 'ڈسکاؤنٹ کے بعد کل', es: 'Total después del Descuento', tr: 'İndirim Sonrası Toplam'),
         titleAlt: _altLabel(
           model.language,
+          ar: 'الاجمالي بعد الخصم',
           hi: 'छूट के बाद कुल',
           ur: 'ڈسکاؤنٹ کے بعد کل',
           tr: 'İndirim Sonrası Toplam',
           en: 'Total After Discount',
+          es: 'Total después del Descuento',
         ),
       ));
     }
@@ -1393,13 +1450,15 @@ class InvoiceHtmlPdfService {
       b.writeln(_invoiceAmountRow(
         model,
         value: _displayValue(_pick(invoice, const ['tax'])),
-        titleAr: 'قيمة الضريبة',
+        titleAr: _mainLbl(model.language, ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto de Impuesto', tr: 'Vergi Tutarı'),
         titleAlt: _altLabel(
           model.language,
+          ar: 'قيمة الضريبة',
           hi: 'कर राशि',
           ur: 'ٹیکس رقم',
           tr: 'Vergi Tutarı',
           en: 'Tax Amount',
+          es: 'Monto de Impuesto',
         ),
       ));
     }
@@ -1408,13 +1467,15 @@ class InvoiceHtmlPdfService {
       b.writeln(_invoiceAmountRow(
         model,
         value: _displayValue(_pick(invoice, const ['total'])),
-        titleAr: 'الاجمالي بعد الضريبة',
+        titleAr: _mainLbl(model.language, ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total con Impuesto', tr: 'Vergi Sonrası Toplam'),
         titleAlt: _altLabel(
           model.language,
+          ar: 'الاجمالي بعد الضريبة',
           hi: 'कर के बाद कुल',
           ur: 'ٹیکس کے بعد کل',
           tr: 'Vergi Sonrası Toplam',
           en: 'Total After Tax',
+          es: 'Total con Impuesto',
         ),
       ));
     }
@@ -1426,9 +1487,9 @@ class InvoiceHtmlPdfService {
       b.writeln('<p class="price">${_escapeHtml(model.paymentMethods)}</p>');
       b.writeln('</div>');
       b.writeln('<div class="invoice-item-title text-left">');
-      b.writeln('<p>طرق الدفع</p>');
+      b.writeln('<p>${_mainLbl(model.language, ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान विधियां', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri')}</p>');
       b.writeln(
-        '<p>${_escapeHtml(_altLabel(model.language, hi: 'भुगतान विधियां', ur: 'ادائیگی کے طریقے', tr: 'Ödeme Yöntemleri', en: 'Payment Methods'))}</p>',
+        '<p>${_escapeHtml(_altLabel(model.language, ar: 'طرق الدفع', hi: 'भुगतान विधियां', ur: 'ادائیگی کے طریقے', tr: 'Ödeme Yöntemleri', en: 'Payment Methods', es: 'Métodos de Pago'))}</p>',
       );
       b.writeln('</div>');
       b.writeln('</div>');
@@ -1480,14 +1541,14 @@ class InvoiceHtmlPdfService {
     b.writeln('</div>');
 
     b.writeln('<div class="mt-2">');
-    b.writeln('<p>شكرا لثقتكم بنا</p>');
+    b.writeln('<p>${_mainLbl(model.language, ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर विश्वास करने के लिए धन्यवाद', ur: 'ہم پر اعتماد کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güveniniz için teşekkür ederiz')}</p>');
     b.writeln(
-      '<p>${_escapeHtml(_altLabel(model.language, hi: 'हम पर विश्वास करने के लिए धन्यवाद', ur: 'ہم پر اعتماد کرنے کا شکریہ', tr: 'Bize güveniniz için teşekkür ederiz', en: 'Thank you for trusting us'))}</p>',
+      '<p>${_escapeHtml(_altLabel(model.language, ar: 'شكرا لثقتكم بنا', hi: 'हम पर विश्वास करने के लिए धन्यवाद', ur: 'ہم پر اعتماد کرنے کا شکریہ', tr: 'Bize güveniniz için teşekkür ederiz', en: 'Thank you for trusting us', es: 'Gracias por confiar en nosotros'))}</p>',
     );
 
-    b.writeln('<p>برنامج هيرموسا المحاسبي المتكامل</p>');
+    b.writeln('<p>${_mainLbl(model.language, ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Integrated Accounting Program Hermosa', hi: 'एकीकृत लेखांकन कार्यक्रम हर्मोसा', ur: 'ہرموسا انٹیگریٹڈ اکاؤنٹنگ پروگرام', es: 'Programa de Contabilidad Integrada Hermosa', tr: 'Entegre Muhasebe Programı Hermosa')}</p>');
     b.writeln(
-      '<p>${_escapeHtml(_altLabel(model.language, hi: 'एकीकृत लेखांकन कार्यक्रम हर्मोसा', ur: 'ہرموسا انٹیگریٹڈ اکاؤنٹنگ پروگرام', tr: 'Entegre Muhasebe Programı Hermosa', en: 'Integrated Accounting Program Hermosa'))}</p>',
+      '<p>${_escapeHtml(_altLabel(model.language, ar: 'برنامج هيرموسا المحاسبي المتكامل', hi: 'एकीकृत लेखांकन कार्यक्रम हर्मोसा', ur: 'ہرموسا انٹیگریٹڈ اکاؤنٹنگ پروگرام', tr: 'Entegre Muhasebe Programı Hermosa', en: 'Integrated Accounting Program Hermosa', es: 'Programa de Contabilidad Integrada Hermosa'))}</p>',
     );
 
     b.writeln('<p>${_escapeHtml(model.websiteUrl)}</p>');
@@ -1508,158 +1569,212 @@ class InvoiceHtmlPdfService {
     return _escapeHtml(trimmed).replaceAll('\n', '<br/>');
   }
 
-  String _resolveOrderTypeLabel(String type) {
+  String _resolveOrderTypeLabel(String type, String primaryLang) {
     final normalized = type.trim().toLowerCase();
+    final pri = primaryLang.trim().toLowerCase();
+    String pick({required String ar, required String en, String? hi, String? ur, String? es, String? tr}) {
+      switch (pri) {
+        case 'en': return en;
+        case 'hi': return hi ?? en;
+        case 'ur': return ur ?? en;
+        case 'es': return es ?? en;
+        case 'tr': return tr ?? en;
+        default: return ar;
+      }
+    }
     switch (normalized == 'services' ? 'restaurant_services' : normalized) {
       case 'restaurant_services':
-        return 'محلي';
+      case 'service':
+        return pick(ar: 'محلي', en: 'Local', hi: 'स्थानीय', ur: 'مقامی', es: 'Local', tr: 'Yerel');
       case 'restaurant_internal':
       case 'restaurant_table':
       case 'table':
-        return 'داخل المطعم';
+        return pick(ar: 'داخل المطعم', en: 'Dine In', hi: 'डाइन इन', ur: 'اندرونی', es: 'Comer Aquí', tr: 'İçeride');
       case 'restaurant_delivery':
       case 'delivery':
       case 'home_delivery':
-        return 'توصيل';
+        return pick(ar: 'توصيل', en: 'Delivery', hi: 'डिलीवरी', ur: 'ڈیلیوری', es: 'Entrega', tr: 'Teslimat');
       case 'restaurant_pickup':
       case 'pickup':
       case 'takeaway':
-        return 'استلام من الفرع';
+        return pick(ar: 'استلام من الفرع', en: 'Pickup', hi: 'पिकअप', ur: 'پک اپ', es: 'Recogida', tr: 'Teslim Alma');
       case 'restaurant_parking':
       case 'cars':
       case 'car':
-        return 'سيارة';
+        return pick(ar: 'سيارة', en: 'Drive-through', hi: 'ड्राइव-थ्रू', ur: 'ڈرائیو تھرو', es: 'Auto-servicio', tr: 'Araç Servisi');
+      case 'hungerstation_delivery':
+      case 'hunger_station_delivery':
+        return pick(ar: 'هنقر ستيشن (توصيل)', en: 'HungerStation (Delivery)', hi: 'हंगरस्टेशन (डिलीवरी)', ur: 'ہنگر سٹیشن (ڈیلیوری)', es: 'HungerStation (Entrega)', tr: 'HungerStation (Teslimat)');
+      case 'hungerstation_pickup':
+      case 'hunger_station_pickup':
+        return pick(ar: 'هنقر ستيشن (استلام)', en: 'HungerStation (Pickup)', hi: 'हंगरस्टेशन (पिकअप)', ur: 'ہنگر سٹیشن (پک اپ)', es: 'HungerStation (Recogida)', tr: 'HungerStation (Teslim Alma)');
+      case 'talabat_delivery':
+        return pick(ar: 'طلبات (توصيل)', en: 'Talabat (Delivery)', hi: 'तलबात (डिलीवरी)', ur: 'طلبات (ڈیلیوری)', es: 'Talabat (Entrega)', tr: 'Talabat (Teslimat)');
+      case 'talabat_pickup':
+        return pick(ar: 'طلبات (استلام)', en: 'Talabat (Pickup)', hi: 'तलबात (पिकअप)', ur: 'طلبات (پک اپ)', es: 'Talabat (Recogida)', tr: 'Talabat (Teslim Alma)');
+      case 'jahez_delivery':
+      case 'gahez_delivery':
+        return pick(ar: 'جاهز (توصيل)', en: 'Jahez (Delivery)', hi: 'जाहेज़ (डिलीवरी)', ur: 'جاہز (ڈیلیوری)', es: 'Jahez (Entrega)', tr: 'Jahez (Teslimat)');
+      case 'jahez_pickup':
+      case 'gahez_pickup':
+        return pick(ar: 'جاهز (استلام)', en: 'Jahez (Pickup)', hi: 'जाहेज़ (पिकअप)', ur: 'جاہز (پک اپ)', es: 'Jahez (Recogida)', tr: 'Jahez (Teslim Alma)');
       default:
         return normalized.isEmpty ? '' : normalized;
     }
   }
 
+  /// Resolves the invoice title into `(text, textAlt)` — `text` is the
+  /// localized primary-language title, `textAlt` is the universally
+  /// recognizable Arabic subtitle kept on every receipt for regulatory
+  /// consistency.
+  ///
+  /// Every kind now resolves across all six supported languages
+  /// (ar/en/es/tr/hi/ur) through a single lookup table so adding a new
+  /// language or invoice kind stays a one-line change instead of another
+  /// copy-pasted `switch` arm.
   _InvoiceTitle _resolveTitle(String kind, String primaryLanguage) {
     final primary = primaryLanguage.trim().toLowerCase();
 
+    String pickTitle({
+      required String ar,
+      required String en,
+      String? hi,
+      String? ur,
+      String? tr,
+      String? es,
+    }) {
+      switch (primary) {
+        case 'ar':
+          return ar;
+        case 'hi':
+          return hi ?? en;
+        case 'ur':
+          return ur ?? en;
+        case 'tr':
+          return tr ?? en;
+        case 'es':
+          return es ?? en;
+        case 'en':
+        default:
+          return en;
+      }
+    }
+
     switch (kind) {
       case 'simplified':
-        if (primary == 'hi') {
-          return const _InvoiceTitle(
-            text: 'सरलीकृत कर इनवॉइस',
-            textAlt: 'الفاتورة الضريبية المبسطة',
-          );
-        }
-        if (primary == 'ur') {
-          return const _InvoiceTitle(
-            text: 'سادہ ٹیکس انوائس',
-            textAlt: 'الفاتورة الضريبية المبسطة',
-          );
-        }
-        if (primary == 'tr') {
-          return const _InvoiceTitle(
-            text: 'Basitleştirilmiş Vergi Faturası',
-            textAlt: 'الفاتورة الضريبية المبسطة',
-          );
-        }
-        return const _InvoiceTitle(
-          text: 'Simplified Tax Invoice',
-          textAlt: 'فاتورة ضريبية مبسطة',
+      case 'simplified_b2b':
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'فاتورة ضريبية مبسطة',
+            en: 'Simplified Tax Invoice',
+            hi: kind == 'simplified' ? 'सरलीकृत कर इनवॉइस' : 'सरल कर इनवॉइस',
+            ur: 'سادہ ٹیکس انوائس',
+            tr: 'Basitleştirilmiş Vergi Faturası',
+            es: 'Factura Fiscal Simplificada',
+          ),
+          textAlt: primary == 'ar'
+              ? 'Simplified Tax Invoice'
+              : 'فاتورة ضريبية مبسطة',
         );
 
-      case 'simplified_b2b':
-        if (primary == 'hi') {
-          return const _InvoiceTitle(
-              text: 'सरल कर इनवॉइस', textAlt: 'فاتورة ضريبية مبسطة');
-        }
-        if (primary == 'ur') {
-          return const _InvoiceTitle(
-              text: 'سادہ ٹیکس انوائس', textAlt: 'فاتورة ضريبية مبسطة');
-        }
-        if (primary == 'tr') {
-          return const _InvoiceTitle(
-              text: 'Basitleştirilmiş Vergi Faturası', textAlt: 'فاتورة ضريبية مبسطة');
-        }
-        return const _InvoiceTitle(
-            text: 'Simplified Tax Invoice', textAlt: 'فاتورة ضريبية مبسطة');
-
       case 'refundSalesInvoice':
-        return const _InvoiceTitle(
-          text: 'إشعار دائن',
-          textAlt: 'فاتورة ضريبية مبسطة',
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'إشعار دائن',
+            en: 'Credit Note',
+            hi: 'क्रेडिट नोट',
+            ur: 'کریڈٹ نوٹ',
+            tr: 'Alacak Dekontu',
+            es: 'Nota de Crédito',
+          ),
+          textAlt: primary == 'ar' ? 'Credit Note' : 'إشعار دائن',
         );
 
       case 'debitNote':
-        return const _InvoiceTitle(
-          text: 'إشعار مدين',
-          textAlt: 'فاتورة ضريبية مبسطة',
-        );
-
       case 'debitNote_b2b':
-        return const _InvoiceTitle(
-          text: 'إشعار مدين',
-          textAlt: 'فاتورة ضريبية مبسطة',
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'إشعار مدين',
+            en: 'Debit Note',
+            hi: 'डेबिट नोट',
+            ur: 'ڈیبٹ نوٹ',
+            tr: 'Borç Dekontu',
+            es: 'Nota de Débito',
+          ),
+          textAlt: primary == 'ar' ? 'Debit Note' : 'إشعار مدين',
         );
 
       case 'deposit':
-        return const _InvoiceTitle(
-          text: 'فاتورة ضريبية مبسطة',
-          textAlt: '( فاتورة العربون )',
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'فاتورة العربون',
+            en: 'Deposit Invoice',
+            hi: 'जमा चालान',
+            ur: 'ڈپازٹ انوائس',
+            tr: 'Depozito Faturası',
+            es: 'Factura de Depósito',
+          ),
+          textAlt: primary == 'ar' ? 'Deposit Invoice' : 'فاتورة العربون',
         );
 
       case 'depositRefund':
-        return const _InvoiceTitle(
-          text: 'إشعار دائن',
-          textAlt: '( فاتورة العربون )',
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'إشعار دائن - عربون',
+            en: 'Deposit Credit Note',
+            hi: 'जमा क्रेडिट नोट',
+            ur: 'ڈپازٹ کریڈٹ نوٹ',
+            tr: 'Depozito Alacak Dekontu',
+            es: 'Nota de Crédito - Depósito',
+          ),
+          textAlt: primary == 'ar'
+              ? 'Deposit Credit Note'
+              : 'إشعار دائن - عربون',
         );
 
       case 'usedProducts':
-        if (primary == 'hi') {
-          return const _InvoiceTitle(
-            text: 'उपयोग किए गए उत्पाद इनवॉइस',
-            textAlt: 'فاتورة استخدام منتجات',
-          );
-        }
-        if (primary == 'ur') {
-          return const _InvoiceTitle(
-            text: 'استعمال شدہ مصنوعات انوائس',
-            textAlt: 'فاتورة استخدام منتجات',
-          );
-        }
-        if (primary == 'tr') {
-          return const _InvoiceTitle(
-            text: 'Kullanılmış Ürünler Faturası',
-            textAlt: 'فاتورة استخدام منتجات',
-          );
-        }
-        return const _InvoiceTitle(
-          text: 'Used Products Invoice',
-          textAlt: 'فاتورة استخدام منتجات',
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'فاتورة استخدام منتجات',
+            en: 'Used Products Invoice',
+            hi: 'उपयोग किए गए उत्पाद इनवॉइस',
+            ur: 'استعمال شدہ مصنوعات انوائس',
+            tr: 'Kullanılmış Ürünler Faturası',
+            es: 'Factura de Productos Usados',
+          ),
+          textAlt: primary == 'ar'
+              ? 'Used Products Invoice'
+              : 'فاتورة استخدام منتجات',
         );
 
       case 'sessions':
-        if (primary == 'hi') {
-          return const _InvoiceTitle(
-            text: 'सत्र बुकिंग',
-            textAlt: 'حجوزات الجلسات',
-          );
-        }
-        if (primary == 'ur') {
-          return const _InvoiceTitle(
-            text: 'سیشن بکنگ',
-            textAlt: 'حجوزات الجلسات',
-          );
-        }
-        if (primary == 'tr') {
-          return const _InvoiceTitle(
-            text: 'Oturum Rezervasyonları',
-            textAlt: 'حجوزات الجلسات',
-          );
-        }
-        return const _InvoiceTitle(
-          text: 'Sessions Bookings',
-          textAlt: 'حجوزات الجلسات',
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'حجوزات الجلسات',
+            en: 'Sessions Bookings',
+            hi: 'सत्र बुकिंग',
+            ur: 'سیشن بکنگ',
+            tr: 'Oturum Rezervasyonları',
+            es: 'Reservas de Sesiones',
+          ),
+          textAlt: primary == 'ar'
+              ? 'Sessions Bookings'
+              : 'حجوزات الجلسات',
         );
 
       default:
-        return const _InvoiceTitle(
-          text: 'Simplified Tax Invoice',
-          textAlt: 'الفاتورة الضريبية المبسطة',
+        return _InvoiceTitle(
+          text: pickTitle(
+            ar: 'فاتورة ضريبية مبسطة',
+            en: 'Simplified Tax Invoice',
+            hi: 'सरलीकृत कर इनवॉइस',
+            ur: 'سادہ ٹیکس انوائس',
+            tr: 'Basitleştirilmiş Vergi Faturası',
+            es: 'Factura Fiscal Simplificada',
+          ),
+          textAlt: primary == 'ar'
+              ? 'Simplified Tax Invoice'
+              : 'الفاتورة الضريبية المبسطة',
         );
     }
   }
@@ -1844,17 +1959,32 @@ class InvoiceHtmlPdfService {
     return '';
   }
 
+  /// Resolve the SECONDARY label based on invoice language settings.
   String _altLabel(
     _InvoiceLanguage language, {
-    required String hi,
-    required String ur,
-    String? tr,
+    String ar = '',
     required String en,
+    String? hi,
+    String? ur,
+    String? tr,
+    String? es,
   }) {
-    if (language.showHindi) return hi;
-    if (language.showUrdu) return ur;
-    if (tr != null && language.showTurkish) return tr;
-    return en;
+    return language.secLabel(
+        ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+  }
+
+  /// Resolve the PRIMARY label based on invoice language settings.
+  String _mainLbl(
+    _InvoiceLanguage language, {
+    required String ar,
+    required String en,
+    String? hi,
+    String? ur,
+    String? tr,
+    String? es,
+  }) {
+    return language.mainLabel(
+        ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
   }
 
   String? _normalizeLanguageCode(String? raw) {
@@ -1868,6 +1998,7 @@ class InvoiceHtmlPdfService {
       case 'hi':
       case 'ur':
       case 'tr':
+      case 'es':
         return normalized;
       default:
         return null;
@@ -1915,6 +2046,28 @@ class InvoiceHtmlPdfService {
       return value.toStringAsFixed(2);
     }
     return value.toString();
+  }
+
+  /// Pick the string for [languageCode] out of a language-keyed translation
+  /// map (e.g. `{ar: "...", en: "..."}`). Falls back through English →
+  /// Arabic → any non-empty value → `_displayValue` so the caller always
+  /// receives a sensible string even when the requested language is missing.
+  String _localizedValue(dynamic value, String languageCode) {
+    if (value is Map) {
+      final code = languageCode.trim().toLowerCase();
+      final direct = value[code]?.toString().trim();
+      if (direct != null && direct.isNotEmpty) return direct;
+      final en = value['en']?.toString().trim();
+      if (en != null && en.isNotEmpty) return en;
+      final ar = value['ar']?.toString().trim();
+      if (ar != null && ar.isNotEmpty) return ar;
+      for (final v in value.values) {
+        final text = v?.toString().trim();
+        if (text != null && text.isNotEmpty) return text;
+      }
+      return '';
+    }
+    return _displayValue(value);
   }
 
   String _extractDate(String rawValue) {
@@ -2425,6 +2578,61 @@ class _InvoiceLanguage {
 
   bool get showTurkish =>
       primary == 'tr' || (allowSecondary && secondary == 'tr');
+
+  bool get showSpanish =>
+      primary == 'es' || (allowSecondary && secondary == 'es');
+
+  /// Resolve a label for a given language code.
+  String _resolve(
+    String code, {
+    required String ar,
+    required String en,
+    String? hi,
+    String? ur,
+    String? tr,
+    String? es,
+  }) {
+    switch (code) {
+      case 'ar':
+        return ar;
+      case 'hi':
+        return hi ?? en;
+      case 'ur':
+        return ur ?? en;
+      case 'tr':
+        return tr ?? en;
+      case 'es':
+        return es ?? en;
+      case 'en':
+      default:
+        return en;
+    }
+  }
+
+  /// The main (primary) label for the invoice.
+  String mainLabel({
+    required String ar,
+    required String en,
+    String? hi,
+    String? ur,
+    String? tr,
+    String? es,
+  }) =>
+      _resolve(primary, ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+
+  /// The secondary label shown below the primary. Empty if not allowed.
+  String secLabel({
+    required String ar,
+    required String en,
+    String? hi,
+    String? ur,
+    String? tr,
+    String? es,
+  }) {
+    if (!allowSecondary) return '';
+    if (secondary == primary) return '';
+    return _resolve(secondary, ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+  }
 }
 
 class _InvoiceTitle {

@@ -121,7 +121,7 @@ void main() {
   final token = Platform.environment['TEST_TOKEN'] ?? '';
   final branchId = Platform.environment['TEST_BRANCH_ID'] ?? '';
   final baseUrl =
-      Platform.environment['TEST_BASE_URL'] ?? 'https://api.hermosaapp.com';
+      Platform.environment['TEST_BASE_URL'] ?? 'https://portal.hermosaapp.com';
 
   final records = <_ApiRecord>[];
 

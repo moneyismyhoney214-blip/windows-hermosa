@@ -3,6 +3,7 @@ import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/locator.dart';
 
@@ -10,10 +11,15 @@ class ProductService {
   final BaseClient _client = BaseClient();
   final CacheService _cache = getIt<CacheService>();
   final OfflineDatabaseService _offlineDb = OfflineDatabaseService();
+  final OfflinePosDatabase _posDb = OfflinePosDatabase();
   final ConnectivityService _connectivity = ConnectivityService();
   DateTime? _mainCategoriesRetryAfter;
   static const String _mainCategoriesUnauthorizedCacheKey =
       'main_categories_unauthorized_retry';
+
+  static const Duration _memProductTtl = Duration(seconds: 60);
+  final Map<String, _CachedEntry<List<Product>>> _memProductCache = {};
+  final Map<String, Future<List<Product>>> _inFlightProducts = {};
 
   /// Fetch categories from API (offline-first)
   Future<List<CategoryModel>> getCategories({String? type}) async {
@@ -66,6 +72,13 @@ class ProductService {
       final localData = await _offlineDb.getCategories(ApiConstants.branchId);
       if (localData.isNotEmpty) {
         return localData.map((e) => CategoryModel.fromJson(e)).toList();
+      }
+    } catch (_) {}
+    // Try bundled POS database
+    try {
+      final posData = await _posDb.getCategories(ApiConstants.branchId);
+      if (posData.isNotEmpty) {
+        return posData.map((e) => CategoryModel.fromJson(e)).toList();
       }
     } catch (_) {}
     final cached = await _cache.get('categories_null');
@@ -228,6 +241,21 @@ class ProductService {
       return _getProductsFromLocal(categoryId);
     }
 
+    // PERF: in-memory cache per (category, page) with a 60s TTL. Before this
+    // every category tap paid a full network round-trip even when the user
+    // had just viewed the same page; now subsequent taps within the TTL are
+    // served from memory instantly.
+    final cacheKey = 'products_cat_${categoryId ?? "all"}_page_$page';
+    final memCached = _memProductCache[cacheKey];
+    if (memCached != null && !memCached.isExpired(_memProductTtl)) {
+      return memCached.value;
+    }
+    // In-flight dedup: if a concurrent caller is already fetching the same
+    // (category, page), piggy-back on its Future instead of firing a second
+    // request. Prevents thrash when rapid scrolls trigger duplicate loads.
+    final pending = _inFlightProducts[cacheKey];
+    if (pending != null) return pending;
+
     final int? catId = (categoryId != null && categoryId != 'all')
         ? int.tryParse(categoryId)
         : null;
@@ -236,37 +264,51 @@ class ProductService {
 
     Future<dynamic> fetchProductsResponse() => _client.get(endpoint);
 
-    try {
-      dynamic response;
+    final future = () async {
       try {
-        response = await fetchProductsResponse();
-      } catch (e) {
-        final message = e.toString().toLowerCase();
-        final isTransientHeaderClose =
-            message.contains('connection closed before full header');
-        if (!isTransientHeaderClose) rethrow;
-        await Future<void>.delayed(const Duration(milliseconds: 350));
-        response = await fetchProductsResponse();
-      }
-
-      if (response is Map && response['data'] is List) {
-        final data = response['data'] as List;
-        // Cache page 1 only for resilience
-        if (page == 1) {
-          await _cache.set('products_cat_${categoryId ?? "all"}', data,
-              expiry: const Duration(hours: 1));
-          // Save to SQLite for offline
-          await _offlineDb.saveProducts(
-              data.cast<Map<String, dynamic>>(), ApiConstants.branchId,
-              categoryId: categoryId);
+        dynamic response;
+        try {
+          response = await fetchProductsResponse();
+        } catch (e) {
+          final message = e.toString().toLowerCase();
+          final isTransientHeaderClose =
+              message.contains('connection closed before full header');
+          if (!isTransientHeaderClose) rethrow;
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+          response = await fetchProductsResponse();
         }
-        return data.map((e) => Product.fromJson(e)).toList();
+
+        if (response is Map && response['data'] is List) {
+          final data = response['data'] as List;
+          final products =
+              data.map((e) => Product.fromJson(e)).toList(growable: false);
+          _memProductCache[cacheKey] = _CachedEntry(products);
+          // Disk cache page 1 for offline resilience.
+          if (page == 1) {
+            await _cache.set('products_cat_${categoryId ?? "all"}', data,
+                expiry: const Duration(hours: 1));
+            await _offlineDb.saveProducts(
+                data.cast<Map<String, dynamic>>(), ApiConstants.branchId,
+                categoryId: categoryId);
+          }
+          return products;
+        }
+        return <Product>[];
+      } catch (e) {
+        return _getProductsFromLocal(categoryId);
+      } finally {
+        _inFlightProducts.remove(cacheKey);
       }
-      return [];
-    } catch (e) {
-      // Fallback to local database
-      return _getProductsFromLocal(categoryId);
-    }
+    }();
+    _inFlightProducts[cacheKey] = future;
+    return future;
+  }
+
+  /// Purge the in-memory product pagination cache. Call this after mutations
+  /// (create/update/delete meal, toggle availability) so stale pages don't
+  /// linger.
+  void invalidateProductCache() {
+    _memProductCache.clear();
   }
 
   Future<List<Product>> _getProductsFromLocal(String? categoryId) async {
@@ -275,6 +317,15 @@ class ProductService {
           categoryId: categoryId);
       if (localData.isNotEmpty) {
         return localData.map((e) => Product.fromJson(e)).toList();
+      }
+    } catch (_) {}
+    // Try bundled POS database (meals table)
+    try {
+      final catId = categoryId != null ? int.tryParse(categoryId) : null;
+      final posData =
+          await _posDb.getMeals(ApiConstants.branchId, categoryId: catId);
+      if (posData.isNotEmpty) {
+        return posData.map((e) => Product.fromJson(e)).toList();
       }
     } catch (_) {}
     final cached = await _cache.get('products_cat_${categoryId ?? "all"}');
@@ -383,6 +434,11 @@ class ProductService {
     }
   }
 
+  /// Memoized addon-presence flag per meal id. The cashier taps a meal
+  /// dozens of times per shift; after the first check we keep the answer
+  /// around so subsequent taps skip the network hop.
+  final Map<String, bool> _addonPresenceCache = {};
+
   /// Fetch add-ons grouped by category (Key-Value)
   Future<Map<String, List<Extra>>> getMealAddonsGrouped(String mealId) async {
     try {
@@ -413,11 +469,33 @@ class ProductService {
           }
         }
       }
+      // Refresh the presence cache — any non-empty group counts as "has
+      // add-ons". Keeping it in sync with the grouped-fetch saves a second
+      // round-trip when the customization dialog opens right after the tap.
+      final hasAny = groupedAddons.values.any((g) => g.isNotEmpty);
+      _addonPresenceCache[mealId] = hasAny;
       return groupedAddons;
     } catch (e) {
       print('Error fetching grouped meal add-ons: $e');
       return {};
     }
+  }
+
+  /// Returns whether the meal actually has any add-ons on the backend.
+  /// Uses a memoized answer once the meal has been checked; the first call
+  /// for a meal costs one API round-trip, subsequent calls are synchronous.
+  /// `null` never leaks out — callers get a clean bool they can branch on.
+  Future<bool> mealHasAddons(String mealId) async {
+    if (mealId.isEmpty) return false;
+    final cached = _addonPresenceCache[mealId];
+    if (cached != null) return cached;
+    final grouped = await getMealAddonsGrouped(mealId);
+    // getMealAddonsGrouped already populates the cache, but set explicitly
+    // so a caller that swallowed an exception still gets a deterministic
+    // answer instead of re-fetching forever.
+    final hasAny = grouped.values.any((g) => g.isNotEmpty);
+    _addonPresenceCache[mealId] = hasAny;
+    return hasAny;
   }
 
   List<dynamic> _extractAddonEntries(dynamic response) {
@@ -525,6 +603,13 @@ class ProductService {
     priceVal = _parseApiPrice(priceVal);
     normalized['price'] = priceVal is num ? priceVal.toDouble() : 0.0;
 
+    // Preserve translation maps so Extra.fromJson can fill `optionTranslations`
+    // / `attributeTranslations`. Without this, the kitchen ticket would lose
+    // the cashier's language on cart-side addons because _normalizeExtraJson
+    // strips nested option/attribute objects before forwarding to the model.
+    if (json['option'] is Map) normalized['option'] = json['option'];
+    if (json['attribute'] is Map) normalized['attribute'] = json['attribute'];
+
     return normalized;
   }
 
@@ -620,4 +705,13 @@ class ProductService {
     await _client
         .delete('/seller/branches/${ApiConstants.branchId}/meals/$mealId');
   }
+}
+
+class _CachedEntry<T> {
+  final T value;
+  final DateTime cachedAt;
+  _CachedEntry(this.value) : cachedAt = DateTime.now();
+
+  bool isExpired(Duration ttl) =>
+      DateTime.now().difference(cachedAt) > ttl;
 }

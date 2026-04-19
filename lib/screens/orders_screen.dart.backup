@@ -1,0 +1,3693 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+import '../models/booking_invoice.dart';
+import '../services/api/order_service.dart';
+import '../services/api/base_client.dart';
+import '../services/api/error_handler.dart';
+import '../services/language_service.dart';
+import '../services/api/api_constants.dart';
+import '../services/display_app_service.dart';
+import '../dialogs/booking_details_dialog.dart';
+import '../dialogs/edit_order_dialog.dart';
+import '../locator.dart';
+import '../dialogs/payment_tender_dialog.dart';
+import '../dialogs/booking_refund_dialog.dart';
+import '../utils/order_status.dart';
+import '../services/api/branch_service.dart';
+import '../services/api/device_service.dart';
+import '../services/printer_service.dart';
+import '../services/printer_role_registry.dart';
+import '../models/receipt_data.dart';
+
+class OrdersScreen extends StatefulWidget {
+  final VoidCallback onBack;
+  final VoidCallback? onNavigateToInvoices;
+
+  /// Callback to print receipt using the same logic as normal payment flow.
+  final Future<void> Function({
+    required OrderReceiptData receiptData,
+    String? invoiceId,
+  })? onPrintReceipt;
+
+  /// Callback to print order change ticket to kitchen printers.
+  final void Function(List<OrderChange> changes, String orderNumber)? onPrintOrderChanges;
+
+  const OrdersScreen({
+    super.key,
+    required this.onBack,
+    this.onNavigateToInvoices,
+    this.onPrintReceipt,
+    this.onPrintOrderChanges,
+  });
+
+  @override
+  State<OrdersScreen> createState() => _OrdersScreenState();
+}
+
+class _OrdersScreenState extends State<OrdersScreen> {
+  final OrderService _orderService = getIt<OrderService>();
+  final DisplayAppService _displayAppService = getIt<DisplayAppService>();
+  final NumberFormat _amountFormatter = NumberFormat('#,##0.##');
+
+  List<Booking> _bookings = [];
+  Map<String, dynamic> _bookingsRawResponse = {};
+  Map<String, dynamic> _orderDetailsRawResponse = {};
+  Map<String, dynamic> _orderInvoiceRawResponse = {};
+  Map<String, dynamic> _updateStatusRawResponse = {};
+  Map<String, dynamic> _updateDataRawResponse = {};
+  Map<String, dynamic> _singleWhatsAppRawResponse = {};
+  Map<String, dynamic> _multiWhatsAppRawResponse = {};
+  bool _isLoading = true;
+  bool _isLoadingMore = false;
+  String? _error;
+  final Set<int> _selectedBookingIds = <int>{};
+  final Set<int> _payingBookingIds = <int>{};
+  Timer? _autoRefreshTimer;
+  bool _isRealtimeRefreshing = false;
+
+  // Pagination
+  int _bookingPage = 1;
+  bool _hasMoreBookings = true;
+
+  // Track refunded amounts locally (pre-tax) so card totals update immediately
+  final Map<int, double> _bookingRefundedAmounts = {};
+
+  final ScrollController _bookingScrollController = ScrollController();
+
+  // Filters
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  String _selectedStatus = 'all';
+  Timer? _searchDebounce;
+
+  String get _langCode =>
+      translationService.currentLanguageCode.trim().toLowerCase();
+  bool get _useArabicUi =>
+      _langCode.startsWith('ar') || _langCode.startsWith('ur');
+  String _tr(String ar, String nonArabic) => _useArabicUi ? ar : nonArabic;
+
+  bool get _isOrderNumberSearch =>
+      RegExp(r'^#?\d+$').hasMatch(_searchQuery.trim());
+
+  String get _orderIdSearchValue {
+    if (!_isOrderNumberSearch) return '';
+    return _normalizeDigits(_searchQuery.trim().replaceAll('#', ''));
+  }
+
+  String get _searchQueryForApi {
+    final query = _normalizeDigits(_searchQuery.trim());
+    if (query.isEmpty) return '';
+    if (_isOrderNumberSearch) {
+      return query.replaceAll('#', '');
+    }
+    return query;
+  }
+
+  String _normalizeDigits(String value) {
+    if (value.isEmpty) return value;
+    const easternArabic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+    const arabicIndic = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+    var normalized = value;
+    for (var i = 0; i < 10; i++) {
+      normalized = normalized.replaceAll(easternArabic[i], '$i');
+      normalized = normalized.replaceAll(arabicIndic[i], '$i');
+    }
+    return normalized;
+  }
+
+  String _digitsOnly(String value) =>
+      _normalizeDigits(value).replaceAll(RegExp(r'[^0-9]'), '').trim();
+
+  String _bookingReference(Booking booking) {
+    final orderId = booking.orderId;
+    // Priority 1: Use orderNumber if available (daily_order_number from API)
+    final orderNumber = booking.orderNumber?.trim();
+    if (orderNumber != null && orderNumber.isNotEmpty && orderNumber != '0') {
+      return orderNumber.startsWith('#') ? orderNumber : '#$orderNumber';
+    }
+    // Priority 2: Use orderId if available
+    if (orderId != null && orderId > 0) {
+      return '#$orderId';
+    }
+    // Priority 3: Use bookingNumber if available (but strip BOK- prefix)
+    final bookingNumber = booking.bookingNumber?.trim();
+    if (bookingNumber != null &&
+        bookingNumber.isNotEmpty &&
+        bookingNumber != '0') {
+      // Remove BOK- prefix if present to show cleaner number
+      final cleaned = bookingNumber.replaceAll(
+          RegExp(r'#?BOK-?', caseSensitive: false), '');
+      return cleaned.startsWith('#') ? cleaned : '#$cleaned';
+    }
+    // Fallback: Use booking.id
+    // Note: Backend should provide daily_order_number in /bookings endpoint
+    return '#${booking.id}';
+  }
+
+  bool _bookingHasInvoice(Booking booking) {
+    final raw = booking.raw;
+    bool hasValue(dynamic value) {
+      final text = value?.toString().trim().toLowerCase() ?? '';
+      return text.isNotEmpty && text != 'null' && text != '0';
+    }
+
+    final hasInvoiceFlag = raw['has_invoice'] == true ||
+        raw['has_invoice'] == 1 ||
+        raw['has_invoice'] == '1';
+    final hasInvoiceId =
+        hasValue(raw['invoice_id']) || hasValue(raw['invoice_number']);
+    final hasBookingInvoiceId =
+        hasValue(raw['invoice'] is Map ? (raw['invoice'] as Map)['id'] : null);
+    return hasInvoiceFlag || hasInvoiceId || hasBookingInvoiceId;
+  }
+
+  bool _isBookingCancelled(Booking booking) {
+    final normalized = booking.status.trim().toLowerCase();
+    return normalized == '8' ||
+        normalized == 'cancelled' ||
+        normalized == 'canceled';
+  }
+
+  bool _canCreateInvoiceForBooking(Booking booking) {
+    if (_isBookingCancelled(booking)) return false;
+    if (booking.isPaid) return false;
+    if (_bookingHasInvoice(booking)) return false;
+    return true;
+  }
+
+  bool _matchesOrderSearch(Booking booking, String digits) {
+    final orderId = booking.orderId?.toString() ?? '';
+    final bookingId = booking.id.toString();
+    final orderNumberDigits = _digitsOnly(booking.orderNumber ?? '');
+    final bookingNumberDigits = _digitsOnly(booking.bookingNumber ?? '');
+
+    return orderId == digits ||
+        bookingId == digits ||
+        orderNumberDigits == digits ||
+        bookingNumberDigits == digits;
+  }
+
+  List<Booking> _bookingsFromResponse(dynamic response) {
+    final list = _extractListResponse(response);
+    if (list is! List) return const <Booking>[];
+    return list
+        .whereType<Map>()
+        .map((e) => Booking.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Map<String, dynamic> _buildSearchResponseFromMatches(List<Booking> matches) {
+    return <String, dynamic>{
+      'status': 200,
+      'message': 'order_id_local_search',
+      'data': matches.map((booking) => booking.raw).toList(),
+      'meta': {'total': matches.length},
+    };
+  }
+
+  String _todayForApi() => DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+  void _syncSearchQueryFromInput({bool normalizeController = false}) {
+    final raw = _normalizeDigits(_searchController.text.trim());
+    if (raw.isEmpty) {
+      _searchQuery = '';
+      return;
+    }
+
+    final compact = raw.replaceAll(' ', '');
+    final isOrderInput = RegExp(r'^#?\d+$').hasMatch(compact);
+    if (!isOrderInput) {
+      _searchQuery = raw;
+      return;
+    }
+
+    final normalized = '#${compact.replaceAll('#', '')}';
+    _searchQuery = normalized;
+
+    if (normalizeController && _searchController.text.trim() != normalized) {
+      _searchController.value = TextEditingValue(
+        text: normalized,
+        selection: TextSelection.collapsed(offset: normalized.length),
+      );
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    translationService.addListener(_onLanguageChanged);
+    _bookingScrollController.addListener(_onBookingScroll);
+    _loadData();
+    _startAutoRefresh();
+  }
+
+  void _onBookingScroll() {
+    if (_bookingScrollController.position.pixels >=
+            _bookingScrollController.position.maxScrollExtent - 200 &&
+        !_isLoadingMore &&
+        _hasMoreBookings) {
+      _loadMoreData();
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    translationService.removeListener(_onLanguageChanged);
+    _bookingScrollController.dispose();
+    _searchController.dispose();
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onLanguageChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    // Auto-refresh every 10 seconds to avoid rate limiting
+    // Status updates from KDS are sent via WebSocket (real-time)
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      unawaited(_refreshOrdersRealtime());
+    });
+  }
+
+  Future<void> _refreshOrdersRealtime() async {
+    if (!mounted ||
+        _isLoading ||
+        _isLoadingMore ||
+        _isRealtimeRefreshing ||
+        _error != null) {
+      return;
+    }
+
+    _isRealtimeRefreshing = true;
+    try {
+      _syncSearchQueryFromInput(normalizeController: true);
+      final todayDateStr = _todayForApi();
+      final orderIdSearch = _orderIdSearchValue;
+
+      Future<Map<String, dynamic>> bookingsFuture;
+      if (orderIdSearch.isNotEmpty) {
+        bookingsFuture = _loadBookingsForOrderSearch(
+          orderIdSearch: orderIdSearch,
+          dateFromStr: todayDateStr,
+          dateToStr: todayDateStr,
+        );
+      } else {
+        bookingsFuture = _orderService.getBookings(
+          page: 1,
+          dateFrom: todayDateStr,
+          dateTo: todayDateStr,
+          search: _searchQueryForApi.isEmpty ? null : _searchQueryForApi,
+          status: _selectedStatus == 'all' ? null : _selectedStatus,
+        );
+      }
+
+      final bookingsResponse = await bookingsFuture;
+      _processBookings(bookingsResponse, append: false);
+      if (!mounted) return;
+
+      setState(() {
+        _selectedBookingIds
+            .removeWhere((id) => !_bookings.any((booking) => booking.id == id));
+      });
+    } catch (_) {
+      // Keep UI silent for periodic refresh failures.
+    } finally {
+      _isRealtimeRefreshing = false;
+    }
+  }
+
+  Future<void> _loadData() async {
+    _syncSearchQueryFromInput(normalizeController: true);
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _bookingPage = 1;
+      _bookings = [];
+      _bookingsRawResponse = {};
+      _hasMoreBookings = true;
+      _selectedBookingIds.clear();
+    });
+
+    try {
+      final todayDateStr = _todayForApi();
+      final orderIdSearch = _orderIdSearchValue;
+
+      Future<Map<String, dynamic>> bookingsFuture;
+      if (orderIdSearch.isNotEmpty) {
+        bookingsFuture = _loadBookingsForOrderSearch(
+          orderIdSearch: orderIdSearch,
+          dateFromStr: todayDateStr,
+          dateToStr: todayDateStr,
+        );
+      } else {
+        bookingsFuture = _orderService.getBookings(
+          page: 1,
+          dateFrom: todayDateStr,
+          dateTo: todayDateStr,
+          search: _searchQueryForApi.isEmpty ? null : _searchQueryForApi,
+          status: _selectedStatus == 'all' ? null : _selectedStatus,
+        );
+      }
+
+      final bookingsResponse = await bookingsFuture;
+      _processBookings(bookingsResponse, append: false);
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } on UnauthorizedException {
+      return;
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Error: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _loadBookingsForOrderSearch({
+    required String orderIdSearch,
+    required String dateFromStr,
+    required String dateToStr,
+  }) async {
+    final primaryResponse = await _orderService.getBookings(
+      page: 1,
+      dateFrom: dateFromStr,
+      dateTo: dateToStr,
+      search: orderIdSearch,
+      status: _selectedStatus == 'all' ? null : _selectedStatus,
+    );
+
+    final primaryMatches = _bookingsFromResponse(primaryResponse)
+        .where((booking) => _matchesOrderSearch(booking, orderIdSearch))
+        .toList();
+    if (primaryMatches.isNotEmpty) {
+      return _buildSearchResponseFromMatches(primaryMatches);
+    }
+
+    // Backend search can mismatch between booking.id and order.id.
+    // Fallback: scan today's pages and match locally on order.id first.
+    const maxPagesToScan = 8;
+    final localMatches = <Booking>[];
+
+    for (var page = 1; page <= maxPagesToScan; page++) {
+      final response = await _orderService.getBookings(
+        page: page,
+        dateFrom: dateFromStr,
+        dateTo: dateToStr,
+        status: _selectedStatus == 'all' ? null : _selectedStatus,
+      );
+      final pageBookings = _bookingsFromResponse(response);
+      if (pageBookings.isEmpty) break;
+
+      localMatches.addAll(
+        pageBookings
+            .where((booking) => _matchesOrderSearch(booking, orderIdSearch)),
+      );
+
+      if (localMatches.isNotEmpty) {
+        return _buildSearchResponseFromMatches(localMatches);
+      }
+
+      final totalCount = _extractTotalCount(response);
+      if (totalCount != null && page * 20 >= totalCount) break;
+      if (pageBookings.length < 20) break;
+    }
+
+    // Last fallback for explicit order-id search:
+    // Query without date filters because many environments store historical
+    // orders outside "today" and backend search might only match globally.
+    for (var page = 1; page <= maxPagesToScan; page++) {
+      final response = await _orderService.getBookings(
+        page: page,
+        search: orderIdSearch,
+        status: _selectedStatus == 'all' ? null : _selectedStatus,
+      );
+      final pageBookings = _bookingsFromResponse(response);
+      if (pageBookings.isEmpty) break;
+
+      localMatches.addAll(
+        pageBookings
+            .where((booking) => _matchesOrderSearch(booking, orderIdSearch)),
+      );
+
+      if (localMatches.isNotEmpty) {
+        return _buildSearchResponseFromMatches(localMatches);
+      }
+
+      final totalCount = _extractTotalCount(response);
+      if (totalCount != null && page * 20 >= totalCount) break;
+      if (pageBookings.length < 20) break;
+    }
+
+    return primaryResponse;
+  }
+
+  Future<void> _loadMoreData() async {
+    if (!mounted || _isLoadingMore) return;
+    _syncSearchQueryFromInput(normalizeController: true);
+
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final todayDateStr = _todayForApi();
+      final orderIdSearch = _orderIdSearchValue;
+
+      if (!_hasMoreBookings) return;
+      if (orderIdSearch.isNotEmpty) {
+        _hasMoreBookings = false;
+        return;
+      }
+      final nextPage = _bookingPage + 1;
+      final data = await _orderService.getBookings(
+        page: nextPage,
+        dateFrom: todayDateStr,
+        dateTo: todayDateStr,
+        search: _searchQueryForApi.isEmpty ? null : _searchQueryForApi,
+        status: _selectedStatus == 'all' ? null : _selectedStatus,
+      );
+      _processBookings(data, append: true);
+      _bookingPage = nextPage;
+    } catch (e) {
+      print('Error loading more: $e');
+    } finally {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
+  }
+
+  Future<void> _showCreateInvoiceDialog(Booking booking) async {
+    Map<String, bool> tenderEnabledMethods = const {
+      'cash': false,
+      'card': false,
+      'mada': false,
+      'visa': false,
+      'benefit': false,
+      'stc': false,
+      'bank_transfer': false,
+      'wallet': false,
+      'cheque': false,
+      'petty_cash': false,
+      'pay_later': false,
+      'tabby': false,
+      'tamara': false,
+      'keeta': false,
+      'my_fatoorah': false,
+      'jahez': false,
+      'talabat': false,
+    };
+
+    try {
+      tenderEnabledMethods =
+          await getIt<BranchService>().getEnabledPayMethods();
+    } catch (_) {}
+    // "Pay later" is not a valid pay_method for invoice payments.
+    tenderEnabledMethods['pay_later'] = false;
+
+    final hasAnyEnabled = tenderEnabledMethods.values.any((v) => v == true);
+    if (!hasAnyEnabled) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_tr(
+            'لا توجد طرق دفع مفعّلة لهذا الفرع. فعّل طريقة دفع من لوحة التحكم ثم أعد المحاولة.',
+            'No payment methods are enabled for this branch.',
+          )),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    double resolveInvoiceTotal() {
+      double round2(double v) => double.parse(v.toStringAsFixed(2));
+      return round2(_bookingGrandTotal(booking));
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => PaymentTenderDialog(
+        total: resolveInvoiceTotal(),
+        taxRate: 0.15,
+        enabledMethods: tenderEnabledMethods,
+        onConfirm: () async {
+          Navigator.pop(context);
+          await _processDeferredInvoice(
+            booking,
+            [
+              {
+                'name': 'دفع نقدي',
+                'pay_method': 'cash',
+                'amount': resolveInvoiceTotal(),
+                'index': 0
+              }
+            ],
+          );
+        },
+        onConfirmWithPays: (pays) async {
+          Navigator.pop(context);
+          await _processDeferredInvoice(booking, pays);
+        },
+      ),
+    );
+  }
+
+  Future<void> _processDeferredInvoice(
+      Booking booking, List<Map<String, dynamic>> pays) async {
+    setState(() => _payingBookingIds.add(booking.id));
+    try {
+      final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      List<Map<String, dynamic>> apiPays = [];
+      for (int i = 0; i < pays.length; i++) {
+        final amount = (pays[i]['amount'] as num?)?.toDouble() ?? 0.0;
+        apiPays.add({
+          'name': pays[i]['name'],
+          'pay_method': pays[i]['pay_method'],
+          'amount': double.parse(amount.toStringAsFixed(2)),
+          'index': i,
+        });
+      }
+
+      List<Map<String, dynamic>> extractItems(Map<String, dynamic> payload) {
+        final sections = payload['sections'];
+        if (sections is List) {
+          final sectionItems = <Map<String, dynamic>>[];
+          for (final section in sections) {
+            if (section is! Map) continue;
+            final sectionMap = section.map((k, v) => MapEntry(k.toString(), v));
+            final items = sectionMap['items'];
+            if (items is List) {
+              for (final item in items) {
+                if (item is Map) {
+                  sectionItems.add(
+                    item.map((k, v) => MapEntry(k.toString(), v)),
+                  );
+                }
+              }
+            }
+          }
+          if (sectionItems.isNotEmpty) return sectionItems;
+        }
+        const keys = [
+          'meals',
+          'booking_meals',
+          'booking_products',
+          'booking_items',
+          'items',
+          'invoice_items',
+          'sales_meals',
+          'card',
+          'cart',
+        ];
+        for (final key in keys) {
+          final raw = payload[key];
+          if (raw is List) {
+            final rows = raw
+                .whereType<Map>()
+                .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
+                .toList();
+            if (rows.isNotEmpty) return rows;
+          }
+        }
+        return const <Map<String, dynamic>>[];
+      }
+
+      List<Map<String, dynamic>> mapItemsToInvoicePayload(
+        List<Map<String, dynamic>> rawItems,
+      ) {
+        final items = <Map<String, dynamic>>[];
+        for (final raw in rawItems) {
+          dynamic pick(dynamic value) => value == null ? null : value;
+          final mealMap = (raw['meal'] is Map)
+              ? (raw['meal'] as Map).map((k, v) => MapEntry(k.toString(), v))
+              : const <String, dynamic>{};
+          final mealId = pick(raw['meal_id'] ?? mealMap['id']);
+          final productId = pick(raw['product_id'] ?? raw['productId']);
+          final bookingMealId = pick(raw['booking_meal_id'] ?? raw['id']);
+          final bookingProductId = pick(raw['booking_product_id'] ?? raw['id']);
+          final fallbackId = pick(raw['id']);
+          final quantityRaw = raw['quantity'] ?? raw['qty'] ?? raw['count'];
+          final quantity = (quantityRaw is num)
+              ? quantityRaw.toInt()
+              : int.tryParse('$quantityRaw') ?? 1;
+          final totalRaw = raw['total'] ?? raw['line_total'];
+          final unitRaw = raw['unit_price'] ??
+              raw['unitPrice'] ??
+              raw['price'] ??
+              mealMap['price'];
+          var unitPrice = _parseNum(unitRaw);
+          final total = _parseNum(totalRaw);
+          if (unitPrice <= 0 && total > 0 && quantity > 0) {
+            unitPrice = total / quantity;
+          }
+          String? resolveItemName() {
+            final directName = raw['item_name'] ?? raw['meal_name'];
+            if (directName != null) return directName.toString();
+            final rawName = mealMap['name'];
+            if (rawName == null) return null;
+            final rawText = rawName.toString();
+            final trimmed = rawText.trim();
+            if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+              try {
+                final parsed = jsonDecode(trimmed);
+                if (parsed is Map) {
+                  final map = parsed.map((k, v) => MapEntry(k.toString(), v));
+                  return (map['ar'] ?? map['en'] ?? map.values.first)
+                      ?.toString();
+                }
+              } catch (_) {
+                return rawText;
+              }
+            }
+            return rawText;
+          }
+
+          final resolvedItemName = resolveItemName();
+          if (mealId == null && productId == null && fallbackId == null) {
+            continue;
+          }
+          items.add({
+            if (bookingMealId != null) 'booking_meal_id': bookingMealId,
+            if (bookingProductId != null)
+              'booking_product_id': bookingProductId,
+            if (mealId != null) 'meal_id': mealId,
+            if (mealId == null && productId != null) 'product_id': productId,
+            if (mealId == null && productId == null) 'id': fallbackId,
+            if (resolvedItemName != null) 'item_name': resolvedItemName,
+            'quantity': quantity,
+            'price': unitPrice,
+            'unitPrice': unitPrice,
+          });
+        }
+        return items;
+      }
+
+      List<Map<String, dynamic>> itemsPayload = booking.meals
+          .map((m) => {
+                'meal_id': m.mealId,
+                'booking_meal_id': m.id,
+                'item_name': m.mealName,
+                'quantity': m.quantity,
+                'price': m.unitPrice,
+                'unitPrice': m.unitPrice,
+              })
+          .toList();
+
+      // Try from booking.raw if meals list was empty
+      if (itemsPayload.isEmpty && booking.raw.isNotEmpty) {
+        final rawItems = extractItems(Map<String, dynamic>.from(booking.raw));
+        if (rawItems.isNotEmpty) {
+          itemsPayload = mapItemsToInvoicePayload(rawItems);
+        }
+      }
+
+      if (itemsPayload.isEmpty) {
+        try {
+          final details =
+              await _orderService.getBookingDetails(booking.id.toString());
+          final detailMap =
+              _asMap(details['data']) ?? _asMap(details) ?? const {};
+          var rawItems = extractItems(Map<String, dynamic>.from(detailMap));
+          // If still empty, try nested structures
+          if (rawItems.isEmpty) {
+            final nestedCandidates = [
+              detailMap['booking'],
+              detailMap['order'],
+              detailMap['invoice'],
+              detailMap['data'],
+            ];
+            for (final candidate in nestedCandidates) {
+              if (candidate is Map) {
+                final nested = candidate.map((k, v) => MapEntry(k.toString(), v));
+                rawItems = extractItems(Map<String, dynamic>.from(nested));
+                if (rawItems.isNotEmpty) break;
+              }
+            }
+          }
+          itemsPayload = mapItemsToInvoicePayload(rawItems);
+        } catch (_) {
+          // Ignore; handled below if items remain empty.
+        }
+      }
+
+      if (itemsPayload.isEmpty) {
+        throw Exception(_tr('الطلب بدون عناصر', 'Order has no items'));
+      }
+
+      double round2(double v) => double.parse(v.toStringAsFixed(2));
+      double computeItemsSubtotal(List<Map<String, dynamic>> items) {
+        double sum = 0.0;
+        for (final item in items) {
+          final qty = (item['quantity'] as num?)?.toDouble() ??
+              double.tryParse(item['quantity']?.toString() ?? '') ??
+              0.0;
+          final unit = (item['unitPrice'] as num?)?.toDouble() ??
+              (item['price'] as num?)?.toDouble() ??
+              double.tryParse(item['unitPrice']?.toString() ?? '') ??
+              double.tryParse(item['price']?.toString() ?? '') ??
+              0.0;
+          sum += unit * qty;
+        }
+        return round2(sum);
+      }
+
+      double resolveExpectedTotal(List<Map<String, dynamic>> items) {
+        final subtotal =
+            booking.total > 0 ? booking.total : computeItemsSubtotal(items);
+        final total = subtotal + booking.tax - booking.discount;
+        return round2(total > 0 ? total : subtotal);
+      }
+
+      double extractExpectedTotalFromCalc(dynamic response, double fallback) {
+        if (response is! Map) return fallback;
+        final map = response.map((k, v) => MapEntry(k.toString(), v));
+        final candidates = <dynamic>[
+          map['total'],
+          map['invoice_total'],
+          map['grand_total'],
+          if (map['data'] is Map) (map['data'] as Map)['total'],
+          if (map['data'] is Map) (map['data'] as Map)['invoice_total'],
+          if (map['data'] is Map) (map['data'] as Map)['grand_total'],
+          if (map['data'] is Map) (map['data'] as Map)['total_with_tax'],
+        ];
+        for (final c in candidates) {
+          if (c is num) return c.toDouble();
+          if (c is String) {
+            final parsed = double.tryParse(c);
+            if (parsed != null) return parsed;
+          }
+        }
+        return fallback;
+      }
+
+      var expectedTotal = resolveExpectedTotal(itemsPayload);
+      try {
+        final calcResponse = await _orderService.calculateInvoice(
+          {
+            'items': itemsPayload,
+            if (booking.discount > 0) 'discount': booking.discount,
+          },
+        );
+        expectedTotal = round2(
+          extractExpectedTotalFromCalc(calcResponse, expectedTotal),
+        );
+      } catch (_) {
+        // Non-blocking: keep booking-derived total when calculate fails.
+      }
+      double sumPays(List<Map<String, dynamic>> pays) {
+        double sum = 0.0;
+        for (final pay in pays) {
+          final amount = (pay['amount'] as num?)?.toDouble() ??
+              double.tryParse(pay['amount']?.toString() ?? '') ??
+              0.0;
+          sum += amount;
+        }
+        return round2(sum);
+      }
+
+      if (apiPays.isEmpty) {
+        apiPays = [
+          {
+            'name': 'دفع نقدي',
+            'pay_method': 'cash',
+            'amount': expectedTotal,
+            'index': 0,
+          }
+        ];
+      } else {
+        final currentTotal = sumPays(apiPays);
+        final diff = round2(expectedTotal - currentTotal);
+        if (diff.abs() >= 0.01) {
+          // Adjust the last payment line to match backend total.
+          final lastIndex = apiPays.length - 1;
+          final lastAmount = (apiPays[lastIndex]['amount'] as num?)
+                  ?.toDouble() ??
+              double.tryParse(apiPays[lastIndex]['amount']?.toString() ?? '') ??
+              0.0;
+          apiPays[lastIndex]['amount'] = round2(lastAmount + diff);
+        }
+      }
+
+      List<Map<String, dynamic>> buildSalesMeals(
+        List<Map<String, dynamic>> items,
+      ) {
+        final salesMeals = <Map<String, dynamic>>[];
+        for (final item in items) {
+          final quantityRaw = item['quantity'] ?? 1;
+          final quantity = (quantityRaw is num)
+              ? quantityRaw.toInt()
+              : int.tryParse('$quantityRaw') ?? 1;
+          final unitRaw =
+              item['unitPrice'] ?? item['unit_price'] ?? item['price'] ?? 0;
+          final unitPrice = (unitRaw is num)
+              ? unitRaw.toDouble()
+              : double.tryParse(unitRaw.toString()) ?? 0.0;
+          final total = double.parse(
+            (unitPrice * quantity).toStringAsFixed(2),
+          );
+          salesMeals.add({
+            if (item['booking_meal_id'] != null)
+              'booking_meal_id': item['booking_meal_id'],
+            if (item['meal_id'] != null) 'meal_id': item['meal_id'],
+            if (item['item_name'] != null) 'meal_name': item['item_name'],
+            'quantity': quantity,
+            'price': unitPrice,
+            'unit_price': unitPrice,
+            'unitPrice': unitPrice,
+            'total': total,
+            'discount_type': '%',
+          });
+        }
+        return salesMeals;
+      }
+
+      final salesMealsPayload = buildSalesMeals(itemsPayload);
+
+      final payload = <String, dynamic>{
+        'branch_id': ApiConstants.branchId,
+        'booking_id': booking.id,
+        'date': dateStr,
+        'cash_back': 0,
+        'pays': apiPays,
+        if (salesMealsPayload.isNotEmpty) 'sales_meals': salesMealsPayload,
+      };
+
+      // Retry once if backend says total mismatch — adjust pays to match.
+      double? extractExpectedTotal(String msg) {
+        final m = RegExp(r'\(([\d.]+)\)').firstMatch(msg);
+        return double.tryParse(m?.group(1) ?? '');
+      }
+
+      List<Map<String, dynamic>> adjustPays(
+          List<Map<String, dynamic>> pays, double target) {
+        final nonZero = pays
+            .where((p) => ((p['amount'] as num?)?.toDouble() ?? 0) > 0)
+            .toList();
+        if (nonZero.isEmpty) {
+          return [
+            {
+              'name': 'دفع نقدي',
+              'pay_method': 'cash',
+              'amount': target,
+              'index': 0
+            }
+          ];
+        }
+        final currentSum = nonZero.fold<double>(
+            0, (s, p) => s + ((p['amount'] as num?)?.toDouble() ?? 0));
+        final diff = double.parse((target - currentSum).toStringAsFixed(2));
+        if (diff.abs() >= 0.01) {
+          final last = nonZero.last;
+          nonZero[nonZero.length - 1] = {
+            ...last,
+            'amount': double.parse(
+              (((last['amount'] as num?)?.toDouble() ?? 0) + diff)
+                  .clamp(0.0, double.infinity)
+                  .toStringAsFixed(2),
+            ),
+          };
+        }
+        return nonZero
+            .asMap()
+            .entries
+            .map((e) => {...e.value, 'index': e.key})
+            .toList();
+      }
+
+      Map<String, dynamic> invoiceResponse;
+      try {
+        invoiceResponse = await _orderService.createInvoice(payload);
+      } on ApiException catch (e) {
+        if (e.statusCode == 422) {
+          final expected = extractExpectedTotal(e.message);
+          if (expected != null) {
+            payload['pays'] = adjustPays(apiPays, expected);
+            try {
+              invoiceResponse = await _orderService.createInvoice(payload);
+            } catch (_) {
+              // Last resort: try multipart directly
+              invoiceResponse =
+                  await _orderService.createInvoiceMultipart(payload);
+            }
+          } else {
+            rethrow;
+          }
+        } else {
+          rethrow;
+        }
+      }
+
+      debugPrint('🧾 createInvoice response keys: ${invoiceResponse.keys.toList()}');
+      final responseData = invoiceResponse['data'];
+      if (responseData is Map) {
+        debugPrint('🧾 response.data keys: ${responseData.keys.toList()}');
+        final nestedInvoice = responseData['invoice'];
+        if (nestedInvoice is Map) {
+          debugPrint('🧾 response.data.invoice keys: ${nestedInvoice.keys.toList()}');
+          debugPrint('🧾 response.data.invoice.id: ${nestedInvoice['id']}');
+          debugPrint('🧾 response.data.invoice.invoice_id: ${nestedInvoice['invoice_id']}');
+        }
+        debugPrint('🧾 response.data.id: ${responseData['id']}');
+        debugPrint('🧾 response.data.invoice_id: ${responseData['invoice_id']}');
+      }
+      debugPrint('🧾 response.id: ${invoiceResponse['id']}');
+      debugPrint('🧾 response.invoice_id: ${invoiceResponse['invoice_id']}');
+
+      final invoiceId = _extractInvoiceId(invoiceResponse, strict: false);
+      debugPrint('🧾 Extracted invoiceId: $invoiceId');
+      booking.raw['has_invoice'] = true;
+      if (invoiceId != null) {
+        booking.raw['invoice_id'] = invoiceId;
+      }
+
+      final orderIdText = (booking.orderId ?? booking.id).toString();
+      try {
+        _displayAppService.notifyInvoiceCreated(
+          orderId: orderIdText,
+          invoiceId: invoiceId,
+          invoiceNumber: booking.invoiceNumber ?? invoiceId?.toString(),
+          orderNumber: booking.orderNumber ?? booking.bookingNumberRaw,
+          total: booking.total,
+        );
+      } catch (e) {
+        debugPrint('⚠️ Unable to notify invoice creation to display: $e');
+      }
+
+      try {
+        if (!isOrderLockedValue(booking.status) &&
+            !isOrderLockedValue(booking.raw['status'])) {
+          final statusResponse = await _orderService.updateBookingStatus(
+            orderId: booking.id.toString(),
+            status: 7,
+          );
+          _updateStatusRawResponse = statusResponse;
+          _displayAppService.sendOrderStatusUpdateToDisplay(
+            orderId: booking.id.toString(),
+            status: 7,
+          );
+        }
+      } catch (e) {
+        debugPrint('⚠️ Unable to lock order after invoice: $e');
+      }
+
+      // Auto-print receipt — use same logic as normal payment flow
+      final resolvedInvoiceId = invoiceId?.toString() ?? '';
+      final resolvedInvoiceNumber = booking.invoiceNumber ?? invoiceId?.toString() ?? '';
+      final resolvedDailyOrder = booking.orderNumber ?? booking.bookingNumberRaw ?? '';
+      final effectiveInvoiceId = resolvedInvoiceId.isNotEmpty ? resolvedInvoiceId : booking.id.toString();
+      debugPrint('🖨️ Order pay: invoiceId=$resolvedInvoiceId invoiceNumber=$resolvedInvoiceNumber dailyOrder=$resolvedDailyOrder');
+
+      debugPrint('🖨️ onPrintReceipt callback: ${widget.onPrintReceipt != null ? "SET" : "NULL"}');
+      if (widget.onPrintReceipt != null) {
+        // Use the same printing logic as the normal payment flow
+        unawaited(() async {
+          try {
+            debugPrint('🖨️ Building receipt data for invoice=$effectiveInvoiceId...');
+            final receiptData = await _buildReceiptDataForInvoice(
+              invoiceId: effectiveInvoiceId,
+              invoiceNumber: resolvedInvoiceNumber,
+              dailyOrderNumber: resolvedDailyOrder,
+            );
+            debugPrint('🖨️ Receipt data: ${receiptData != null ? "OK (${receiptData.items.length} items)" : "NULL"}');
+            if (receiptData != null) {
+              debugPrint('🖨️ Calling onPrintReceipt...');
+              await widget.onPrintReceipt!(
+                receiptData: receiptData,
+                invoiceId: effectiveInvoiceId,
+              );
+              debugPrint('🖨️ onPrintReceipt completed.');
+            } else {
+              debugPrint('⚠️ receiptData is null — skipping print');
+            }
+          } catch (e) {
+            debugPrint('⚠️ Print after create invoice failed: $e');
+          }
+        }());
+      } else {
+        unawaited(_printCashierReceiptForOrder(
+          invoiceId: effectiveInvoiceId,
+          invoiceNumber: resolvedInvoiceNumber,
+          dailyOrderNumber: resolvedDailyOrder,
+        ));
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              _tr('تم إنشاء الفاتورة بنجاح', 'Invoice created successfully')),
+        ),
+      );
+      await _loadData();
+      widget.onNavigateToInvoices?.call();
+    } catch (e) {
+      if (!mounted) return;
+      if (e is ApiException &&
+          e.statusCode == 422 &&
+          (e.userMessage ?? e.message).contains('عناصر') &&
+          (booking.orderId == null ||
+              booking.orderId == 0 ||
+              booking.raw['order_id'] == null)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_tr(
+              'لا يمكن إنشاء فاتورة لهذا الطلب لأن الطلب لا يملك Order ID في السيرفر.',
+              'Cannot create invoice: order has no Order ID on server.',
+            )),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      final userMessage = ErrorHandler.toUserMessage(
+        e,
+        fallback: _tr('تعذر إنشاء الفاتورة', 'Failed to create invoice'),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(userMessage)),
+      );
+    } finally {
+      if (mounted) setState(() => _payingBookingIds.remove(booking.id));
+    }
+  }
+
+  /// Fetch invoice from API and build OrderReceiptData for printing.
+  Future<OrderReceiptData?> _buildReceiptDataForInvoice({
+    required String invoiceId,
+    String? invoiceNumber,
+    String? dailyOrderNumber,
+  }) async {
+    try {
+      final invoiceResponse = await _orderService.getInvoice(invoiceId);
+      final rawEnvelope =
+          invoiceResponse.map((k, v) => MapEntry(k.toString(), v));
+      final envelope = (rawEnvelope['data'] is Map)
+          ? (rawEnvelope['data'] as Map)
+              .map((k, v) => MapEntry(k.toString(), v))
+          : rawEnvelope;
+
+      final invoice = (envelope['invoice'] is Map)
+          ? (envelope['invoice'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : envelope;
+      final branch = (envelope['branch'] is Map)
+          ? (envelope['branch'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
+      final seller = (branch['seller'] is Map)
+          ? (branch['seller'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
+      final originalSeller = (branch['original_seller'] is Map)
+          ? (branch['original_seller'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
+
+      String pick(List<dynamic> candidates) {
+        for (final c in candidates) {
+          final t = c?.toString().trim();
+          if (t != null && t.isNotEmpty && t.toLowerCase() != 'null') return t;
+        }
+        return '';
+      }
+
+      String? pickNullable(List<dynamic> candidates) {
+        final r = pick(candidates);
+        return r.isNotEmpty ? r : null;
+      }
+
+      // Parse items with addons
+      final items = (invoice['items'] as List?)?.map((item) {
+            final m = (item is Map)
+                ? item.map((k, v) => MapEntry(k.toString(), v))
+                : <String, dynamic>{};
+            final qty = double.tryParse(m['quantity']?.toString() ?? '') ?? 1;
+            final mealPrice = double.tryParse(m['meal_price']?.toString() ?? '') ?? 0;
+            final lineTotal = double.tryParse(m['total']?.toString() ?? '') ?? 0;
+            final unitPrice = mealPrice > 0 ? mealPrice : (qty > 0 ? lineTotal / qty : lineTotal);
+            final total = lineTotal > 0 ? lineTotal : mealPrice * qty;
+
+            // Parse bilingual name
+            final rawName = m['item_name']?.toString() ?? '';
+            String arName = rawName;
+            String enName = rawName;
+            if (rawName.contains(' - ')) {
+              arName = rawName.split(' - ').first.trim();
+              enName = rawName.split(' - ').last.trim();
+            }
+
+            // Parse addons
+            final addons = <ReceiptAddon>[];
+            final rawAddons = m['addons'] ?? m['extras'];
+            if (rawAddons is List) {
+              for (final addon in rawAddons) {
+                if (addon is Map) {
+                  final addonMap = addon.map((k, v) => MapEntry(k.toString(), v));
+                  addons.add(ReceiptAddon(
+                    nameAr: addonMap['name']?.toString() ?? addonMap['name_ar']?.toString() ?? '',
+                    nameEn: addonMap['name_en']?.toString() ?? addonMap['name']?.toString() ?? '',
+                    price: double.tryParse(addonMap['price']?.toString() ?? '') ?? 0,
+                  ));
+                }
+              }
+            }
+
+            return ReceiptItem(
+              nameAr: arName,
+              nameEn: enName,
+              quantity: qty,
+              unitPrice: unitPrice,
+              total: total,
+              addons: addons.isNotEmpty ? addons : null,
+            );
+          }).toList() ??
+          [];
+
+      final totalStr = invoice['total']?.toString() ?? '0';
+      final taxStr = invoice['tax']?.toString() ?? '0';
+      final grandStr = invoice['grand_total']?.toString() ?? '0';
+      final totalExcl = double.tryParse(totalStr) ?? 0;
+      final tax = double.tryParse(taxStr) ?? 0;
+      final parsedGrand = double.tryParse(grandStr) ?? 0;
+      final grandTotal = parsedGrand > 0 ? parsedGrand : (totalExcl + tax);
+
+      // Resolve daily order number from invoice API (priority) or fallback
+      final resolvedOrderNumber = pick([
+        invoice['daily_order_number'],
+        invoice['order_number'],
+        envelope['daily_order_number'],
+      ]);
+      final effectiveOrderNumber = resolvedOrderNumber.isNotEmpty
+          ? resolvedOrderNumber
+          : (dailyOrderNumber ?? '');
+
+      // Resolve customer info
+      final customer = invoice['customer'] ?? invoice['client'] ?? envelope['customer'];
+      String? clientName;
+      String? clientPhone;
+      if (customer is Map) {
+        clientName = customer['name']?.toString();
+        clientPhone = (customer['mobile'] ?? customer['phone'])?.toString();
+      } else if (customer is String && customer.isNotEmpty) {
+        clientName = customer;
+      }
+
+      // Resolve order type
+      final orderType = pickNullable([
+        invoice['order_type'], invoice['type'],
+        envelope['order_type'], envelope['type'],
+      ]);
+
+      // Resolve payments
+      final paysList = invoice['pays'] ?? invoice['payments'] ?? envelope['pays'];
+      final payments = <ReceiptPayment>[];
+      if (paysList is List) {
+        for (final p in paysList) {
+          if (p is Map) {
+            final method = p['pay_method']?.toString() ?? p['method']?.toString() ?? 'cash';
+            final amount = double.tryParse(p['amount']?.toString() ?? '0') ?? 0;
+            payments.add(ReceiptPayment(methodLabel: method, amount: amount));
+          }
+        }
+      }
+
+      // Resolve discount
+      final discountAmount = double.tryParse(
+        (invoice['discount'] ?? invoice['discount_amount'] ?? '0').toString(),
+      ) ?? 0;
+
+      // Resolve seller name (bilingual)
+      final sellerNameRaw = pick([seller['name'], branch['seller_name'], branch['name']]);
+      String sellerNameAr = sellerNameRaw;
+      String sellerNameEn = sellerNameRaw;
+      if (sellerNameRaw.contains(' - ') || sellerNameRaw.contains(' | ')) {
+        final sep = sellerNameRaw.contains(' | ') ? ' | ' : ' - ';
+        sellerNameAr = sellerNameRaw.split(sep).first.trim();
+        sellerNameEn = sellerNameRaw.split(sep).last.trim();
+      }
+
+      // Resolve logo
+      String? logoUrl = pickNullable([
+        seller['logo'], originalSeller['logo'],
+        branch['logo'], branch['image'],
+      ]);
+      if (logoUrl != null && logoUrl.startsWith('/')) {
+        logoUrl = 'https://api.hermosaapp.com$logoUrl';
+      }
+
+      return OrderReceiptData(
+        invoiceNumber: pick([invoice['invoice_number'], invoiceNumber]),
+        issueDateTime: pick([invoice['ISO8601'], invoice['date']]),
+        sellerNameAr: sellerNameAr,
+        sellerNameEn: sellerNameEn,
+        vatNumber: pick([
+          seller['tax_number'], originalSeller['tax_number'],
+          branch['tax_number'], seller['vat_number'],
+        ]),
+        branchName: pick([branch['seller_name'], branch['name']]),
+        items: items,
+        totalExclVat: totalExcl,
+        vatAmount: tax,
+        totalInclVat: grandTotal,
+        paymentMethod: pick([invoice['payment_methods']]),
+        payments: payments,
+        qrCodeBase64: pick([envelope['qr_image'], invoice['qr_image']]),
+        sellerLogo: logoUrl,
+        zatcaQrImage: pickNullable([envelope['qr_image'], invoice['qr_image'], invoice['zatca_qr_image']]),
+        branchAddress: pickNullable([branch['address'], branch['district']]),
+        branchAddressEn: pickNullable([branch['address_en'], branch['district_en']]),
+        branchMobile: pickNullable([branch['mobile'], branch['phone']]),
+        commercialRegisterNumber: pickNullable([
+          seller['commercial_register'], originalSeller['commercial_register'],
+          branch['commercial_number'], seller['commercial_register_number'],
+        ]),
+        cashierName: pickNullable([
+          invoice['cashier'] is Map ? (invoice['cashier'] as Map)['fullname'] : null,
+          invoice['cashier_name'],
+        ]),
+        orderNumber: effectiveOrderNumber,
+        orderType: orderType,
+        clientName: clientName,
+        clientPhone: clientPhone,
+        orderDiscountAmount: discountAmount > 0 ? discountAmount : null,
+        issueDate: pickNullable([invoice['date']]),
+        issueTime: pickNullable([invoice['time']]),
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to build receipt data from invoice: $e');
+      return null;
+    }
+  }
+
+  /// Print cashier receipt ONLY for a pay-later order that just got invoiced.
+  /// NO kitchen ticket — food was already prepared.
+  Future<void> _printCashierReceiptForOrder({
+    String? invoiceId,
+    String? invoiceNumber,
+    String? dailyOrderNumber,
+  }) async {
+    try {
+      if (invoiceId == null || invoiceId.isEmpty) {
+        debugPrint('⚠️ _printCashierReceiptForOrder: no invoiceId, skipping');
+        return;
+      }
+
+      final deviceService = getIt<DeviceService>();
+      final printerService = getIt<PrinterService>();
+      final roleRegistry = getIt<PrinterRoleRegistry>();
+      await roleRegistry.initialize();
+
+      final devices = await deviceService.getDevices();
+      final cashierPrinters = devices.where((d) {
+        if (d.ip.isEmpty && (d.bluetoothAddress?.isEmpty ?? true)) return false;
+        final role = roleRegistry.resolveRole(d);
+        return role == PrinterRole.cashierReceipt || role == PrinterRole.general;
+      }).toList();
+
+      if (cashierPrinters.isEmpty) {
+        debugPrint('ℹ️ No cashier printer for order invoice print');
+        return;
+      }
+
+      // Fetch full invoice details for receipt data
+      final invoiceResponse = await _orderService.getInvoice(invoiceId);
+      final rawEnvelope = invoiceResponse.map((k, v) => MapEntry(k.toString(), v));
+      final envelope = (rawEnvelope['data'] is Map)
+          ? (rawEnvelope['data'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : rawEnvelope;
+
+      final invoice = (envelope['invoice'] is Map)
+          ? envelope['invoice'] as Map<String, dynamic>
+          : envelope;
+      final branch = (envelope['branch'] is Map)
+          ? envelope['branch'] as Map<String, dynamic>
+          : <String, dynamic>{};
+      final seller = (branch['seller'] is Map)
+          ? branch['seller'] as Map<String, dynamic>
+          : <String, dynamic>{};
+
+      String _pick(List<dynamic> candidates) {
+        for (final c in candidates) {
+          final t = c?.toString().trim();
+          if (t != null && t.isNotEmpty && t.toLowerCase() != 'null') return t;
+        }
+        return '';
+      }
+
+      final items = (invoice['items'] as List?)?.map((item) {
+        final m = item is Map ? item : <String, dynamic>{};
+        final price = double.tryParse(m['meal_price']?.toString() ?? '') ??
+            double.tryParse(m['total']?.toString() ?? '') ?? 0;
+        return ReceiptItem(
+          nameAr: m['item_name']?.toString() ?? '',
+          nameEn: m['item_name']?.toString() ?? '',
+          quantity: double.tryParse(m['quantity']?.toString() ?? '') ?? 1,
+          unitPrice: price,
+          total: price,
+        );
+      }).toList() ?? [];
+
+      final totalStr = invoice['total']?.toString() ?? '0';
+      final taxStr = invoice['tax']?.toString() ?? '0';
+      final grandStr = invoice['grand_total']?.toString() ?? totalStr;
+      final totalExcl = double.tryParse(totalStr) ?? 0;
+      final tax = double.tryParse(taxStr) ?? 0;
+      final grandTotal = double.tryParse(grandStr) ?? (totalExcl + tax);
+
+      final receiptData = OrderReceiptData(
+        invoiceNumber: _pick([invoice['invoice_number'], invoiceNumber]),
+        issueDateTime: _pick([invoice['ISO8601'], invoice['date']]),
+        sellerNameAr: _pick([branch['seller_name']]),
+        sellerNameEn: _pick([branch['seller_name']]),
+        vatNumber: _pick([seller['tax_number'], branch['tax_number']]),
+        branchName: _pick([branch['seller_name']]),
+        items: items,
+        totalExclVat: totalExcl,
+        vatAmount: tax,
+        totalInclVat: grandTotal,
+        paymentMethod: _pick([invoice['payment_methods']]),
+        qrCodeBase64: _pick([envelope['qr_image'], invoice['qr_image']]),
+        branchAddress: _pick([branch['address'], branch['district']]),
+        branchMobile: _pick([branch['mobile']]),
+        commercialRegisterNumber: _pick([seller['commercial_register']]),
+        cashierName: _pick([(invoice['cashier'] is Map ? invoice['cashier']['fullname'] : null)]),
+        orderNumber: dailyOrderNumber,
+        issueDate: _pick([invoice['date']]),
+        issueTime: _pick([invoice['time']]),
+      );
+
+      for (final printer in cashierPrinters) {
+        try {
+          await printerService.printReceipt(printer, receiptData, jobType: 'cashier');
+        } catch (e) {
+          debugPrint('⚠️ Cashier receipt print failed for order invoice: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to print cashier receipt for order: $e');
+    }
+  }
+
+  void _processBookings(dynamic response, {required bool append}) {
+    if (response is Map<String, dynamic>) {
+      _bookingsRawResponse = response;
+    }
+    final list = _extractListResponse(response);
+    List<Booking> newItems = (list is List)
+        ? list
+            .whereType<Map>()
+            .map((e) => Booking.fromJson(Map<String, dynamic>.from(e)))
+            .toList()
+        : [];
+
+    // Ensure order-number search works even if backend search behavior varies.
+    if (_isOrderNumberSearch && _searchQueryForApi.isNotEmpty) {
+      final digits = _searchQueryForApi;
+      newItems = newItems.where((booking) {
+        final orderId = booking.orderId?.toString() ?? '';
+        final id = booking.id.toString();
+        final orderNumber =
+            (booking.orderNumber ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+        final bookingNumber =
+            (booking.bookingNumber ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+
+        // Exact match for order search to avoid collisions with booking IDs.
+        return orderId == digits ||
+            id == digits ||
+            orderNumber == digits ||
+            bookingNumber == digits;
+      }).toList();
+    }
+
+    final totalCount = _extractTotalCount(response);
+
+    if (mounted) {
+      setState(() {
+        if (append) {
+          _bookings.addAll(newItems);
+        } else {
+          _bookings = newItems;
+        }
+
+        final visibleCount = _bookings.length;
+
+        if (totalCount != null) {
+          _hasMoreBookings = visibleCount < totalCount;
+        } else {
+          _hasMoreBookings = newItems.length >= 20;
+        }
+      });
+    }
+  }
+
+  int? _extractTotalCount(dynamic response) {
+    int? parseInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
+    Map<String, dynamic>? asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return value.map((k, v) => MapEntry(k.toString(), v));
+      }
+      return null;
+    }
+
+    final root = asMap(response);
+    if (root == null) return null;
+
+    final rootKeys = ['total', 'count', 'records_total', 'recordsTotal'];
+    for (final key in rootKeys) {
+      final parsed = parseInt(root[key]);
+      if (parsed != null && parsed >= 0) return parsed;
+    }
+
+    final data = asMap(root['data']);
+    if (data != null) {
+      for (final key in rootKeys) {
+        final parsed = parseInt(data[key]);
+        if (parsed != null && parsed >= 0) return parsed;
+      }
+    }
+
+    final pagination = asMap(root['pagination']) ?? asMap(data?['pagination']);
+    if (pagination != null) {
+      final parsed = parseInt(pagination['total']);
+      if (parsed != null && parsed >= 0) return parsed;
+    }
+
+    final meta = asMap(root['meta']) ?? asMap(data?['meta']);
+    if (meta != null) {
+      final parsed = parseInt(meta['total']);
+      if (parsed != null && parsed >= 0) return parsed;
+    }
+
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: Column(
+        children: [
+          // Header
+          _buildHeader(),
+
+          // Content
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? _buildErrorView()
+                    : _buildBookingsList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    final width = MediaQuery.sizeOf(context).width;
+    final isCompact = width < 900;
+    final searchWidth = (width * 0.25).clamp(180.0, 280.0).toDouble();
+
+    final searchField = TextField(
+      controller: _searchController,
+      onChanged: (_) {
+        _syncSearchQueryFromInput(normalizeController: true);
+        _searchDebounce?.cancel();
+        _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+          if (mounted) {
+            setState(() {});
+            _loadData();
+          }
+        });
+      },
+      onSubmitted: (value) {
+        _syncSearchQueryFromInput(normalizeController: true);
+        _loadData();
+      },
+      decoration: InputDecoration(
+        hintText: _tr(
+          'بحث برقم الطلب (مثال: #258469)',
+          'Search by order ID (e.g. #258469)',
+        ),
+        isDense: true,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        prefixIcon: const Icon(Icons.search, size: 18),
+        suffixIcon: _searchController.text.isNotEmpty
+            ? IconButton(
+                onPressed: () {
+                  _searchController.clear();
+                  _searchQuery = '';
+                  _loadData();
+                },
+                icon: const Icon(Icons.clear, size: 18),
+              )
+            : null,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+
+    return Container(
+      padding:
+          EdgeInsets.symmetric(horizontal: isCompact ? 12 : 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: isCompact
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: widget.onBack,
+                      icon: const Icon(LucideIcons.chevronRight, size: 24),
+                      color: const Color(0xFFF58220),
+                    ),
+                    Expanded(
+                      child: Text(
+                        translationService.t('orders'),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF1E293B),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _loadData,
+                      icon: const Icon(Icons.refresh),
+                      tooltip:
+                          '${translationService.t('search')} ($_rawResponsesTrackedCount)',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                searchField,
+              ],
+            )
+          : Row(
+              children: [
+                TextButton.icon(
+                  onPressed: widget.onBack,
+                  icon: const Icon(LucideIcons.chevronRight, size: 28),
+                  label: Text(
+                    translationService.t('back'),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFF58220),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  translationService.t('orders'),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+                const Spacer(),
+                SizedBox(width: searchWidth, child: searchField),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _loadData,
+                  icon: const Icon(Icons.refresh),
+                  tooltip:
+                      '${translationService.t('search')} ($_rawResponsesTrackedCount)',
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(LucideIcons.alertCircle, size: 64, color: Colors.red.shade300),
+          const SizedBox(height: 16),
+          Text(
+            translationService.t('error'),
+            style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.red.shade700),
+          ),
+          const SizedBox(height: 8),
+          Text(_error!, style: TextStyle(color: Colors.grey.shade600)),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _loadData,
+            icon: const Icon(LucideIcons.refreshCw),
+            label: Text(translationService.t('try_again')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBookingsList() {
+    if (_bookings.isEmpty) {
+      return _buildEmptyView(translationService.t('no_orders_today'));
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      child: ListView.builder(
+        controller: _bookingScrollController,
+        padding: const EdgeInsets.all(16),
+        itemCount: _bookings.length + (_hasMoreBookings ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index >= _bookings.length) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: _isLoadingMore
+                    ? const CircularProgressIndicator()
+                    : const SizedBox.shrink(),
+              ),
+            );
+          }
+          final booking = _bookings[index];
+          return _buildCleanBookingCard(booking);
+        },
+      ),
+    );
+  }
+
+  Widget _buildCleanBookingCard(Booking booking) {
+    final statusLabel = _resolveOrderStatusLabel(booking);
+    final statusColor = _resolveOrderStatusColor(booking);
+    final dateLabel = _formatBookingDate(booking);
+    final canCreateInvoice = _canCreateInvoiceForBooking(booking);
+    final canEditOrder = canCreateInvoice &&
+        !isOrderLockedValue(booking.status) &&
+        !isOrderLockedValue(booking.raw['status']);
+    final isPaying = _payingBookingIds.contains(booking.id);
+
+    return InkWell(
+      onTap: () => _showBookingDetails(booking.id),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _bookingReference(booking),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    statusLabel,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              dateLabel,
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            if (booking.customerName != null &&
+                booking.customerName!.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(LucideIcons.user, size: 16, color: Colors.grey[500]),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      booking.customerName!.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (booking.tableName != null &&
+                booking.tableName!.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(LucideIcons.layoutGrid,
+                      size: 16, color: Colors.grey[500]),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _tr('طاولة: ${booking.tableName}',
+                          'Table: ${booking.tableName}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const Divider(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _tr('الإجمالي', 'Total'),
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${_amountFormatter.format(_bookingGrandTotal(booking))} ${ApiConstants.currency}',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFF58220),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => _showBookingDetails(booking.id),
+                      icon: const Icon(LucideIcons.fileText, size: 16),
+                      label: Text(_tr('عرض التفاصيل', 'View details')),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF2563EB),
+                      ),
+                    ),
+                    if (canCreateInvoice)
+                      OutlinedButton.icon(
+                        onPressed: canEditOrder
+                            ? () => _showEditOrderDialog(booking)
+                            : null,
+                        icon: const Icon(LucideIcons.edit3, size: 16),
+                        label: Text(_tr('تعديل الطلب', 'Edit Order')),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            if (canCreateInvoice) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: isPaying
+                        ? null
+                        : () => _showCreateInvoiceDialog(booking),
+                    icon: isPaying
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.receipt, size: 16),
+                    label: Text(
+                      isPaying
+                          ? _tr('جارٍ الإنشاء...', 'Creating...')
+                          : _tr('إنشاء فاتورة', 'Create Invoice'),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _cancelBooking(booking),
+                    icon: const Icon(LucideIcons.xCircle, size: 16),
+                    label: Text(_tr('إلغاء الحجز', 'Cancel Booking')),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFEF4444),
+                      side: const BorderSide(color: Color(0xFFEF4444)),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _showBookingRefundDialog(booking),
+                    icon: const Icon(LucideIcons.refreshCw, size: 16),
+                    label: Text(_tr('استرجاع', 'Refund')),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFDC2626),
+                      side: const BorderSide(color: Color(0xFFDC2626)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _cancelBooking(Booking booking) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(_tr('إلغاء الحجز', 'Cancel Booking')),
+        content: Text(_tr(
+          'هل أنت متأكد من إلغاء هذا الحجز؟',
+          'Are you sure you want to cancel this booking?',
+        )),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_tr('لا', 'No')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+            ),
+            child: Text(_tr('نعم، إلغاء', 'Yes, Cancel')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await _orderService.updateBookingStatus(
+        orderId: booking.id.toString(),
+        status: 8,
+      );
+
+      // Print cancellation ticket to kitchen
+      if (widget.onPrintOrderChanges != null) {
+        try {
+          final details = await _orderService.getBookingDetails(booking.id.toString());
+          final detailData = details['data'] is Map
+              ? (details['data'] as Map).map((k, v) => MapEntry(k.toString(), v))
+              : details;
+          final bookingNode = detailData['booking'] is Map
+              ? (detailData['booking'] as Map).map((k, v) => MapEntry(k.toString(), v))
+              : detailData;
+
+          final mealsList = (bookingNode['booking_meals'] ?? bookingNode['meals'] ?? bookingNode['items'] ?? detailData['booking_meals']) as List?;
+          if (mealsList != null && mealsList.isNotEmpty) {
+            final cancelChanges = mealsList.map((meal) {
+              final m = meal is Map ? meal.map((k, v) => MapEntry(k.toString(), v)) : <String, dynamic>{};
+              final name = m['meal_name']?.toString() ?? m['name']?.toString() ?? m['item_name']?.toString() ?? '';
+              final qty = int.tryParse(m['quantity']?.toString() ?? '1') ?? 1;
+              return OrderChange(type: 'cancel', name: name, quantity: qty);
+            }).toList();
+            final orderNum = booking.orderNumber ?? booking.bookingNumberRaw ?? booking.id.toString();
+            widget.onPrintOrderChanges!(cancelChanges, orderNum);
+          }
+        } catch (e) {
+          debugPrint('⚠️ Could not print cancellation ticket: $e');
+        }
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_tr('تم إلغاء الحجز', 'Booking cancelled'))),
+      );
+      _loadData();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_tr('فشل إلغاء الحجز', 'Failed to cancel booking'))),
+      );
+    }
+  }
+
+  Future<void> _showBookingRefundDialog(Booking booking) async {
+    final refundedPreTax = await showBookingRefundDialog(
+      context: context,
+      bookingId: booking.id.toString(),
+      bookingLabel: _bookingReference(booking),
+    );
+    if (refundedPreTax != null && refundedPreTax > 0 && mounted) {
+      _bookingRefundedAmounts[booking.id] =
+          (_bookingRefundedAmounts[booking.id] ?? 0) + refundedPreTax;
+      await _loadData();
+      // Also recalculate from refund preview (remaining items) for accuracy
+      try {
+        final preview = await _orderService.showBookingRefund(booking.id.toString());
+        final collection = (preview['data'] is Map
+            ? (preview['data'] as Map)['collection']
+            : null) as List?;
+        if (collection != null) {
+          double remainingPreTax = 0;
+          for (final item in collection) {
+            if (item is Map) {
+              remainingPreTax += _parseNum(item['price']);
+            }
+          }
+          // Override local tracking with accurate server data
+          final originalPreTax = _bookingOriginalTotal(booking);
+          if (originalPreTax > 0) {
+            _bookingRefundedAmounts[booking.id] = originalPreTax - remainingPreTax;
+          }
+          if (mounted) setState(() {});
+        }
+      } catch (_) {}
+    }
+  }
+
+  double _bookingOriginalTotal(Booking booking) {
+    if (booking.meals.isNotEmpty) {
+      double sum = 0;
+      for (final meal in booking.meals) {
+        sum += meal.total > 0 ? meal.total : (meal.unitPrice * meal.quantity);
+      }
+      return sum;
+    }
+    return booking.total;
+  }
+
+  String _formatBookingDate(Booking booking) {
+    final raw =
+        booking.date.trim().isNotEmpty ? booking.date : booking.createdAt;
+    if (raw.isEmpty) return _tr('بدون تاريخ', 'No date');
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    return DateFormat('yyyy-MM-dd HH:mm').format(parsed);
+  }
+
+  double _bookingGrandTotal(Booking booking) {
+    final raw = booking.raw;
+    double base;
+    // 1. Try grand_total directly from API
+    final gt = double.tryParse(raw['grand_total']?.toString() ?? '');
+    if (gt != null && gt > 0) {
+      base = gt;
+    } else if (booking.tax > 0) {
+      // 2. Try total + tax
+      base = booking.total + booking.tax;
+    } else if (booking.meals.isNotEmpty) {
+      // 3. Calculate from meals: sum prices and add 15% tax
+      double sum = 0;
+      for (final meal in booking.meals) {
+        sum += meal.total > 0 ? meal.total : (meal.unitPrice * meal.quantity);
+      }
+      base = sum > 0 ? sum * 1.15 : booking.total;
+    } else if (booking.total > 0) {
+      // 4. Fallback: total * 1.15
+      base = booking.total * 1.15;
+    } else {
+      base = booking.total;
+    }
+    // Subtract locally tracked refund amounts (pre-tax → multiply by 1.15)
+    final refundedPreTax = _bookingRefundedAmounts[booking.id];
+    if (refundedPreTax != null && refundedPreTax > 0) {
+      base = (base - refundedPreTax * 1.15).clamp(0.0, double.infinity);
+    }
+    return base;
+  }
+
+  String _resolveOrderStatusLabel(Booking booking) {
+    final orderNode = booking.raw['order'] is Map
+        ? (booking.raw['order'] as Map).map((k, v) => MapEntry(k.toString(), v))
+        : null;
+    final bookingNode = booking.raw['booking'] is Map
+        ? (booking.raw['booking'] as Map)
+            .map((k, v) => MapEntry(k.toString(), v))
+        : null;
+    final apiStatusCandidates = <String>[
+      booking.raw['status_display']?.toString().trim() ?? '',
+      orderNode?['status_display']?.toString().trim() ?? '',
+      bookingNode?['status_display']?.toString().trim() ?? '',
+    ].where((value) => value.isNotEmpty);
+    if (apiStatusCandidates.isNotEmpty) {
+      return apiStatusCandidates.first;
+    }
+    switch (booking.status.toLowerCase()) {
+      case '1':
+      case 'confirmed':
+      case 'new':
+      case 'pending':
+        return _tr('حجز مؤكد', 'Confirmed');
+      case '2':
+      case 'started':
+        return _tr('بدأ', 'Started');
+      case '3':
+        return _tr('انتهي', 'Ended');
+      case '4':
+      case 'preparing':
+      case 'processing':
+        return translationService.t('preparing_status');
+      case '5':
+      case 'ready':
+      case 'ready_for_delivery':
+        return _tr('جاهز للتوصيل', 'Ready for delivery');
+      case '6':
+      case 'on_the_way':
+      case 'out_for_delivery':
+        return translationService.t('on_the_way');
+      case '7':
+      case 'finished':
+      case 'done':
+      case 'completed':
+        return translationService.t('completed_status');
+      case '8':
+      case 'cancelled':
+      case 'canceled':
+        return translationService.t('cancelled_status');
+      default:
+        return booking.status;
+    }
+  }
+
+  Color _resolveOrderStatusColor(Booking booking) {
+    final display =
+        booking.raw['status_display']?.toString().toLowerCase() ?? '';
+    if (display.contains('ملغي') || display.contains('cancel')) {
+      return const Color(0xFFEF4444);
+    }
+    switch (booking.status.toLowerCase()) {
+      case '1':
+      case 'pending':
+      case 'confirmed':
+        return const Color(0xFFF59E0B);
+      case '2':
+      case 'started':
+        return const Color(0xFF3B82F6);
+      case '3':
+        return const Color(0xFF22C55E);
+      case '4':
+      case 'preparing':
+      case 'processing':
+        return const Color(0xFF3B82F6);
+      case '5':
+      case 'ready':
+      case 'ready_for_delivery':
+        return const Color(0xFF16A34A);
+      case '6':
+      case 'on_the_way':
+      case 'out_for_delivery':
+        return const Color(0xFF0EA5E9);
+      case '7':
+      case 'finished':
+      case 'done':
+      case 'completed':
+        return const Color(0xFF15803D);
+      case '8':
+      case 'cancelled':
+      case 'canceled':
+        return const Color(0xFFEF4444);
+      default:
+        return const Color(0xFF64748B);
+    }
+  }
+
+  Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((k, v) => MapEntry(k.toString(), v));
+    }
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _loadRefundedMealsForBooking(
+    int orderId,
+  ) async {
+    try {
+      return await _orderService.getRefundedMeals(
+        bookingId: orderId.toString(),
+      );
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<void> _showBookingDetails(int orderId) async {
+    try {
+      final details = await _orderService.getBookingDetails(orderId.toString());
+      final enrichedDetails = await _enrichBookingDetailsForDialog(
+        orderId: orderId,
+        details: details,
+      );
+      _orderDetailsRawResponse = enrichedDetails;
+      if (!mounted) return;
+      Booking? selectedBooking;
+      for (final booking in _bookings) {
+        if (booking.id == orderId) {
+          selectedBooking = booking;
+          break;
+        }
+      }
+      final canEdit = selectedBooking != null
+          ? _canCreateInvoiceForBooking(selectedBooking)
+          : false;
+      showDialog(
+        context: context,
+        builder: (context) => BookingDetailsDialog(
+          bookingData: enrichedDetails,
+          onEditOrder: canEdit && selectedBooking != null
+              ? () => _showEditOrderDialog(selectedBooking!)
+              : null,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Booking? localBooking;
+      for (final booking in _bookings) {
+        if (booking.id == orderId) {
+          localBooking = booking;
+          break;
+        }
+      }
+
+      if (localBooking != null) {
+        List<Map<String, dynamic>> invoiceItems = const [];
+        double? invoiceTax;
+        double? invoiceGrandTotal;
+        try {
+          final invoiceId = await _resolveInvoiceIdForBooking(orderId);
+          if (invoiceId != null) {
+            final invoiceDetails =
+                await _orderService.getInvoice(invoiceId.toString());
+            final invoicePayload = invoiceDetails['data'];
+            final invoiceMap = invoicePayload is Map
+                ? (invoicePayload['invoice'] is Map
+                    ? (invoicePayload['invoice'] as Map)
+                    : invoicePayload)
+                : null;
+            if (invoiceMap is Map) {
+              invoiceTax = _parseNum(invoiceMap['tax'] ?? invoiceMap['vat']);
+              invoiceGrandTotal = _parseNum(
+                invoiceMap['grand_total'] ??
+                    invoiceMap['invoice_total'] ??
+                    invoiceMap['total'],
+              );
+
+              final possibleItemKeys = [
+                'items',
+                'invoice_items',
+                'meals',
+                'booking_meals',
+                'booking_products',
+                'sales_meals',
+                'card',
+                'cart',
+              ];
+              for (final key in possibleItemKeys) {
+                final rawItems =
+                    invoiceMap[key] ?? (invoicePayload as Map)[key];
+                if (rawItems is List) {
+                  invoiceItems = rawItems
+                      .whereType<Map>()
+                      .map((e) => e.map((k, v) => MapEntry(k.toString(), v))
+                        ..putIfAbsent(
+                          'meal_name',
+                          () => e['name'] ?? e['item_name'],
+                        ))
+                      .toList();
+                  if (invoiceItems.isNotEmpty) break;
+                }
+              }
+            }
+          }
+        } catch (_) {
+          // Keep local fallback only.
+        }
+
+        if (!mounted) return;
+        final refundedMeals = await _loadRefundedMealsForBooking(orderId);
+        final rawItems = invoiceItems.isNotEmpty
+            ? invoiceItems
+            : localBooking.meals
+                .map(
+                  (m) => {
+                    'id': m.id,
+                    'meal_id': m.mealId,
+                    'meal_name': m.mealName,
+                    'quantity': m.quantity,
+                    'unit_price': m.unitPrice,
+                    'total': m.total,
+                    'notes': m.notes,
+                  },
+                )
+                .toList();
+        final fallbackData = {
+          'data': {
+            'id': localBooking.id,
+            'order_number': localBooking.orderNumber ?? localBooking.id,
+            'status': localBooking.status,
+            'date': localBooking.date,
+            'total': localBooking.total,
+            'tax': invoiceTax ?? localBooking.tax,
+            'discount': localBooking.discount,
+            'grand_total': invoiceGrandTotal ?? localBooking.total,
+            'customer_name': localBooking.customerName,
+            'customer_phone': localBooking.customerPhone,
+            'table_name': localBooking.tableName,
+            'notes': localBooking.notes,
+            'meals': rawItems,
+            if (refundedMeals.isNotEmpty) 'refunded_meals': refundedMeals,
+          },
+        };
+        showDialog(
+          context: context,
+          builder: (context) => BookingDetailsDialog(
+            bookingData: fallbackData,
+            onEditOrder: localBooking != null &&
+                    _canCreateInvoiceForBooking(localBooking)
+                ? () => _showEditOrderDialog(localBooking!)
+                : null,
+          ),
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _tr(
+                'تعذر تحميل التفاصيل من السيرفر، تم عرض البيانات المحلية',
+                'Server details unavailable, local data is shown instead.',
+              ),
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              'تعذر جلب تفاصيل الطلب: $e',
+              'Unable to fetch order details: $e',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _showEditOrderDialog(Booking booking) async {
+    final canEditPayLater = _canCreateInvoiceForBooking(booking);
+    if (!canEditPayLater) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_tr(
+            'التعديل مسموح فقط لطلبات الدفع لاحقاً وغير مدفوعة',
+            'Editing is allowed only for unpaid pay-later orders',
+          )),
+        ),
+      );
+      return;
+    }
+    final locked = isOrderLockedValue(booking.status) ||
+        isOrderLockedValue(booking.raw['status']);
+    if (locked) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_tr('لا يمكن تعديل الطلب بعد إغلاقه',
+              'Order can no longer be edited')),
+        ),
+      );
+      return;
+    }
+
+    Map<String, dynamic> details;
+    try {
+      final rawDetails =
+          await _orderService.getBookingDetails(booking.id.toString());
+      details = await _enrichBookingDetailsForDialog(
+        orderId: booking.id,
+        details: rawDetails,
+      );
+    } catch (e) {
+      details = {
+        'data': {
+          'id': booking.id,
+          'order_number': booking.orderNumber ?? booking.id,
+          'status': booking.status,
+          'type': booking.type,
+          'notes': booking.notes,
+          'meals': booking.meals
+              .map(
+                (m) => {
+                  'id': m.id,
+                  'meal_id': m.mealId,
+                  'meal_name': m.mealName,
+                  'quantity': m.quantity,
+                  'unit_price': m.unitPrice,
+                  'total': m.total,
+                  'notes': m.notes,
+                },
+              )
+              .toList(),
+        },
+      };
+      if (mounted) {
+        final message = ErrorHandler.toUserMessage(
+          e,
+          fallback: _tr(
+            'تعذر تحميل التفاصيل من السيرفر، تم عرض البيانات المحلية',
+            'Server details unavailable, local data is shown instead.',
+          ),
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    }
+
+    if (!mounted) return;
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (context) => EditOrderDialog(
+        booking: booking,
+        bookingData: details,
+        onPrintChanges: widget.onPrintOrderChanges,
+      ),
+    );
+
+    if (updated == true) {
+      await _loadData();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_tr('تم تحديث الطلب', 'Order updated')),
+        ),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _enrichBookingDetailsForDialog({
+    required int orderId,
+    required Map<String, dynamic> details,
+  }) async {
+    var payload = details['data'] is Map
+        ? Map<String, dynamic>.from(details['data'] as Map)
+        : Map<String, dynamic>.from(details);
+    // API nests booking data inside 'booking' key — flatten it so the dialog
+    // can find id, booking_number, daily_order_number, etc. at the top level.
+    if (payload['booking'] is Map && payload['id'] == null) {
+      final inner = Map<String, dynamic>.from(payload['booking'] as Map);
+      for (final e in payload.entries) {
+        if (e.key != 'booking') inner.putIfAbsent(e.key, () => e.value);
+      }
+      payload = inner;
+    }
+    // Ensure orderId is always present
+    payload['id'] ??= orderId;
+
+    String? resolveLocalized(dynamic value) {
+      if (value == null) return null;
+      if (value is Map) {
+        final langCode = translationService.currentLanguageCode
+            .trim()
+            .toLowerCase();
+        final useAr =
+            langCode.startsWith('ar') || langCode.startsWith('ur');
+        final preferred = useAr ? 'ar' : 'en';
+        final localized = value[preferred]?.toString().trim();
+        if (localized != null && localized.isNotEmpty) return localized;
+        for (final v in value.values) {
+          final s = v?.toString().trim() ?? '';
+          if (s.isNotEmpty) return s;
+        }
+        return null;
+      }
+      var s = value.toString().trim();
+      if (s.startsWith('{') && s.contains('"ar"')) {
+        try {
+          final parsed = Map<String, dynamic>.from(jsonDecode(s) as Map);
+          return resolveLocalized(parsed);
+        } catch (_) {}
+      }
+      return s.isNotEmpty ? s : null;
+    }
+
+    String? pickMealName(Map<String, dynamic> normalized) {
+      final mealMap = normalized['meal'] is Map
+          ? (normalized['meal'] as Map)
+          : null;
+      return resolveLocalized(normalized['meal_name']) ??
+          resolveLocalized(normalized['name']) ??
+          resolveLocalized(normalized['item_name']) ??
+          (mealMap != null ? resolveLocalized(mealMap['name']) : null);
+    }
+
+    // Build a lookup from booking_meals by meal_id for price enrichment
+    Map<String, Map<String, dynamic>> buildPriceLookup(dynamic source) {
+      if (source is! Map) return const {};
+      final m = source.map((k, v) => MapEntry(k.toString(), v));
+      final lookup = <String, Map<String, dynamic>>{};
+      for (final key in ['booking_meals', 'meals', 'items']) {
+        final raw = m[key];
+        if (raw is! List) continue;
+        for (final item in raw) {
+          if (item is! Map) continue;
+          final row = item.map((k, v) => MapEntry(k.toString(), v));
+          final id = (row['id'] ?? row['meal_id'])?.toString();
+          if (id != null && id.isNotEmpty) lookup[id] = row;
+        }
+      }
+      return lookup;
+    }
+
+    void enrichWithPrice(Map<String, dynamic> item, Map<String, Map<String, dynamic>> priceLookup) {
+      final hasPrice = item['price'] != null || item['unit_price'] != null || item['total'] != null;
+      if (hasPrice) return;
+      // Try to find price from booking_meals by meal_id or id
+      final mealId = (item['meal_id'] ?? item['id'])?.toString();
+      if (mealId != null && priceLookup.containsKey(mealId)) {
+        final src = priceLookup[mealId]!;
+        item['price'] ??= src['price'];
+        item['unit_price'] ??= src['unit_price'] ?? src['price'];
+        item['total'] ??= src['total'] ?? src['price'];
+      }
+      // Also try nested meal object
+      if (item['price'] == null && item['meal'] is Map) {
+        final mealObj = (item['meal'] as Map);
+        item['price'] ??= mealObj['price'];
+        item['unit_price'] ??= mealObj['unit_price'] ?? mealObj['price'];
+        item['total'] ??= mealObj['price'];
+      }
+    }
+
+    List<Map<String, dynamic>> extractItems(dynamic source) {
+      if (source is! Map) return const [];
+      final map = source.map((k, v) => MapEntry(k.toString(), v));
+      final priceLookup = buildPriceLookup(source);
+      final sections = map['sections'];
+      if (sections is List) {
+        final sectionItems = <Map<String, dynamic>>[];
+        for (final section in sections) {
+          if (section is! Map) continue;
+          final sectionMap = section.map((k, v) => MapEntry(k.toString(), v));
+          final items = sectionMap['items'];
+          if (items is List) {
+            for (final item in items) {
+              if (item is Map) {
+                final normalized =
+                    item.map((k, v) => MapEntry(k.toString(), v));
+                final resolvedName = pickMealName(normalized);
+                if (resolvedName != null) {
+                  normalized['meal_name'] = resolvedName;
+                }
+                enrichWithPrice(normalized, priceLookup);
+                sectionItems.add(normalized);
+              }
+            }
+          }
+        }
+        if (sectionItems.isNotEmpty) return sectionItems;
+      }
+      const keys = [
+        'meals',
+        'booking_meals',
+        'booking_products',
+        'booking_items',
+        'items',
+        'invoice_items',
+        'sales_meals',
+        'card',
+        'cart',
+      ];
+      for (final key in keys) {
+        final raw = map[key];
+        if (raw is List) {
+          final rows = raw.whereType<Map>().map((e) {
+            final normalized = e.map((k, v) => MapEntry(k.toString(), v));
+            final resolvedName = pickMealName(normalized);
+            if (resolvedName != null) {
+              normalized['meal_name'] = resolvedName;
+            }
+            return normalized;
+          }).toList();
+          if (rows.isNotEmpty) return rows;
+        }
+      }
+      return const [];
+    }
+
+    final hasItems = extractItems(payload).isNotEmpty;
+    final currentTax = _parseNum(
+      payload['tax'] ??
+          payload['vat'] ??
+          payload['tax_value'] ??
+          payload['tax_amount'],
+    );
+    final hasTax = currentTax > 0;
+    final refundedMeals = await _loadRefundedMealsForBooking(orderId);
+
+    try {
+      final invoiceId = await _resolveInvoiceIdForBooking(orderId);
+      if (invoiceId != null) {
+        Map<String, dynamic> invoiceDetails;
+        try {
+          invoiceDetails = await _orderService.getInvoice(invoiceId.toString());
+        } catch (_) {
+          invoiceDetails =
+              await _orderService.getInvoiceHelper(invoiceId.toString());
+        }
+
+        final invoicePayload = invoiceDetails['data'];
+        final invoicePayloadMap = invoicePayload is Map
+            ? invoicePayload.map((k, v) => MapEntry(k.toString(), v))
+            : <String, dynamic>{};
+        final invoiceData = invoicePayloadMap['invoice'] is Map
+            ? (invoicePayloadMap['invoice'] as Map)
+                .map((k, v) => MapEntry(k.toString(), v))
+            : Map<String, dynamic>.from(invoicePayloadMap);
+
+        final invoiceItems = extractItems(invoiceData).isNotEmpty
+            ? extractItems(invoiceData)
+            : extractItems(invoicePayloadMap);
+        if (invoiceItems.isNotEmpty) {
+          payload['meals'] = invoiceItems;
+        } else if (!hasItems) {
+          payload['meals'] = const <Map<String, dynamic>>[];
+        }
+
+        final invoiceTaxValue = invoiceData['tax'] ??
+            invoiceData['vat'] ??
+            invoiceData['tax_value'] ??
+            invoiceData['tax_amount'] ??
+            invoicePayloadMap['tax'] ??
+            invoicePayloadMap['tax_value'];
+        if (_parseNum(invoiceTaxValue) > 0) {
+          payload['tax'] = invoiceTaxValue;
+        } else if (!hasTax && currentTax > 0) {
+          payload['tax'] = currentTax;
+        }
+
+        final invoiceSubtotalValue = invoiceData['sub_total'] ??
+            invoiceData['total_before_tax'] ??
+            invoicePayloadMap['sub_total'] ??
+            invoicePayloadMap['total_before_tax'];
+        if (_parseNum(invoiceSubtotalValue) > 0) {
+          payload['total'] = invoiceSubtotalValue;
+        } else {
+          // Calculate subtotal = grand_total - tax when sub_total is missing
+          final invoiceTotal = _parseNum(
+            invoiceData['grand_total'] ??
+                invoiceData['invoice_total'] ??
+                invoiceData['total'] ??
+                invoicePayloadMap['grand_total'] ??
+                invoicePayloadMap['total'],
+          );
+          final invoiceTax = _parseNum(
+            invoiceData['tax'] ??
+                invoiceData['vat'] ??
+                invoiceData['tax_value'] ??
+                invoicePayloadMap['tax'] ??
+                invoicePayloadMap['tax_value'],
+          );
+          if (invoiceTotal > 0 && invoiceTax > 0) {
+            payload['total'] = invoiceTotal - invoiceTax;
+          } else if (invoiceTotal > 0 && _parseNum(payload['total']) <= 0) {
+            payload['total'] = invoiceTotal;
+          }
+        }
+
+        final invoiceGrandTotalValue = invoiceData['grand_total'] ??
+            invoiceData['invoice_total'] ??
+            invoiceData['final_total'] ??
+            invoiceData['total'] ??
+            invoicePayloadMap['grand_total'] ??
+            invoicePayloadMap['invoice_total'] ??
+            invoicePayloadMap['final_total'] ??
+            invoicePayloadMap['total'];
+        if (_parseNum(invoiceGrandTotalValue) > 0) {
+          payload['grand_total'] = invoiceGrandTotalValue;
+        } else if (_parseNum(payload['grand_total']) <= 0) {
+          payload['grand_total'] = payload['total'];
+        }
+
+        final invoiceNumber = (invoiceData['invoice_number'] ??
+                invoicePayloadMap['invoice_number'])
+            ?.toString()
+            .trim();
+        if (invoiceNumber != null && invoiceNumber.isNotEmpty) {
+          payload['invoice_number'] = invoiceNumber;
+        }
+
+        final invoiceStatus =
+            (invoiceData['status'] ?? invoicePayloadMap['status'])
+                ?.toString()
+                .trim();
+        if (invoiceStatus != null && invoiceStatus.isNotEmpty) {
+          payload['invoice_status'] = invoiceStatus;
+        }
+
+        payload['invoice_id'] ??=
+            invoiceData['id'] ?? invoicePayloadMap['id'] ?? invoiceId;
+      }
+    } catch (_) {
+      // Keep available booking payload.
+    }
+
+    // Pass raw items + refunded_meals separately.
+    // BookingDetailsDialog._extractMeals handles the single merge.
+    if (refundedMeals.isNotEmpty) {
+      payload['refunded_meals'] = refundedMeals;
+    }
+
+    return {'data': payload};
+  }
+
+  Future<int?> _resolveInvoiceIdForBooking(int orderId) async {
+    final bookingIdText = orderId.toString();
+
+    // 1) Dedicated booking->invoice endpoint.
+    try {
+      final invoice = await _orderService.getBookingInvoice(bookingIdText);
+      _orderInvoiceRawResponse = invoice;
+      final directId = _extractInvoiceId(invoice, strict: false);
+      if (directId != null) return directId;
+    } catch (_) {
+      // Continue with fallbacks.
+    }
+
+    // 2) Booking details may include invoice_id.
+    try {
+      final bookingDetails =
+          await _orderService.getBookingDetails(bookingIdText);
+      final bookingData = bookingDetails['data'];
+      if (bookingData is Map) {
+        final normalized = bookingData.map((k, v) => MapEntry(k.toString(), v));
+        final idFromDetails = _extractInvoiceId(normalized, strict: false);
+        if (idFromDetails != null) return idFromDetails;
+      }
+    } catch (_) {
+      // Continue with list fallback.
+    }
+
+    // 3) Search invoices list and match by booking/order id.
+    try {
+      final invoicesResponse = await _orderService.getInvoices(
+        page: 1,
+        perPage: 100,
+        search: bookingIdText,
+      );
+      final list = _extractListResponse(invoicesResponse);
+      if (list is List) {
+        for (final row in list.whereType<Map>()) {
+          final item = row.map((k, v) => MapEntry(k.toString(), v));
+          final rowBookingId = item['booking_id']?.toString();
+          final rowOrderId = item['order_id']?.toString();
+          if (rowBookingId == bookingIdText || rowOrderId == bookingIdText) {
+            final invoiceId = _extractInvoiceId(item, strict: true);
+            if (invoiceId != null) return invoiceId;
+          }
+        }
+      }
+    } catch (_) {
+      // Final failure handled by caller.
+    }
+
+    return null;
+  }
+
+  int? _extractInvoiceId(
+    Map<String, dynamic> payload, {
+    bool strict = false,
+  }) {
+    int? parseId(dynamic idValue) {
+      if (idValue is int) return idValue;
+      if (idValue is String) return int.tryParse(idValue);
+      return null;
+    }
+
+    bool looksLikeInvoiceMap(Map<String, dynamic> map) {
+      if (map['invoice_id'] != null) return true;
+      if (map['invoice_number'] != null) return true;
+      if (map['invoice'] is Map) return true;
+      return false;
+    }
+
+    final directInvoiceId = parseId(payload['invoice_id']);
+    if (directInvoiceId != null) return directInvoiceId;
+
+    if (!strict && looksLikeInvoiceMap(payload)) {
+      final rootId = parseId(payload['id']);
+      if (rootId != null) return rootId;
+    }
+
+    final data = payload['data'];
+    if (data is Map) {
+      final normalized = data.map((k, v) => MapEntry(k.toString(), v));
+
+      final explicitId = parseId(normalized['invoice_id']);
+      if (explicitId != null) return explicitId;
+
+      final nestedInvoice = normalized['invoice'];
+      if (nestedInvoice is Map) {
+        final normalizedInvoice = nestedInvoice.map(
+          (k, v) => MapEntry(k.toString(), v),
+        );
+        final nestedId = parseId(
+          normalizedInvoice['invoice_id'] ?? normalizedInvoice['id'],
+        );
+        if (nestedId != null) return nestedId;
+      }
+
+      if (looksLikeInvoiceMap(normalized)) {
+        final mapId = parseId(normalized['id']);
+        if (mapId != null) return mapId;
+      }
+    }
+
+    if (data is List) {
+      for (final row in data.whereType<Map>()) {
+        final normalized = row.map((k, v) => MapEntry(k.toString(), v));
+
+        final explicitId = parseId(normalized['invoice_id']);
+        if (explicitId != null) return explicitId;
+
+        final nestedInvoice = normalized['invoice'];
+        if (nestedInvoice is Map) {
+          final normalizedInvoice = nestedInvoice.map(
+            (k, v) => MapEntry(k.toString(), v),
+          );
+          final nestedId = parseId(
+            normalizedInvoice['invoice_id'] ?? normalizedInvoice['id'],
+          );
+          if (nestedId != null) return nestedId;
+        }
+
+        if (looksLikeInvoiceMap(normalized)) {
+          final listId = parseId(normalized['id']);
+          if (listId != null) return listId;
+        }
+      }
+    }
+
+    if (!strict) {
+      final permissiveId = parseId(payload['id']);
+      if (permissiveId != null) return permissiveId;
+
+      // Fallback: data.id when response has no typical invoice fields
+      if (data is Map) {
+        final dataId = parseId(
+          (data as Map).map((k, v) => MapEntry(k.toString(), v))['id'],
+        );
+        if (dataId != null) return dataId;
+      }
+    }
+
+    return null;
+  }
+
+  dynamic _extractListResponse(dynamic response) {
+    if (response is List) return response;
+    if (response is! Map) return [];
+
+    if (response['data'] is List) return response['data'];
+    final data = response['data'];
+    if (data is Map) {
+      if (data['data'] is List) return data['data'];
+      if (data['items'] is List) return data['items'];
+    }
+    if (response['items'] is List) return response['items'];
+    return [];
+  }
+
+  double _parseNum(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    final cleaned = value
+        .toString()
+        .replaceAll(',', '')
+        .replaceAll(RegExp(r'[^0-9.\-]'), '')
+        .trim();
+    return double.tryParse(cleaned) ?? 0.0;
+  }
+
+  int get _rawResponsesTrackedCount =>
+      _bookingsRawResponse.length +
+      _orderDetailsRawResponse.length +
+      _orderInvoiceRawResponse.length +
+      _updateStatusRawResponse.length +
+      _updateDataRawResponse.length +
+      _singleWhatsAppRawResponse.length +
+      _multiWhatsAppRawResponse.length;
+
+  Widget _buildEmptyView(String message) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(LucideIcons.inbox, size: 64, color: Colors.grey[300]),
+          const SizedBox(height: 16),
+          Text(
+            translationService.t('no_data'),
+            style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 18,
+                fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: TextStyle(color: Colors.grey[500], fontSize: 14),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _loadData,
+            icon: const Icon(Icons.refresh),
+            label: Text(translationService.t('refresh')),
+          ),
+        ],
+      ),
+    );
+  }
+}
+/*
+class _BookingCard extends StatelessWidget {
+  final Booking booking;
+  final bool isSelected;
+  final bool isPaying;
+  final ValueChanged<bool> onSelectionChanged;
+  final VoidCallback? onViewInvoice;
+  final VoidCallback? onCreateInvoice;
+  final VoidCallback? onUpdateStatus;
+  final VoidCallback? onSendWhatsApp;
+
+  const _BookingCard({
+    required this.booking,
+    required this.isSelected,
+    required this.isPaying,
+    required this.onSelectionChanged,
+    this.onViewInvoice,
+    this.onCreateInvoice,
+    this.onUpdateStatus,
+    this.onSendWhatsApp,
+  });
+
+  String get _langCode =>
+      translationService.currentLanguageCode.trim().toLowerCase();
+  bool get _useArabicUi =>
+      _langCode.startsWith('ar') || _langCode.startsWith('ur');
+  String _tr(String ar, String nonArabic) => _useArabicUi ? ar : nonArabic;
+
+  String _formatDisplayOrderNumber(Booking booking) {
+    // IMPORTANT: Backend should provide daily_order_number in /bookings endpoint
+    // Currently it returns null, so we fall back to booking_id
+    // See: BACKEND_BOOKINGS_DAILY_ORDER_NUMBER_REQUEST.md
+    final order = booking.orderNumber?.trim();
+    if (order != null && order.isNotEmpty) {
+      return order.startsWith('#') ? order : '#$order';
+    }
+    final orderId = booking.orderId;
+    if (orderId != null && orderId > 0) {
+      return '#$orderId';
+    }
+    // Fallback: Show booking_id (not ideal, but better than nothing)
+    return '#${booking.id}';
+  }
+
+  bool _hasDistinctBookingReference(Booking booking) {
+    final bookingRef = booking.bookingNumber?.trim();
+    if (bookingRef == null || bookingRef.isEmpty) return false;
+
+    final normalizedBooking =
+        bookingRef.replaceAll(RegExp(r'[^0-9A-Za-z]'), '');
+    final normalizedOrder =
+        (booking.orderNumber ?? '').replaceAll(RegExp(r'[^0-9A-Za-z]'), '');
+
+    return normalizedBooking.isNotEmpty &&
+        normalizedBooking.toLowerCase() != normalizedOrder.toLowerCase();
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case '1':
+      case 'pending':
+      case 'confirmed':
+        return const Color(0xFFF59E0B);
+      case '2':
+      case 'started':
+        return const Color(0xFF3B82F6);
+      case '3':
+        return const Color(0xFF22C55E);
+      case '4':
+      case 'preparing':
+      case 'processing':
+        return const Color(0xFF3B82F6);
+      case '5':
+      case 'ready':
+      case 'ready_for_delivery':
+        return const Color(0xFF16A34A);
+      case '6':
+      case 'on_the_way':
+      case 'out_for_delivery':
+        return const Color(0xFF0EA5E9);
+      case '7':
+      case 'cooking':
+      case 'in_kitchen':
+      case 'finished':
+      case 'done':
+      case 'completed':
+        return const Color(0xFF15803D);
+      case '8':
+      case 'cancelled':
+      case 'canceled':
+        return const Color(0xFFEF4444);
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _resolvePreparationState(Booking booking) {
+    Map<String, dynamic>? asStringMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return value.map((k, v) => MapEntry(k.toString(), v));
+      }
+      return null;
+    }
+
+    bool isTruthy(dynamic value) {
+      if (value == null) return false;
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      final normalized = value.toString().trim().toLowerCase();
+      if (normalized.isEmpty || normalized == 'null') return false;
+      return normalized == '1' ||
+          normalized == 'true' ||
+          normalized == 'yes' ||
+          normalized == 'y' ||
+          normalized == 'on' ||
+          normalized == 'enabled' ||
+          normalized == 'active' ||
+          normalized == 'sent' ||
+          normalized == 'queued';
+    }
+
+    int? parseInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value.toString().trim());
+    }
+
+    List<Map<String, dynamic>> asMapList(dynamic value) {
+      if (value is! List) return const <Map<String, dynamic>>[];
+      return value
+          .whereType<Map>()
+          .map((row) => row.map((k, v) => MapEntry(k.toString(), v)))
+          .toList();
+    }
+
+    bool matchesAny(String value, List<String> keywords) {
+      for (final keyword in keywords) {
+        if (value == keyword || value.contains(keyword)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    String detectFrom(List<String> candidates) {
+      for (final value in candidates) {
+        if (matchesAny(value, [
+          '3',
+          '5',
+          '6',
+          'ready',
+          'ready_for_delivery',
+          'prepared',
+          'served',
+          'bumped',
+          'all_bumped',
+          'finished',
+          'done',
+          'completed',
+          'تم التحضير',
+          'تم التجهيز',
+          'جاهز',
+          'مكتمل',
+        ])) {
+          return 'prepared';
+        }
+      }
+
+      for (final value in candidates) {
+        if (matchesAny(value, [
+          '2',
+          'preparing',
+          'processing',
+          'confirmed',
+          'cooking',
+          'in_progress',
+          'accepted',
+          'queued',
+          'sent_to_kitchen',
+          'جاري التحضير',
+          'قيد التحضير',
+        ])) {
+          return 'preparing';
+        }
+      }
+
+      for (final value in candidates) {
+        if (matchesAny(value, ['8', 'cancelled', 'canceled', 'ملغي'])) {
+          return 'cancelled';
+        }
+      }
+
+      for (final value in candidates) {
+        if (matchesAny(value, ['1', 'new', 'pending', 'جديد'])) {
+          return 'new';
+        }
+      }
+      return '';
+    }
+
+    final orderNode = asStringMap(booking.raw['order']);
+    final bookingNode = asStringMap(booking.raw['booking']);
+    final orderPayloadNode = asStringMap(orderNode?['payload']);
+    final bookingPayloadNode = asStringMap(bookingNode?['payload']);
+
+    String inferFromItemProgress() {
+      final itemBuckets = <Map<String, dynamic>>[
+        ...asMapList(booking.raw['items']),
+        ...asMapList(booking.raw['meals']),
+        ...asMapList(booking.raw['card']),
+        ...asMapList(booking.raw['sales_meals']),
+        ...asMapList(booking.raw['booking_meals']),
+        ...asMapList(orderNode?['items']),
+        ...asMapList(orderNode?['meals']),
+        ...asMapList(bookingNode?['items']),
+        ...asMapList(bookingNode?['meals']),
+      ];
+
+      if (itemBuckets.isEmpty) return '';
+
+      var bumpedCount = 0;
+      var preparingCount = 0;
+
+      for (final item in itemBuckets) {
+        if (isTruthy(item['bumped']) ||
+            isTruthy(item['is_bumped']) ||
+            isTruthy(item['done']) ||
+            isTruthy(item['prepared'])) {
+          bumpedCount++;
+          continue;
+        }
+
+        final itemStatus = (item['status'] ?? item['kitchen_status'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        if (itemStatus.isNotEmpty && detectFrom([itemStatus]) == 'prepared') {
+          bumpedCount++;
+          continue;
+        }
+
+        if (itemStatus.isNotEmpty && detectFrom([itemStatus]) == 'preparing') {
+          preparingCount++;
+        }
+      }
+
+      if (bumpedCount > 0 && bumpedCount >= itemBuckets.length) {
+        return 'prepared';
+      }
+      if (bumpedCount > 0 || preparingCount > 0) {
+        return 'preparing';
+      }
+      return '';
+    }
+
+    final kitchenSpecificCandidates = <String>[
+      booking.raw['kitchen_status']?.toString() ?? '',
+      booking.raw['preparation_status']?.toString() ?? '',
+      booking.raw['kds_status']?.toString() ?? '',
+      booking.raw['kitchen_state']?.toString() ?? '',
+      booking.raw['kitchen_progress']?.toString() ?? '',
+      booking.raw['kitchen_display_status']?.toString() ?? '',
+      orderNode?['kitchen_status']?.toString() ?? '',
+      orderNode?['preparation_status']?.toString() ?? '',
+      orderNode?['kds_status']?.toString() ?? '',
+      bookingNode?['kitchen_status']?.toString() ?? '',
+      bookingNode?['preparation_status']?.toString() ?? '',
+      bookingNode?['kds_status']?.toString() ?? '',
+      orderPayloadNode?['kitchen_status']?.toString() ?? '',
+      orderPayloadNode?['preparation_status']?.toString() ?? '',
+      orderPayloadNode?['kds_status']?.toString() ?? '',
+      bookingPayloadNode?['kitchen_status']?.toString() ?? '',
+      bookingPayloadNode?['preparation_status']?.toString() ?? '',
+      bookingPayloadNode?['kds_status']?.toString() ?? '',
+    ]
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toList();
+
+    final kitchenState = detectFrom(kitchenSpecificCandidates);
+    if (kitchenState.isNotEmpty) {
+      return kitchenState;
+    }
+
+    final progressFromItems = inferFromItemProgress();
+    if (progressFromItems.isNotEmpty) {
+      return progressFromItems;
+    }
+
+    final totalItems = parseInt(
+          booking.raw['items_count'] ??
+              booking.raw['meals_count'] ??
+              booking.raw['products_count'] ??
+              orderNode?['items_count'] ??
+              bookingNode?['items_count'],
+        ) ??
+        0;
+    final bumpedItems = parseInt(
+          booking.raw['bumped_items_count'] ??
+              booking.raw['ready_items_count'] ??
+              booking.raw['completed_items_count'] ??
+              orderNode?['bumped_items_count'] ??
+              bookingNode?['bumped_items_count'],
+        ) ??
+        0;
+    if (totalItems > 0 && bumpedItems >= totalItems) {
+      return 'prepared';
+    }
+    if (bumpedItems > 0) {
+      return 'preparing';
+    }
+
+    final sentToKitchen = isTruthy(
+      booking.raw['sent_to_kitchen'] ??
+          booking.raw['kitchen_sent'] ??
+          booking.raw['kds_sent'] ??
+          booking.raw['sent_to_kds'] ??
+          booking.raw['kitchen_receipt_generated'] ??
+          orderNode?['sent_to_kitchen'] ??
+          orderNode?['kitchen_sent'] ??
+          orderNode?['kds_sent'] ??
+          bookingNode?['sent_to_kitchen'] ??
+          bookingNode?['kitchen_sent'] ??
+          bookingNode?['kds_sent'],
+    );
+    final kdsEnabled = isTruthy(
+      booking.raw['kds_enabled'] ??
+          booking.raw['has_kds'] ??
+          booking.raw['is_kds'] ??
+          orderNode?['kds_enabled'] ??
+          orderNode?['has_kds'] ??
+          bookingNode?['kds_enabled'] ??
+          bookingNode?['has_kds'],
+    );
+    if (sentToKitchen || kdsEnabled) {
+      return 'preparing';
+    }
+
+    final genericCandidates = <String>[
+      booking.raw['status_display']?.toString() ?? '',
+      orderNode?['status_display']?.toString() ?? '',
+      bookingNode?['status_display']?.toString() ?? '',
+      booking.status,
+    ]
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toList();
+
+    final genericState = detectFrom(genericCandidates);
+    return genericState.isNotEmpty ? genericState : 'new';
+  }
+
+  Color _getPreparationStateColor(String preparationState) {
+    switch (preparationState) {
+      case 'prepared':
+        return const Color(0xFF10B981);
+      case 'preparing':
+        return const Color(0xFF3B82F6);
+      case 'cancelled':
+        return const Color(0xFFEF4444);
+      default:
+        return const Color(0xFFF59E0B);
+    }
+  }
+
+  IconData _getPreparationStateIcon(String preparationState) {
+    switch (preparationState) {
+      case 'prepared':
+        return Icons.check_circle;
+      case 'preparing':
+        return Icons.restaurant;
+      case 'cancelled':
+        return Icons.cancel;
+      default:
+        return Icons.fiber_new;
+    }
+  }
+
+  String _getPreparationStateLabel(String preparationState) {
+    switch (preparationState) {
+      case 'prepared':
+        return translationService.t('booking_state_prepared');
+      case 'preparing':
+        return translationService.t('booking_state_preparing');
+      case 'cancelled':
+        return translationService.t('booking_state_cancelled');
+      default:
+        return translationService.t('booking_state_new');
+    }
+  }
+
+  String _resolveStatusLabel(Booking booking) {
+    final orderNode = booking.raw['order'] is Map
+        ? (booking.raw['order'] as Map).map((k, v) => MapEntry(k.toString(), v))
+        : null;
+    final bookingNode = booking.raw['booking'] is Map
+        ? (booking.raw['booking'] as Map)
+            .map((k, v) => MapEntry(k.toString(), v))
+        : null;
+    final apiStatusCandidates = <String>[
+      booking.raw['status_display']?.toString().trim() ?? '',
+      orderNode?['status_display']?.toString().trim() ?? '',
+      bookingNode?['status_display']?.toString().trim() ?? '',
+    ].where((value) => value.isNotEmpty);
+    if (apiStatusCandidates.isNotEmpty) {
+      return apiStatusCandidates.first;
+    }
+    switch (booking.status.toLowerCase()) {
+      case '1':
+      case 'confirmed':
+      case 'new':
+      case 'pending':
+        return _tr('حجز مؤكد', 'Confirmed');
+      case '2':
+      case 'started':
+        return _tr('بدأ', 'Started');
+      case '3':
+        return _tr('انتهي', 'Ended');
+      case '4':
+      case 'preparing':
+      case 'processing':
+        return translationService.t('preparing_status');
+      case '5':
+      case 'ready':
+      case 'ready_for_delivery':
+        return _tr('جاهز للتوصيل', 'Ready for delivery');
+      case '6':
+      case 'on_the_way':
+      case 'out_for_delivery':
+        return translationService.t('on_the_way');
+      case '7':
+      case 'finished':
+      case 'done':
+      case 'completed':
+        return translationService.t('completed_status');
+      case '8':
+      case 'cancelled':
+      case 'canceled':
+        return translationService.t('cancelled_status');
+      default:
+        return booking.status;
+    }
+  }
+
+  String _effectiveStatusKey(Booking booking, String preparationState) {
+    switch (preparationState) {
+      case 'prepared':
+        return 'ready';
+      case 'preparing':
+        return 'preparing';
+      case 'cancelled':
+        return 'cancelled';
+      default:
+        return booking.status.toLowerCase();
+    }
+  }
+
+  String _effectiveStatusLabel(Booking booking, String preparationState) {
+    switch (preparationState) {
+      case 'prepared':
+        return translationService.t('ready_status');
+      case 'preparing':
+        return translationService.t('preparing_status');
+      case 'cancelled':
+        return translationService.t('cancelled_status');
+      default:
+        return _resolveStatusLabel(booking);
+    }
+  }
+
+  String _resolveTypeLabel(Booking booking) {
+    final apiType = booking.raw['type_text']?.toString().trim();
+    if (apiType != null && apiType.isNotEmpty) {
+      return apiType;
+    }
+    switch (booking.type.toLowerCase()) {
+      case 'restaurant_pickup':
+        return translationService.t('pickup');
+      case 'restaurant_internal':
+      case 'restaurant_table':
+        return translationService.t('dine_in');
+      case 'restaurant_delivery':
+        return translationService.t('delivery');
+      case 'restaurant_parking':
+      case 'cars':
+      case 'car':
+        return translationService.t('car');
+      case 'services':
+      case 'restaurant_services':
+        return translationService.t('services_type');
+      default:
+        return booking.type;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final formatter = NumberFormat('#,##0.00', _useArabicUi ? 'ar' : 'en');
+    final preparationState = _resolvePreparationState(booking);
+    final preparationColor = _getPreparationStateColor(preparationState);
+    final preparationLabel = _getPreparationStateLabel(preparationState);
+    final preparationIcon = _getPreparationStateIcon(preparationState);
+    final effectiveStatusKey = _effectiveStatusKey(booking, preparationState);
+    final effectiveStatusLabel =
+        _effectiveStatusLabel(booking, preparationState);
+    final isCompactCard = MediaQuery.sizeOf(context).width < 560;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Checkbox(
+                  value: isSelected,
+                  activeColor: const Color(0xFFF58220),
+                  onChanged: (value) => onSelectionChanged(value ?? false),
+                ),
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _getStatusColor(effectiveStatusKey)
+                              .withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          effectiveStatusLabel,
+                          style: TextStyle(
+                            color: _getStatusColor(effectiveStatusKey),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          _resolveTypeLabel(booking),
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      // Show "Pay Later" badge when invoice can still be created.
+                      if (onCreateInvoice != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                LucideIcons.clock,
+                                size: 12,
+                                color: const Color(0xFFF59E0B),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _tr('دفع لاحقاً', 'Pay Later'),
+                                style: const TextStyle(
+                                  color: Color(0xFFF59E0B),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ConstrainedBox(
+                  constraints:
+                      BoxConstraints(maxWidth: isCompactCard ? 92 : 140),
+                  child: Text(
+                    _formatDisplayOrderNumber(booking),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      color: Colors.grey.shade500,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (booking.tableName != null)
+              Row(
+                children: [
+                  Icon(LucideIcons.layoutGrid,
+                      size: 16, color: Colors.grey.shade500),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      _tr('طاولة: ${booking.tableName}',
+                          'Table: ${booking.tableName}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  ),
+                ],
+              ),
+            const Divider(height: 24),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final stacked = constraints.maxWidth < 430;
+                final totalSection = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _tr('الإجمالي', 'Total'),
+                      style:
+                          TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                    ),
+                    Text(
+                      '${formatter.format(booking.total)} ${ApiConstants.currency}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFF58220),
+                      ),
+                    ),
+                  ],
+                );
+                final stateChip = Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: preparationColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(preparationIcon, color: preparationColor, size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        preparationLabel,
+                        style: TextStyle(
+                          color: preparationColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+
+                if (!stacked) {
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [totalSection, stateChip],
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    totalSection,
+                    const SizedBox(height: 8),
+                    Align(alignment: Alignment.centerRight, child: stateChip),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            // Calculate order types for button visibility
+            // Show "Create Invoice" button only for:
+            // 1. Pay Later orders (type = 'later' or 'postpaid' and not paid)
+            Builder(
+              builder: (context) {
+                final bool isPayLaterOrder = onCreateInvoice != null;
+
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (isPayLaterOrder)
+                      ElevatedButton.icon(
+                        onPressed: isPaying ? null : onCreateInvoice,
+                        icon: isPaying
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.receipt, size: 16),
+                        label: Text(
+                          isPaying
+                              ? _tr('جارٍ الإنشاء...', 'Creating...')
+                              : _tr('إنشاء فاتورة', 'Create Invoice'),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor:
+                              const Color(0xFF10B981), // Green for pay later
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    // Show "View Invoice" button for paid orders or orders with order_id
+                    if (booking.isPaid || booking.orderId != null)
+                      OutlinedButton.icon(
+                        onPressed: onViewInvoice,
+                        icon: const Icon(Icons.receipt_long, size: 16),
+                        label: Text(_tr('الفاتورة', 'Invoice')),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: onUpdateStatus,
+                      icon: const Icon(Icons.sync_alt, size: 16),
+                      label: Text(_tr('تحديث الحالة', 'Update Status')),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onSendWhatsApp,
+                      icon: const Icon(LucideIcons.messageCircle, size: 16),
+                      label: Text(translationService.t('whatsapp')),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF16A34A),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+*/

@@ -5,6 +5,7 @@ import '../services/display_app_service.dart';
 import '../locator.dart';
 import '../services/language_service.dart';
 import '../screens/qr_scanner_screen.dart';
+import '../services/app_themes.dart';
 
 class DisplayConnectionDialog extends StatefulWidget {
   const DisplayConnectionDialog({Key? key}) : super(key: key);
@@ -167,9 +168,9 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: context.appBg,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: context.appBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,7 +185,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
                 style: GoogleFonts.tajawal(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
-                  color: const Color(0xFF64748B),
+                  color: context.appTextMuted,
                 ),
               ),
             ],
@@ -219,7 +220,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
                       style: GoogleFonts.tajawal(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: const Color(0xFF1E293B),
+                        color: context.appText,
                       ),
                     ),
                     Text(
@@ -288,7 +289,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
           style: GoogleFonts.tajawal(
             fontSize: 15,
             fontWeight: FontWeight.bold,
-            color: const Color(0xFF1E293B),
+            color: context.appText,
           ),
         ),
         const SizedBox(height: 12),
@@ -478,7 +479,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
           style: GoogleFonts.tajawal(
             fontWeight: FontWeight.bold,
             fontSize: 16,
-            color: const Color(0xFF1E293B),
+            color: context.appText,
           ),
         ),
         const SizedBox(height: 16),
@@ -602,7 +603,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
                 textAlign: TextAlign.center,
                 style: GoogleFonts.tajawal(
                   fontSize: 11,
-                  color: const Color(0xFF94A3B8),
+                  color: context.appTextMuted,
                 ),
               ),
               if (isSelected)

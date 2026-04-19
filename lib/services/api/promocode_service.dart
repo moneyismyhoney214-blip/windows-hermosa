@@ -252,17 +252,25 @@ class PromoCodeService {
 
     final responses = <dynamic>[];
     try {
-      responses.add(await _client.get(ApiConstants.promocodesEndpoint));
-    } catch (_) {}
+      final r = await _client.get(ApiConstants.promocodesEndpoint);
+      print('🎟️ PROMO RAW [promocodes]: $r');
+      responses.add(r);
+    } catch (e) {
+      print('🎟️ PROMO ERR [promocodes]: $e');
+    }
     try {
-      responses
-          .add(await _client.get(ApiConstants.allPromocodesFilterEndpoint));
-    } catch (_) {}
+      final r = await _client.get(ApiConstants.allPromocodesFilterEndpoint);
+      print('🎟️ PROMO RAW [allPromocode]: $r');
+      responses.add(r);
+    } catch (e) {
+      print('🎟️ PROMO ERR [allPromocode]: $e');
+    }
 
     final merged = <PromoCode>[];
     final seen = <String>{};
     for (final response in responses) {
       for (final promo in _promosFromResponse(response)) {
+        print('🎟️ PROMO PARSED: id=${promo.id} code=${promo.code} discount=${promo.discount} type=${promo.type}');
         final key = '${promo.id}:${_normalizeCode(promo.code)}';
         if (seen.add(key)) {
           merged.add(promo);

@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
 import 'package:hermosa_pos/services/api/order_service.dart';
+import 'package:hermosa_pos/services/api/sync_api_service.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/locator.dart';
 
@@ -22,12 +24,15 @@ class SyncService extends ChangeNotifier {
   SyncService._internal();
 
   final OfflineDatabaseService _offlineDb = OfflineDatabaseService();
+  final OfflinePosDatabase _posDb = OfflinePosDatabase();
   final ConnectivityService _connectivity = ConnectivityService();
+  final SyncApiService _syncApi = SyncApiService();
   final BaseClient _client = BaseClient();
 
   bool _isSyncing = false;
   bool _isInitialized = false;
   int _pendingCount = 0;
+  int _pendingPosSalesCount = 0;
   String? _lastSyncError;
   DateTime? _lastSyncTime;
 
@@ -61,12 +66,17 @@ class SyncService extends ChangeNotifier {
         'SyncService initialized (pending: $_pendingCount)');
   }
 
+  /// Number of POS sales pending sync.
+  int get pendingPosSalesCount => _pendingPosSalesCount;
+
   Future<void> _refreshPendingCount() async {
     try {
       final orders = await _offlineDb.getUnsyncedOrders();
       final invoices = await _offlineDb.getUnsyncedInvoices();
       final queueItems = await _offlineDb.getPendingSyncItems();
-      _pendingCount = orders.length + invoices.length + queueItems.length;
+      _pendingPosSalesCount = await _posDb.getPendingSalesCount();
+      _pendingCount = orders.length + invoices.length + queueItems.length +
+          _pendingPosSalesCount;
       notifyListeners();
     } catch (e) {
       debugPrint('Error refreshing pending count: $e');
@@ -91,6 +101,23 @@ class SyncService extends ChangeNotifier {
     final errors = <String>[];
 
     try {
+      // 0. Upload pending POS sales via sync API
+      try {
+        final posResult = await _syncApi.uploadPendingSales();
+        synced += posResult.synced;
+        failed += posResult.failed;
+      } catch (e) {
+        errors.add('POS sales sync: $e');
+        debugPrint('POS sales sync error: $e');
+      }
+
+      // 0b. Download resources via sync API (employees, customers)
+      try {
+        await _syncApi.fullSync();
+      } catch (e) {
+        debugPrint('Resource sync error (non-fatal): $e');
+      }
+
       // 1. Sync local orders
       final orderResult = await _syncOrders();
       synced += orderResult.synced;
@@ -527,7 +554,6 @@ class SyncService extends ChangeNotifier {
           }
 
           // Resolve local IDs for invoice operations
-          final operation = item['operation'] as String? ?? '';
           if (payload is Map<String, dynamic> &&
               operation.contains('INVOICE')) {
             await _resolveLocalIdsInPayload(payload);

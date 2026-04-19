@@ -6,6 +6,7 @@ import '../services/api/report_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
+import '../services/printer_language_settings_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/zatca_printer_service.dart';
 import '../widgets/daily_closing_report_html_template.dart';
@@ -40,11 +41,12 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
   Map<String, dynamic>? _invoiceStatistics;
   Map<String, dynamic>? _depositsStatistics;
   Map<String, dynamic>? _outgoingsStatistics;
+  Map<String, dynamic>? _categoriesPayReport;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     translationService.addListener(_onLanguageChanged);
     _loadPreferredClosingPrinter();
     _loadData();
@@ -93,11 +95,18 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       final dateFromStr = DateFormat('yyyy-MM-dd').format(_dateFrom);
       final dateToStr = DateFormat('yyyy-MM-dd').format(_dateTo);
 
+      // Force Accept-Language to the printer language via explicit
+      // per-request headers. The fetches that emit category/meal labels
+      // (sales-pay + categories-sales) carry the override; statistics-only
+      // endpoints don't need it and keep using the default locale so other
+      // screens aren't affected.
+      final printerLang = printerLanguageSettings.primary;
       final results = await Future.wait([
         _reportService.getDailyClosingSalesPayReport(
           dateFrom: dateFromStr,
           dateTo: dateToStr,
           cashierId: _selectedCashierId,
+          acceptLanguage: printerLang,
         ),
         _reportService.getSalesPaySummary(),
         _reportService.getSalesPaySummaryWithTime(),
@@ -113,6 +122,12 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
           dateFrom: dateFromStr,
           dateTo: dateToStr,
         ),
+        _reportService.getCategoriesSalesReport(
+          dateFrom: dateFromStr,
+          dateTo: dateToStr,
+          cashierId: _selectedCashierId,
+          acceptLanguage: printerLang,
+        ),
       ]);
 
       if (mounted) {
@@ -121,6 +136,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
           _invoiceStatistics = results[3]['data'];
           _depositsStatistics = results[4]['data'];
           _outgoingsStatistics = results[5]['data'];
+          _categoriesPayReport = results[6];
           _isLoading = false;
         });
       }
@@ -192,12 +208,169 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     }
   }
 
+  /// Extract category sales lines from categoriesPay API response. Names
+  /// are now routed through `_localizedChartLabel` so the cashier's chosen
+  /// invoice language wins over whatever default locale the backend happened
+  /// to echo back — a Spanish-configured branch shouldn't print Arabic
+  /// category names on the closing receipt.
+  List<DailyClosingReportLine> _buildCategoriesPayLines() {
+    if (_categoriesPayReport == null) return [];
+    final lines = <DailyClosingReportLine>[];
+
+    void _extractFromList(List list) {
+      for (final item in list) {
+        if (item is! Map) continue;
+        final name = _localizedChartLabel(item);
+        final amount = _parseDouble(item['total'] ?? item['amount'] ?? item['value'] ?? item['total_sales'] ?? item['sum'] ?? 0);
+        if (name.isNotEmpty) {
+          lines.add(DailyClosingReportLine(name, amount));
+        }
+      }
+    }
+
+    void _extractFromMap(Map map) {
+      for (final entry in map.entries) {
+        final key = entry.key.toString();
+        if (key == 'maintenance' || key == 'status' || key == 'message' || key == 'errors' || key == 'today') continue;
+        final val = entry.value;
+        if (val is num) {
+          lines.add(DailyClosingReportLine(key, val.toDouble()));
+        } else if (val is Map) {
+          final name = _localizedChartLabel(val, fallbackKey: key);
+          final amount = _parseDouble(val['total'] ?? val['amount'] ?? val['value'] ?? val['total_sales'] ?? 0);
+          if (name.isNotEmpty) lines.add(DailyClosingReportLine(name, amount));
+        }
+      }
+    }
+
+    // The response could be wrapped in 'data' or be root-level
+    final raw = _categoriesPayReport!;
+    final data = raw['data'];
+
+    // data is a List of categories
+    if (data is List && data.isNotEmpty) {
+      _extractFromList(data);
+    }
+    // data is a Map with nested structure
+    else if (data is Map) {
+      final nested = data['categories'] ?? data['data'] ?? data['statistics'];
+      if (nested is List) {
+        _extractFromList(nested);
+      } else if (nested is Map) {
+        _extractFromMap(nested);
+      } else {
+        _extractFromMap(data);
+      }
+    }
+
+    // Try root-level keys if data didn't yield results
+    if (lines.isEmpty) {
+      final rootCategories = raw['categories'] ?? raw['statistics'];
+      if (rootCategories is List) {
+        _extractFromList(rootCategories);
+      } else if (rootCategories is Map) {
+        _extractFromMap(rootCategories);
+      }
+    }
+
+    // Try chart shape (pieCharts)
+    if (lines.isEmpty) {
+      final chart = (data is Map ? data['chart'] : raw['chart']);
+      final pieCharts = (chart is Map ? chart['pieCharts'] : null);
+      if (pieCharts is List && pieCharts.isNotEmpty) {
+        final first = pieCharts.first;
+        if (first is Map) {
+          final chartData = first['chartData'];
+          if (chartData is List) _extractFromList(chartData);
+        }
+      }
+    }
+
+    return lines;
+  }
+
   Widget _buildPrintWidget(List<DailyClosingReportLine> lines, DateTime now) {
     final fmt = NumberFormat('0.00', 'en');
     final df = DateFormat('yyyy-MM-dd');
     final fromStr = df.format(_dateFrom);
     final toStr = df.format(_dateTo);
     final dateLabel = fromStr == toStr ? fromStr : '$fromStr - $toStr';
+    final categoryLines = _buildCategoriesPayLines();
+
+    // Resolve primary + optional secondary invoice language for this print.
+    // Hardcoded Arabic-over-English labels used to force every branch onto
+    // the same layout; now the closing receipt mirrors whatever the cashier
+    // picked (es/tr/hi/ur all supported).
+    final primary = printerLanguageSettings.primary.trim().toLowerCase();
+    final secondary = printerLanguageSettings.allowSecondary &&
+            printerLanguageSettings.secondary != primary
+        ? printerLanguageSettings.secondary.trim().toLowerCase()
+        : '';
+    String pickLang(String code,
+        {required String ar,
+        required String en,
+        String? hi,
+        String? ur,
+        String? tr,
+        String? es}) {
+      switch (code) {
+        case 'ar': return ar;
+        case 'hi': return hi ?? en;
+        case 'ur': return ur ?? en;
+        case 'tr': return tr ?? en;
+        case 'es': return es ?? en;
+        case 'en':
+        default: return en;
+      }
+    }
+    String main(
+            {required String ar,
+            required String en,
+            String? hi,
+            String? ur,
+            String? tr,
+            String? es}) =>
+        pickLang(primary, ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+    String sec(
+        {required String ar,
+        required String en,
+        String? hi,
+        String? ur,
+        String? tr,
+        String? es}) {
+      if (secondary.isEmpty) return '';
+      return pickLang(secondary,
+          ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+    }
+
+    final titlePrimary = main(
+        ar: 'الإقفالية اليومية',
+        en: 'Daily Closing Report',
+        hi: 'दैनिक समापन रिपोर्ट',
+        ur: 'روزانہ کلوزنگ رپورٹ',
+        es: 'Cierre Diario',
+        tr: 'Günlük Kapanış Raporu');
+    final titleSecondary = sec(
+        ar: 'الإقفالية اليومية',
+        en: 'Daily Closing Report',
+        hi: 'दैनिक समापन रिपोर्ट',
+        ur: 'روزانہ کلوزنگ رپورٹ',
+        es: 'Cierre Diario',
+        tr: 'Günlük Kapanış Raporu');
+    final byPaymentPrimary = main(
+        ar: 'المبيعات حسب طريقة الدفع',
+        en: 'Sales by Payment Method',
+        hi: 'भुगतान विधि के अनुसार बिक्री',
+        ur: 'ادائیگی کے طریقے کے مطابق فروخت',
+        es: 'Ventas por Método de Pago',
+        tr: 'Ödeme Yöntemine Göre Satışlar');
+    final byPaymentSecondary = sec(
+        ar: 'المبيعات حسب طريقة الدفع',
+        en: 'Sales by Payment Method',
+        hi: 'भुगतान विधि के अनुसार बिक्री',
+        ur: 'ادائیگی کے طریقے کے مطابق فروخت',
+        es: 'Ventas por Método de Pago',
+        tr: 'Ödeme Yöntemine Göre Satışlar');
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.all(16),
@@ -206,37 +379,115 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'الإقفالية اليومية',
+            titlePrimary,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 4),
+          if (titleSecondary.isNotEmpty && titleSecondary != titlePrimary) ...[
+            const SizedBox(height: 4),
+            Text(
+              titleSecondary,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black),
+            ),
+          ],
+          const SizedBox(height: 8),
           Text(dateLabel, textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13)),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
           Text(
-            DateFormat('yyyy-MM-dd HH:mm').format(now),
+            DateFormat('yyyy-MM-dd hh:mm a').format(now),
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black),
           ),
-          const Divider(thickness: 1.5),
+          const SizedBox(height: 12),
+          const Divider(thickness: 3, color: Colors.black),
+          const SizedBox(height: 12),
+          // Sales by payment method
+          Text(
+            byPaymentPrimary,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          if (byPaymentSecondary.isNotEmpty && byPaymentSecondary != byPaymentPrimary) ...[
+            const SizedBox(height: 2),
+            Text(
+              byPaymentSecondary,
+              style: const TextStyle(fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+            ),
+          ],
+          const SizedBox(height: 10),
           ...lines.map((line) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
                   children: [
                     Expanded(
                       child: Text(line.label,
-                          style: const TextStyle(fontSize: 13)),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     ),
                     Text(
                       '${fmt.format(line.amount)} ${ApiConstants.currency}',
                       style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w600),
+                          fontSize: 20, fontWeight: FontWeight.w900),
                     ),
                   ],
                 ),
               )),
-          const Divider(thickness: 1.5),
+          // Categories pay section
+          if (categoryLines.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Divider(thickness: 3, color: Colors.black),
+            const SizedBox(height: 12),
+            Text(
+              main(
+                  ar: 'المبيعات حسب التصنيف',
+                  en: 'Sales by Category',
+                  hi: 'श्रेणी के अनुसार बिक्री',
+                  ur: 'زمرے کے مطابق فروخت',
+                  es: 'Ventas por Categoría',
+                  tr: 'Kategoriye Göre Satışlar'),
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            if (sec(
+                    ar: 'المبيعات حسب التصنيف',
+                    en: 'Sales by Category',
+                    hi: 'श्रेणी के अनुसार बिक्री',
+                    ur: 'زمرے کے مطابق فروخت',
+                    es: 'Ventas por Categoría',
+                    tr: 'Kategoriye Göre Satışlar')
+                .isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                sec(
+                    ar: 'المبيعات حسب التصنيف',
+                    en: 'Sales by Category',
+                    hi: 'श्रेणी के अनुसार बिक्री',
+                    ur: 'زمرے کے مطابق فروخت',
+                    es: 'Ventas por Categoría',
+                    tr: 'Kategoriye Göre Satışlar'),
+                style: const TextStyle(fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+              ),
+            ],
+            const SizedBox(height: 10),
+            ...categoryLines.map((line) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(line.label,
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      ),
+                      Text(
+                        '${fmt.format(line.amount)} ${ApiConstants.currency}',
+                        style: const TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.w900),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
           const SizedBox(height: 8),
+          const Divider(thickness: 3, color: Colors.black),
+          const SizedBox(height: 16),
         ],
       ),
     );
@@ -530,6 +781,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     final statistics = report['statistics'] as Map<String, dynamic>?;
     if (statistics != null && statistics.isNotEmpty) {
       for (final entry in statistics.entries) {
+        if (entry.key == 'total') continue;
         final label = _paymentLabelForKey(entry.key);
         final amount = _parseDouble(entry.value);
         lines.add(DailyClosingReportLine(label, amount));
@@ -544,7 +796,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       final chartData = first?['chartData'] as List<dynamic>? ?? const [];
       for (final item in chartData) {
         if (item is! Map) continue;
-        final label = item['label']?.toString() ?? '—';
+        final label = _localizedChartLabel(item);
         final value = _parseDouble(item['value'] ?? item['amount']);
         lines.add(DailyClosingReportLine(label, value));
       }
@@ -563,40 +815,127 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     return lines;
   }
 
+  /// Pick the best localized label for a chart/category item so the report
+  /// respects the cashier's invoice language. The backend ships parallel
+  /// `label_en` / `name_ar` keys and sometimes a nested `localizedNames`
+  /// or `translations` map — we probe each in order, then fall back through
+  /// English → Arabic → the raw string before returning a dash-placeholder
+  /// (or the caller-supplied key).
+  String _localizedChartLabel(Map item, {String? fallbackKey}) {
+    final primary = printerLanguageSettings.primary.trim().toLowerCase();
+
+    String? tryLocalized(dynamic source, String code) {
+      if (source is! Map) return null;
+      final direct = source[code];
+      if (direct is String && direct.trim().isNotEmpty) return direct.trim();
+      final lower = source[code.toLowerCase()];
+      if (lower is String && lower.trim().isNotEmpty) return lower.trim();
+      return null;
+    }
+
+    String? readKey(String code) {
+      for (final suffix in const ['label', 'name', 'category_name', 'title']) {
+        final raw = item['${suffix}_$code'];
+        if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+      }
+      for (final nestedKey in const [
+        'localizedNames',
+        'localized_names',
+        'translations',
+        'name',
+        'label',
+      ]) {
+        final v = tryLocalized(item[nestedKey], code);
+        if (v != null) return v;
+      }
+      return null;
+    }
+
+    String? resolved = readKey(primary);
+    resolved ??= readKey('en');
+    resolved ??= readKey('ar');
+    if (resolved == null) {
+      final rawLabel =
+          (item['label'] ?? item['name'] ?? item['category_name'] ?? item['category'])?.toString().trim() ?? '';
+      if (rawLabel.contains(' - ')) {
+        final parts = rawLabel.split(' - ');
+        resolved = primary == 'ar' ? parts.first.trim() : parts.last.trim();
+      } else {
+        resolved = rawLabel;
+      }
+    }
+    if (resolved.isEmpty) return fallbackKey ?? '';
+    return resolved;
+  }
+
+  /// Translate a payment-method key into the printer's active language.
+  /// The report prints this label directly, so following the invoice language
+  /// keeps the closing receipt consistent with the rest of the tickets.
   String _paymentLabelForKey(String key) {
+    final code = printerLanguageSettings.primary.trim().toLowerCase();
+    String pick({
+      required String ar,
+      required String en,
+      String? hi,
+      String? ur,
+      String? tr,
+      String? es,
+    }) {
+      switch (code) {
+        case 'ar':
+          return ar;
+        case 'hi':
+          return hi ?? en;
+        case 'ur':
+          return ur ?? en;
+        case 'tr':
+          return tr ?? en;
+        case 'es':
+          return es ?? en;
+        case 'en':
+        default:
+          return en;
+      }
+    }
+
     switch (key) {
       case 'cash':
-        return translationService.t('cash_payment');
+        return pick(ar: 'دفع نقدي', en: 'Cash', hi: 'नकद', ur: 'نقد', es: 'Efectivo', tr: 'Nakit');
       case 'card':
-        return translationService.t('card_payment');
+        return pick(ar: 'بطاقة ائتمان', en: 'Card', hi: 'कार्ड', ur: 'کارڈ', es: 'Tarjeta', tr: 'Kart');
       case 'benefit':
-        return translationService.t('benefit_pay');
+        return pick(ar: 'بينيفت باي', en: 'Benefit Pay', es: 'Benefit Pay');
       case 'stc':
-        return translationService.t('stc_pay');
+        return 'STC Pay';
       case 'bank_transfer':
-        return translationService.t('bank_transfer');
+        return pick(ar: 'تحويل بنكي', en: 'Bank Transfer', hi: 'बैंक ट्रांसफर', ur: 'بینک ٹرانسفر', es: 'Transferencia Bancaria', tr: 'Banka Transferi');
       case 'wallet':
-        return translationService.t('wallet');
+        return pick(ar: 'محفظة', en: 'Wallet', hi: 'वॉलेट', ur: 'والیٹ', es: 'Billetera', tr: 'Cüzdan');
       case 'cheque':
-        return translationService.t('cheque');
+        return pick(ar: 'شيك', en: 'Cheque', hi: 'चेक', ur: 'چیک', es: 'Cheque', tr: 'Çek');
       case 'petty_cash':
-        return translationService.t('petty_cash');
+        return pick(ar: 'صندوق نثرية', en: 'Petty Cash', hi: 'पेटी कैश', ur: 'پیٹی کیش', es: 'Caja Chica', tr: 'Küçük Kasa');
       case 'pay_later':
-        return translationService.t('pay_later');
+        return pick(ar: 'دفع لاحق', en: 'Pay Later', hi: 'बाद में भुगतान', ur: 'بعد میں ادائیگی', es: 'Pagar Después', tr: 'Sonra Öde');
       case 'tabby':
-        return translationService.t('tabby');
+        return 'Tabby';
       case 'tamara':
-        return translationService.t('tamara');
+        return 'Tamara';
       case 'keeta':
-        return translationService.t('keeta');
+      case 'kita':
+        return 'Keeta';
       case 'my_fatoorah':
-        return translationService.t('my_fatoorah');
+        return pick(ar: 'ماي فاتورة', en: 'MyFatoorah', es: 'MyFatoorah');
       case 'jahez':
-        return translationService.t('jahez');
+      case 'gahez':
+        return pick(ar: 'جاهز', en: 'Jahez', es: 'Jahez', hi: 'जाहेज़', ur: 'جاہز', tr: 'Jahez');
       case 'talabat':
-        return translationService.t('talabat');
+        return pick(ar: 'طلبات', en: 'Talabat', es: 'Talabat', hi: 'तलबात', ur: 'طلبات', tr: 'Talabat');
+      case 'hunger_station':
+      case 'hungerstation':
+        return pick(ar: 'هنقر ستيشن', en: 'HungerStation', es: 'HungerStation', hi: 'हंगरस्टेशन', ur: 'ہنگر سٹیشن', tr: 'HungerStation');
       case 'total':
-        return translationService.t('total_amount');
+        return pick(ar: 'الاجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam');
       default:
         return key;
     }
@@ -613,6 +952,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
         isScrollable: true,
         tabs: [
           Tab(text: translationService.t('sales_summary')),
+          Tab(text: translationService.t('categories')),
           Tab(text: translationService.t('invoices')),
           Tab(text: translationService.t('deposits')),
           Tab(text: translationService.t('outgoings')),
@@ -626,10 +966,106 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       controller: _tabController,
       children: [
         _buildSummaryTab(),
+        _buildCategoriesTab(),
         _buildInvoicesTab(),
         _buildDepositsTab(),
         _buildOutgoingsTab(),
       ],
+    );
+  }
+
+  Widget _buildCategoriesTab() {
+    final categoryLines = _buildCategoriesPayLines();
+    if (categoryLines.isEmpty) {
+      return _buildEmptyState();
+    }
+    final fmt = NumberFormat('0.00', 'en');
+    final total = categoryLines.fold<double>(0.0, (s, l) => s + l.amount);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            translationService.t('categories'),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          // Total card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF7ED),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFF58220).withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  translationService.t('total_amount'),
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF64748B)),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${fmt.format(total)} ${ApiConstants.currency}',
+                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFFF58220)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Category cards
+          ...categoryLines.map((line) {
+            final percent = total > 0 ? (line.amount / total * 100) : 0.0;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          line.label,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                        ),
+                        const SizedBox(height: 4),
+                        // Progress bar
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: percent / 100,
+                            backgroundColor: const Color(0xFFE2E8F0),
+                            valueColor: const AlwaysStoppedAnimation(Color(0xFFF58220)),
+                            minHeight: 6,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${percent.toStringAsFixed(1)}%',
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Text(
+                    '${fmt.format(line.amount)} ${ApiConstants.currency}',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFF58220)),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
     );
   }
 
@@ -806,6 +1242,12 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
         'color': const Color(0xFFF97316),
         'bgColor': const Color(0xFFFEE2E2),
       },
+      'kita': {
+        'label': translationService.t('keeta'),
+        'icon': LucideIcons.truck,
+        'color': const Color(0xFFF97316),
+        'bgColor': const Color(0xFFFEE2E2),
+      },
       'my_fatoorah': {
         'label': translationService.t('my_fatoorah'),
         'icon': LucideIcons.wallet,
@@ -818,11 +1260,29 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
         'color': const Color(0xFF16A34A),
         'bgColor': const Color(0xFFDCFCE7),
       },
+      'gahez': {
+        'label': translationService.t('jahez'),
+        'icon': LucideIcons.truck,
+        'color': const Color(0xFF16A34A),
+        'bgColor': const Color(0xFFDCFCE7),
+      },
       'talabat': {
         'label': translationService.t('talabat'),
         'icon': LucideIcons.shoppingBag,
         'color': const Color(0xFFDC2626),
         'bgColor': const Color(0xFFFEE2E2),
+      },
+      'hunger_station': {
+        'label': translationService.t('hunger_station'),
+        'icon': LucideIcons.truck,
+        'color': const Color(0xFFEA580C),
+        'bgColor': const Color(0xFFFFF7ED),
+      },
+      'hungerstation': {
+        'label': translationService.t('hunger_station'),
+        'icon': LucideIcons.truck,
+        'color': const Color(0xFFEA580C),
+        'bgColor': const Color(0xFFFFF7ED),
       },
       'total': {
         'label': translationService.t('total_amount'),
@@ -1214,6 +1674,34 @@ class _ClosingPrintPreviewDialog extends StatefulWidget {
 
 class _ClosingPrintPreviewDialogState
     extends State<_ClosingPrintPreviewDialog> {
+  /// Resolve labels inside the preview dialog using the same invoice-language
+  /// rules as the printed receipt.
+  String _previewLangPick({
+    required String ar,
+    required String en,
+    String? hi,
+    String? ur,
+    String? tr,
+    String? es,
+  }) {
+    final code = printerLanguageSettings.primary.trim().toLowerCase();
+    switch (code) {
+      case 'ar':
+        return ar;
+      case 'hi':
+        return hi ?? en;
+      case 'ur':
+        return ur ?? en;
+      case 'tr':
+        return tr ?? en;
+      case 'es':
+        return es ?? en;
+      case 'en':
+      default:
+        return en;
+    }
+  }
+
   DeviceConfig? _selectedPrinter;
   bool _saveAsDefault = false;
   bool _isPrinting = false;
@@ -1306,9 +1794,20 @@ class _ClosingPrintPreviewDialogState
                             ),
                             child: Column(
                               children: [
-                                const Text(
-                                  'إقفالية المبيعات',
-                                  style: TextStyle(
+                                // Preview title follows the same invoice
+                                // language as the actual printed receipt so
+                                // the cashier sees a faithful preview, not
+                                // hardcoded Arabic.
+                                Text(
+                                  _previewLangPick(
+                                    ar: 'إقفالية المبيعات',
+                                    en: 'Sales Closing',
+                                    hi: 'बिक्री समापन',
+                                    ur: 'سیلز کلوزنگ',
+                                    es: 'Cierre de Ventas',
+                                    tr: 'Satış Kapanışı',
+                                  ),
+                                  style: const TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold),
                                   textAlign: TextAlign.center,
@@ -1390,7 +1889,7 @@ class _ClosingPrintPreviewDialogState
                             padding:
                                 const EdgeInsets.fromLTRB(16, 8, 16, 12),
                             child: Text(
-                              'وقت الإنشاء: ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.now())}',
+                              'وقت الإنشاء: ${DateFormat('yyyy/MM/dd hh:mm a').format(DateTime.now())}',
                               style: TextStyle(
                                   fontSize: 11, color: Colors.grey.shade400),
                               textAlign: TextAlign.center,

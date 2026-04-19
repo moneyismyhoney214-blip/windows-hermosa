@@ -8,25 +8,44 @@ class ReportService {
   final OfflineDatabaseService _offlineDb = OfflineDatabaseService();
   final ConnectivityService _connectivity = ConnectivityService();
 
-  /// Generic offline-aware GET that caches results in SQLite
+  /// Generic offline-aware GET that caches results in SQLite.
+  ///
+  /// The cache key is scoped by the effective language so a report fetched
+  /// in Arabic doesn't get handed back to a later English-language request.
+  /// When [acceptLanguage] is supplied we force that exact locale on this
+  /// single request (and its cache bucket) — this is how the reports screen
+  /// prints category names in the printer language no matter what the app
+  /// UI language happens to be.
   Future<Map<String, dynamic>> _offlineGet(
-      String endpoint, String cacheKey) async {
+      String endpoint, String cacheKey,
+      {String? acceptLanguage}) async {
+    final effectiveLang = (acceptLanguage?.trim().isNotEmpty == true)
+        ? acceptLanguage!.trim().toLowerCase()
+        : ApiConstants.acceptLanguage;
+    final scopedKey = '${cacheKey}__$effectiveLang';
     if (_connectivity.isOffline) {
       final cached =
-          await _offlineDb.getCachedReport(cacheKey, ApiConstants.branchId);
+          await _offlineDb.getCachedReport(scopedKey, ApiConstants.branchId);
       if (cached != null) return cached;
       return {'data': [], '_offline': true};
     }
 
     try {
-      final response = await _client.get(endpoint);
+      final response = await _client.get(
+        endpoint,
+        headers: acceptLanguage?.trim().isNotEmpty == true
+            ? {'Accept-Language': acceptLanguage!.trim().toLowerCase()}
+            : null,
+      );
       if (response is Map<String, dynamic>) {
-        await _offlineDb.cacheReport(cacheKey, response, ApiConstants.branchId);
+        await _offlineDb.cacheReport(
+            scopedKey, response, ApiConstants.branchId);
+        return response;
       }
-      return response;
+      return {'data': response};
     } catch (e) {
       final cached =
-          await _offlineDb.getCachedReport(cacheKey, ApiConstants.branchId);
+          await _offlineDb.getCachedReport(scopedKey, ApiConstants.branchId);
       if (cached != null) return cached;
       rethrow;
     }
@@ -153,13 +172,15 @@ class ReportService {
     required String dateFrom,
     required String dateTo,
     String? cashierId,
+    String? acceptLanguage,
   }) async {
     String endpoint =
         '${ApiConstants.salesPayReportEndpoint}?date_from=$dateFrom&date_to=$dateTo';
     if (cashierId != null && cashierId.isNotEmpty) {
       endpoint += '&cashier_id=$cashierId';
     }
-    return _offlineGet(endpoint, 'daily_closing_${dateFrom}_${dateTo}_$cashierId');
+    return _offlineGet(endpoint, 'daily_closing_${dateFrom}_${dateTo}_$cashierId',
+        acceptLanguage: acceptLanguage);
   }
 
   /// Send daily closing report via WhatsApp
@@ -214,6 +235,26 @@ class ReportService {
     final endpoint =
         '${ApiConstants.categoriesPayReportEndpoint}?date_from=$dateFrom&date_to=$dateTo';
     return _offlineGet(endpoint, 'categories_pay_${dateFrom}_$dateTo');
+  }
+
+  /// Get categories sales report (meals breakdown by category)
+  Future<Map<String, dynamic>> getCategoriesSalesReport({
+    required String dateFrom,
+    required String dateTo,
+    String? cashierId,
+    String? acceptLanguage,
+  }) async {
+    String endpoint =
+        '/seller/branches/${ApiConstants.branchId}/categories?all=true&category=meals&type=meals&date_from=$dateFrom&date_to=$dateTo';
+    if (cashierId != null && cashierId.isNotEmpty) {
+      endpoint += '&cashier_id=$cashierId';
+    }
+    try {
+      return await _offlineGet(endpoint, 'categories_sales_${dateFrom}_$dateTo',
+          acceptLanguage: acceptLanguage);
+    } catch (_) {
+      return {'data': {}};
+    }
   }
 
   /// Get employees by payment method report

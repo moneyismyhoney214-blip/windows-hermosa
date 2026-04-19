@@ -1,16 +1,23 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../services/api/api_constants.dart';
+import '../services/api/branch_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/order_service.dart';
 import '../services/invoice_html_pdf_service.dart';
 import '../services/print_audit_service.dart';
+import '../services/print_orchestrator_service.dart';
 import '../services/printer_role_registry.dart';
-import '../services/zatca_printer_service.dart';
+import '../services/printer_service.dart';
 import '../models.dart';
+import '../models/receipt_data.dart';
+import '../services/language_service.dart';
+import '../services/printer_language_settings_service.dart';
 import '../locator.dart';
+import '../services/app_themes.dart';
 
 enum _RefundMode { full, partial }
 
@@ -78,6 +85,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
   String? _error;
 
   List<_RefundCandidate> _candidates = [];
+  String? _dailyOrderNumber;
 
   _RefundMode _mode = _RefundMode.full;
   final Set<_RefundCandidate> _selectedItems = {};
@@ -135,6 +143,15 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       );
 
       final candidates = _extractCandidates(data, payload, previewPayload);
+      final dailyOrderNumber = (data['daily_order_number'] ??
+              data['order_number'] ??
+              payload['daily_order_number'] ??
+              payload['order_number'] ??
+              previewInvoice['daily_order_number'] ??
+              previewInvoice['order_number'])
+          ?.toString()
+          .replaceAll('#', '')
+          .trim();
 
       // If no direct refund amount field, sum up from candidates
       if (amount == 0 && candidates.isNotEmpty) {
@@ -156,6 +173,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
       setState(() {
         _candidates = candidates;
+        _dailyOrderNumber = (dailyOrderNumber != null && dailyOrderNumber.isNotEmpty)
+            ? dailyOrderNumber
+            : widget.invoiceLabel;
         _refundAmount = amount;
         _allItemsRefunded = allRefunded;
         _isLoading = false;
@@ -214,15 +234,28 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         backgroundColor: const Color(0xFF10B981),
       ));
 
-      // Print credit note (فاتورة دائن) with refunded items
-      _printCreditNote(itemsToRefund.toList());
+      // Fetch CN number from refunds API
+      String? cnNumber;
+      try {
+        cnNumber = await _orderService.getLatestCreditNoteNumber(widget.invoiceId);
+      } catch (_) {}
 
+      // Print credit note in the background. Awaiting would block the
+      // dialog on slow printers — _printCreditNote has its own user-visible
+      // error snackbars, so fire-and-forget is safe here.
+      unawaited(_printCreditNote(itemsToRefund.toList(), creditNoteNumber: cnNumber));
+
+      final isFullRefund = _mode == _RefundMode.full ||
+          (_candidates.isNotEmpty && itemsToRefund.length >= _candidates.length);
+      unawaited(_notifyKitchenOfRefund(itemsToRefund.toList(), isFullRefund: isFullRefund));
+
+      if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isProcessing = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر تنفيذ الاسترجاع: $e')),
+        SnackBar(content: Text(translationService.t('failed_execute_refund', args: {'error': e.toString()}))),
       );
     }
   }
@@ -269,7 +302,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
+        color: context.appCardBg.withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(LucideIcons.refreshCw, color: Colors.white, size: 22),
@@ -365,7 +398,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
               _loadData();
             },
             icon: const Icon(LucideIcons.refreshCw, size: 16),
-            label: const Text('إعادة المحاولة'),
+            label: Text(translationService.t('retry')),
             style: ElevatedButton.styleFrom(backgroundColor: _kAccent, foregroundColor: Colors.white),
           ),
         ],
@@ -397,7 +430,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
   Widget _buildModeToggle() {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
+        color: context.appSurfaceAlt,
         borderRadius: BorderRadius.circular(12),
       ),
       padding: const EdgeInsets.all(4),
@@ -621,7 +654,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.12),
+        color: context.appCardBg.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(LucideIcons.dollarSign, color: Colors.white, size: 22),
@@ -755,78 +788,175 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
     return null;
   }
 
-  Future<void> _printCreditNote(List<_RefundCandidate> refundedItems) async {
+  Future<void> _printCreditNote(List<_RefundCandidate> refundedItems, {String? creditNoteNumber}) async {
     try {
-      final invoiceHtmlPdfService = getIt<InvoiceHtmlPdfService>();
-      final refundTotal = refundedItems.fold(0.0, (sum, c) => sum + c.total);
+      // Fetch invoice details for receipt data
+      final orderService = getIt<OrderService>();
+      final invoiceResponse = await orderService.getInvoice(widget.invoiceId);
+      final rawEnvelope = invoiceResponse.map((k, v) => MapEntry(k.toString(), v));
+      final envelope = (rawEnvelope['data'] is Map)
+          ? (rawEnvelope['data'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : rawEnvelope;
+      final invoice = (envelope['invoice'] is Map)
+          ? (envelope['invoice'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : envelope;
+      final branch = (envelope['branch'] is Map)
+          ? (envelope['branch'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
+      final seller = (branch['seller'] is Map)
+          ? (branch['seller'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
 
-      final itemMaps = refundedItems.map((c) => <String, dynamic>{
-        'name': c.name,
-        'quantity': c.quantity,
-        'total': c.total,
-        'unit_price': c.quantity > 0 ? c.total / c.quantity : c.total,
+      String pick(List<dynamic> candidates) {
+        for (final c in candidates) {
+          final t = c?.toString().trim();
+          if (t != null && t.isNotEmpty && t.toLowerCase() != 'null') return t;
+        }
+        return '';
+      }
+
+      // Resolve printer language settings (local, device-scoped).
+      final String invoicePri = printerLanguageSettings.primary;
+      final String invoiceSec = printerLanguageSettings.secondary;
+
+      // Build a map of meal_id → meal_name_translations from invoice items
+      final invoiceMeals = (invoice['sales_meals'] ?? invoice['meals'] ?? invoice['items'] ?? invoice['booking_meals']);
+      final translationsById = <int, Map>{};
+      if (invoiceMeals is List) {
+        for (final m in invoiceMeals.whereType<Map>()) {
+          final mealId = int.tryParse((m['meal_id'] ?? m['id'] ?? m['sales_meal_id'])?.toString() ?? '') ?? 0;
+          final mt = m['meal_name_translations'];
+          if (mealId > 0 && mt is Map) {
+            translationsById[mealId] = mt;
+          }
+        }
+      }
+
+      String resolveName(String langCode, String arName, String enName, Map? translations) {
+        if (translations != null) {
+          final resolved = translations[langCode]?.toString().trim() ?? '';
+          if (resolved.isNotEmpty) return resolved;
+        }
+        if (langCode == 'ar' && arName.isNotEmpty) return arName;
+        if (langCode == 'en' && enName.isNotEmpty) return enName;
+        if (enName.isNotEmpty) return enName;
+        return arName;
+      }
+
+      final items = refundedItems.map((c) {
+        String arName = c.name;
+        String enName = c.name;
+        if (c.name.contains(' - ')) {
+          arName = c.name.split(' - ').first.trim();
+          enName = c.name.split(' - ').last.trim();
+        }
+        final translations = translationsById[c.id];
+        final primaryName = resolveName(invoicePri, arName, enName, translations);
+        final secondaryName = resolveName(invoiceSec, arName, enName, translations);
+        final unitPrice = c.quantity > 0 ? c.total / c.quantity : c.total;
+        return ReceiptItem(
+          nameAr: primaryName,
+          nameEn: (secondaryName != primaryName) ? secondaryName : '',
+          quantity: c.quantity.toDouble(),
+          unitPrice: unitPrice,
+          total: c.total,
+        );
       }).toList();
 
-      final pdfPath = await invoiceHtmlPdfService.generateCreditNotePdf(
-        widget.invoiceId,
-        refundedItems: itemMaps,
-        refundTotal: refundTotal,
+      final totalExcl = items.fold(0.0, (sum, item) => sum + item.total);
+      // Dynamic tax rate from the active branch — credit notes for
+      // non-tax branches would otherwise sprout a phantom 15% VAT line.
+      final branchService = getIt<BranchService>();
+      final taxRate =
+          branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
+      final tax = totalExcl * taxRate;
+      final grandTotal = totalExcl + tax;
+
+      final sellerName = pick([branch['seller_name']]);
+      final receiptData = OrderReceiptData(
+        invoiceNumber: creditNoteNumber ?? pick([invoice['invoice_number']]),
+        issueDateTime: DateTime.now().toIso8601String(),
+        sellerNameAr: sellerName.contains('|') ? sellerName.split('|').first.trim() : sellerName,
+        sellerNameEn: sellerName.contains('|') ? sellerName.split('|').last.trim() : sellerName,
+        vatNumber: pick([seller['tax_number'], branch['tax_number']]),
+        branchName: pick([branch['seller_name']]),
+        items: items,
+        totalExclVat: totalExcl,
+        vatAmount: tax,
+        totalInclVat: grandTotal,
+        paymentMethod: pick([invoice['payment_methods']]),
+        qrCodeBase64: pick([envelope['qr_image'], invoice['qr_image']]),
+        branchAddress: () { final d = (branch['district']?.toString() ?? '').trim(); final a = (branch['address']?.toString() ?? '').trim(); return (d.isNotEmpty && a.isNotEmpty && d != a) ? '$d، $a' : (a.isNotEmpty ? a : d); }(),
+        branchMobile: pick([branch['mobile']]),
+        commercialRegisterNumber: pick([seller['commercial_register']]),
+        issueDate: pick([invoice['date']]),
+        issueTime: pick([invoice['time']]),
       );
 
-      final pdfFile = File(pdfPath);
-      if (!await pdfFile.exists()) return;
-      final pdfBytes = await pdfFile.readAsBytes();
-
+      // Print using same ESC/POS flow. Print on EVERY non-kitchen printer
+      // (cashier + general/customer) so the customer gets their copy and the
+      // cashier keeps a receipt of the refund — same coverage as a normal
+      // sale receipt.
       final devices = await getIt<DeviceService>().getDevices();
-      final printers = devices.where((d) {
-        final type = d.type.trim().toLowerCase();
-        return type == 'printer' && !d.id.startsWith('kitchen:');
-      }).toList();
-
-      if (printers.isEmpty) return;
-
       final registry = getIt<PrinterRoleRegistry>();
       await registry.initialize();
 
-      // Prefer cashier receipt printers, fallback to any physical printer
-      var targetPrinters = printers
-          .where((p) => registry.resolveRole(p) == PrinterRole.cashierReceipt)
-          .toList();
-      if (targetPrinters.isEmpty) {
-        targetPrinters = printers
-            .where((p) {
-              final role = registry.resolveRole(p);
-              return role != PrinterRole.kitchen &&
-                  role != PrinterRole.kds &&
-                  role != PrinterRole.bar;
-            })
-            .toList();
-      }
-      if (targetPrinters.isEmpty) targetPrinters = printers;
+      final targetPrinters = devices.where((d) {
+        final type = d.type.trim().toLowerCase();
+        if (type != 'printer') return false;
+        if (d.id.startsWith('kitchen:')) return false;
+        final role = registry.resolveRole(d);
+        if (role == PrinterRole.kitchen ||
+            role == PrinterRole.kds ||
+            role == PrinterRole.bar) return false;
+        // Bluetooth needs a MAC, network needs an IP.
+        if (d.connectionType == PrinterConnectionType.bluetooth) {
+          return (d.bluetoothAddress ?? '').trim().isNotEmpty;
+        }
+        return d.ip.trim().isNotEmpty;
+      }).toList();
 
-      for (final printer in targetPrinters) {
-        try {
-          await ZatcaPrinterService().printPdfBytes(printer, pdfBytes);
-          printAuditService.logAttempt(
-            printerIp: printer.connectionType == PrinterConnectionType.bluetooth
-                ? (printer.bluetoothAddress ?? 'BT')
-                : printer.ip,
-            jobType: 'credit_note',
-            success: true,
-          );
-        } catch (e) {
-          printAuditService.logAttempt(
-            printerIp: printer.connectionType == PrinterConnectionType.bluetooth
-                ? (printer.bluetoothAddress ?? 'BT')
-                : printer.ip,
-            jobType: 'credit_note',
-            success: false,
-            error: e.toString(),
+      if (targetPrinters.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('لا توجد طابعة مهيأة لطباعة فاتورة الدائن.'),
+              backgroundColor: Color(0xFFB91C1C),
+            ),
           );
         }
+        return;
+      }
+
+      final printerService = getIt<PrinterService>();
+      var anySucceeded = false;
+      for (final printer in targetPrinters) {
+        try {
+          await printerService.printReceipt(printer, receiptData, jobType: 'credit_note', isCreditNote: true);
+          anySucceeded = true;
+        } catch (e) {
+          debugPrint('Credit note print failed for ${printer.name}: $e');
+        }
+      }
+
+      if (!anySucceeded && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('فشلت طباعة فاتورة الدائن على جميع الطابعات.'),
+            backgroundColor: Color(0xFFB91C1C),
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Credit note print failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذرت طباعة فاتورة الدائن: $e'),
+            backgroundColor: const Color(0xFFB91C1C),
+          ),
+        );
+      }
     }
   }
 
@@ -874,5 +1004,101 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
     addFromList(data['items'] ?? data['meals'] ?? payload['items'] ?? payload['meals'], type: _RefundCandidateType.unknown, idKeys: const ['id', 'item_id', 'meal_id']);
 
     return results;
+  }
+
+  Future<void> _notifyKitchenOfRefund(
+    List<_RefundCandidate> refundedItems, {
+    required bool isFullRefund,
+  }) async {
+    if (refundedItems.isEmpty) return;
+    try {
+      // Resolve printer language (local, device-scoped). Both primary and
+      // (optional) secondary so the kitchen ticket renders bilingually when
+      // the cashier enabled a second language.
+      final String lang = printerLanguageSettings.primary;
+      final String langSecondary =
+          printerLanguageSettings.allowSecondary &&
+                  printerLanguageSettings.secondary != lang
+              ? printerLanguageSettings.secondary
+              : '';
+
+      String pick(String code, String ar, String en,
+          {String? es, String? tr, String? hi, String? ur}) {
+        switch (code) {
+          case 'es': return es ?? en;
+          case 'tr': return tr ?? en;
+          case 'hi': return hi ?? en;
+          case 'ur': return ur ?? en;
+          case 'en': return en;
+          case 'ar': return ar;
+          default: return ar;
+        }
+      }
+
+      String tl(String ar, String en,
+              {String? es, String? tr, String? hi, String? ur}) =>
+          pick(lang, ar, en, es: es, tr: tr, hi: hi, ur: ur);
+      String tlSec(String ar, String en,
+          {String? es, String? tr, String? hi, String? ur}) {
+        if (langSecondary.isEmpty) return '';
+        return pick(langSecondary, ar, en, es: es, tr: tr, hi: hi, ur: ur);
+      }
+
+      final devices = await getIt<DeviceService>().getDevices();
+      final registry = getIt<PrinterRoleRegistry>();
+      await registry.initialize();
+
+      final kitchenPrinters = devices.where((d) {
+        final type = d.type.trim().toLowerCase();
+        if (type != 'printer') return false;
+        final role = registry.resolveRole(d);
+        if (role != PrinterRole.kitchen && role != PrinterRole.kds && role != PrinterRole.bar) {
+          return false;
+        }
+        if (d.connectionType == PrinterConnectionType.bluetooth) {
+          return (d.bluetoothAddress ?? '').trim().isNotEmpty;
+        }
+        return d.ip.trim().isNotEmpty;
+      }).toList();
+      if (kitchenPrinters.isEmpty) return;
+
+      final tagPrimaryText = tl('ملغي', 'Cancelled',
+          es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ');
+      final tagSecondaryText = tlSec('ملغي', 'Cancelled',
+          es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ');
+      final items = refundedItems.map((c) => <String, dynamic>{
+            'name': c.name,
+            'nameAr': c.name,
+            'quantity': c.quantity,
+            'tag': 'Cancelled',
+            'tagAr': tagPrimaryText,
+            'tagPrimary': tagPrimaryText,
+            'tagSecondary': tagSecondaryText,
+            'cancelled': true,
+            'tagColor': 'black',
+          }).toList();
+
+      final orderTypeLabel = isFullRefund
+          ? tl('إلغاء فاتورة', 'Invoice Cancelled', es: 'Factura Cancelada', tr: 'Fatura İptal', hi: 'इनवॉइस रद्द', ur: 'انوائس منسوخ')
+          : tl('استرجاع جزئي', 'Partial Refund', es: 'Reembolso Parcial', tr: 'Kısmi İade', hi: 'आंशिक रिफंड', ur: 'جزوی واپسی');
+      final noteLabel = isFullRefund
+          ? tl('⛔ الطلب ملغي بالكامل', '⛔ Entire order cancelled', es: '⛔ Pedido cancelado', tr: '⛔ Sipariş tamamen iptal', hi: '⛔ पूरा ऑर्डर रद्द', ur: '⛔ پورا آرڈر منسوخ')
+          : tl('⚠️ إلغاء جزئي', '⚠️ Partial cancellation', es: '⚠️ Cancelación parcial', tr: '⚠️ Kısmi iptal', hi: '⚠️ आंशिक रद्दीकरण', ur: '⚠️ جزوی منسوخی');
+
+      await getIt<PrintOrchestratorService>().enqueueKitchenPrint(
+        printers: kitchenPrinters,
+        orderNumber: _dailyOrderNumber ?? widget.invoiceLabel,
+        orderType: orderTypeLabel,
+        items: items,
+        note: noteLabel,
+        invoiceNumber: widget.invoiceLabel,
+        isRtl: lang == 'ar' || lang == 'ur',
+        primaryLang: lang,
+        secondaryLang: langSecondary.isEmpty ? null : langSecondary,
+        allowSecondary: langSecondary.isNotEmpty,
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to notify kitchen of refund: $e');
+    }
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 
+import 'display_language_service.dart';
 import 'nearpay/nearpay_service.dart';
 
 class NearPayPaymentScreen extends StatefulWidget {
@@ -12,6 +13,7 @@ class NearPayPaymentScreen extends StatefulWidget {
   final Future<void> Function(String message)? onPaymentFailed;
   final Future<void> Function()? onPaymentCancelled;
   final void Function(String status, String message)? onStatusChanged;
+  final String languageCode;
 
   const NearPayPaymentScreen({
     super.key,
@@ -22,6 +24,7 @@ class NearPayPaymentScreen extends StatefulWidget {
     this.onPaymentFailed,
     this.onPaymentCancelled,
     this.onStatusChanged,
+    this.languageCode = 'ar',
   });
 
   @override
@@ -114,7 +117,7 @@ class _NearPayPaymentScreenState extends State<NearPayPaymentScreen> {
         appBar: AppBar(
           backgroundColor: Colors.white,
           foregroundColor: Colors.black,
-          title: const Text('NearPay Payment'),
+          title: Text(DisplayLanguageService.t('nearpay_payment', languageCode: widget.languageCode)),
           leading: IconButton(
             icon: const Icon(Icons.close),
             onPressed: () async {
@@ -165,12 +168,12 @@ class _NearPayPaymentScreenState extends State<NearPayPaymentScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('تحذير'),
-        content: const Text('هل أنت متأكد من إلغاء عملية الدفع؟'),
+        title: Text(DisplayLanguageService.t('warning_title', languageCode: widget.languageCode)),
+        content: Text(DisplayLanguageService.t('confirm_cancel_payment', languageCode: widget.languageCode)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('لا'),
+            child: Text(DisplayLanguageService.t('no', languageCode: widget.languageCode)),
           ),
           TextButton(
             onPressed: () {
@@ -178,7 +181,7 @@ class _NearPayPaymentScreenState extends State<NearPayPaymentScreen> {
               Navigator.of(context).pop();
               widget.onPaymentCancelled?.call();
             },
-            child: const Text('نعم', style: TextStyle(color: Colors.red)),
+            child: Text(DisplayLanguageService.t('yes', languageCode: widget.languageCode), style: const TextStyle(color: Colors.red)),
           ),
         ],
       ),

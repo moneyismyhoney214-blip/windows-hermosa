@@ -192,7 +192,26 @@ class Extra {
   final String name;
   final double price;
 
-  const Extra({required this.id, required this.name, required this.price});
+  /// Per-language translations for the option (addon) name, keyed by ISO code
+  /// (`ar`, `en`, `hi`, `ur`, `tr`, `es`). Empty when the API doesn't supply
+  /// any. Used by the kitchen ticket to print the addon in the cashier's
+  /// chosen invoice language.
+  @JsonKey(defaultValue: <String, String>{})
+  final Map<String, String> optionTranslations;
+
+  /// Per-language translations for the parent attribute name (e.g. "Cooking
+  /// type"). Not rendered today but carried so future invoice layouts can
+  /// group addons by attribute without re-fetching.
+  @JsonKey(defaultValue: <String, String>{})
+  final Map<String, String> attributeTranslations;
+
+  const Extra({
+    required this.id,
+    required this.name,
+    required this.price,
+    this.optionTranslations = const {},
+    this.attributeTranslations = const {},
+  });
 
   factory Extra.fromJson(Map<String, dynamic> json) {
     String? readText(dynamic value) => _readLocalizedText(value);
@@ -221,9 +240,57 @@ class Extra {
           json['option_price'] ??
           json['extra_price'],
     );
-    return Extra(id: id, name: resolvedName, price: price);
+    return Extra(
+      id: id,
+      name: resolvedName,
+      price: price,
+      optionTranslations: _readLocalizedMap(json['optionTranslations']) ??
+          _readLocalizedMap(json['option']) ??
+          _readLocalizedMap(json['option_name']) ??
+          _readLocalizedMap(json['name']) ??
+          const {},
+      attributeTranslations: _readLocalizedMap(json['attributeTranslations']) ??
+          _readLocalizedMap(json['attribute']) ??
+          _readLocalizedMap(json['attribute_name']) ??
+          const {},
+    );
   }
-  Map<String, dynamic> toJson() => _$ExtraToJson(this);
+
+  // Written by hand so the generated `models.g.dart` (which still only knows
+  // about id/name/price) doesn't silently drop the translation maps during
+  // offline serialization or sync snapshots.
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'id': id,
+        'name': name,
+        'price': price,
+        if (optionTranslations.isNotEmpty)
+          'optionTranslations': optionTranslations,
+        if (attributeTranslations.isNotEmpty)
+          'attributeTranslations': attributeTranslations,
+      };
+}
+
+/// Read an `ar`/`en`/... translation map from a JSON payload. Accepts either a
+/// Map (language-keyed) or a Map nested under `name` / `translations`. Returns
+/// `null` when nothing usable was found so callers can keep the default.
+Map<String, String>? _readLocalizedMap(dynamic payload) {
+  if (payload is! Map) return null;
+  // If the payload has a nested `name` map (e.g. {name: {ar, en}}), unwrap it.
+  final source = payload['name'] is Map
+      ? payload['name'] as Map
+      : payload['translations'] is Map
+          ? payload['translations'] as Map
+          : payload;
+  const supported = {'ar', 'en', 'hi', 'ur', 'tr', 'es'};
+  final out = <String, String>{};
+  for (final entry in source.entries) {
+    final key = entry.key.toString().trim().toLowerCase();
+    if (!supported.contains(key)) continue;
+    final value = entry.value?.toString().trim() ?? '';
+    if (value.isEmpty) continue;
+    out[key] = value;
+  }
+  return out.isEmpty ? null : out;
 }
 
 @JsonSerializable()
@@ -246,6 +313,9 @@ class Product {
   final String? image;
   @JsonKey(defaultValue: [])
   final List<Extra> extras;
+  /// All available localized names from the API, keyed by language code.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  final Map<String, String> localizedNames;
 
   const Product({
     required this.id,
@@ -258,7 +328,22 @@ class Product {
     this.isActive = true,
     this.image,
     this.extras = const [],
+    this.localizedNames = const {},
   });
+
+  /// Get the product name for a specific language code.
+  /// Falls back to: requested lang → nameAr → nameEn → name.
+  String nameForLang(String langCode) {
+    final code = langCode.trim().toLowerCase();
+    if (localizedNames.containsKey(code) && localizedNames[code]!.isNotEmpty) {
+      return localizedNames[code]!;
+    }
+    if (code == 'ar' && nameAr.isNotEmpty) return nameAr;
+    if (code == 'en' && nameEn.isNotEmpty) return nameEn;
+    if (nameAr.isNotEmpty) return nameAr;
+    if (nameEn.isNotEmpty) return nameEn;
+    return name;
+  }
 
   factory Product.fromJson(Map<String, dynamic> json) {
     final normalized = Map<String, dynamic>.from(json);
@@ -302,6 +387,28 @@ class Product {
       normalized['item_name_en'],
       normalized['nameEn'],
     ]) ?? '';
+
+    // Extract localized names for all supported languages
+    final localizedNames = <String, String>{};
+    for (final code in const ['ar', 'en', 'hi', 'ur', 'tr', 'es']) {
+      final resolved = _readLocalizedText([
+        normalized['name_$code'],
+        normalized['name_display_$code'],
+        normalized['title_$code'],
+        normalized['meal_name_$code'],
+        normalized['item_name_$code'],
+      ]);
+      if (resolved != null && resolved.isNotEmpty) {
+        localizedNames[code] = resolved;
+      }
+    }
+    // Ensure ar and en are always populated from dedicated fields
+    if (!localizedNames.containsKey('ar') && (normalized['nameAr'] as String).isNotEmpty) {
+      localizedNames['ar'] = normalized['nameAr'] as String;
+    }
+    if (!localizedNames.containsKey('en') && (normalized['nameEn'] as String).isNotEmpty) {
+      localizedNames['en'] = normalized['nameEn'] as String;
+    }
 
     final normalizedCategory = _readLocalizedText([
       normalized['category_display'],
@@ -355,7 +462,6 @@ class Product {
         if (!imagePath.startsWith('/')) {
           imagePath = '/$imagePath';
         }
-        // Specific requirement: Meals images from portal.hermosaapp.com
         normalized['image'] = 'https://portal.hermosaapp.com$imagePath';
       }
     }
@@ -471,7 +577,20 @@ class Product {
       }).toList();
     }
 
-    return _$ProductFromJson(normalized);
+    final product = _$ProductFromJson(normalized);
+    return Product(
+      id: product.id,
+      name: product.name,
+      nameAr: product.nameAr,
+      nameEn: product.nameEn,
+      price: product.price,
+      category: product.category,
+      categoryId: product.categoryId,
+      isActive: product.isActive,
+      image: product.image,
+      extras: product.extras,
+      localizedNames: localizedNames,
+    );
   }
   Map<String, dynamic> toJson() => _$ProductToJson(this);
 }
@@ -492,6 +611,13 @@ class CartItem {
   @JsonKey(defaultValue: '')
   String notes; // Added notes
 
+  /// Optional salon-specific metadata for salon module cart items.
+  /// Contains keys like: service_id, employee_id, employee_name,
+  /// date, time, minutes, session_numbers, package_service_id.
+  /// Null for restaurant cart items — does not affect restaurant flow.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Map<String, dynamic>? salonData;
+
   CartItem({
     required this.cartId,
     required this.product,
@@ -501,6 +627,7 @@ class CartItem {
     this.discountType = DiscountType.amount,
     this.isFree = false,
     this.notes = '',
+    this.salonData,
   });
 
   factory CartItem.fromJson(Map<String, dynamic> json) =>
@@ -509,9 +636,12 @@ class CartItem {
 
   double get totalPrice {
     if (isFree) return 0.0;
+    // Quantity is informational (e.g. 0.5 = half portion) — price is always
+    // based on full units. Use ceiling so 0.5 counts as 1 full unit.
+    final priceQty = quantity < 1 ? 1.0 : quantity;
     final basePrice =
         (product.price + selectedExtras.fold(0.0, (sum, e) => sum + e.price)) *
-            quantity;
+            priceQty;
 
     if (discountType == DiscountType.percentage) {
       // Percentage discount must always stay in [0, 100].
@@ -894,7 +1024,6 @@ class PromoCode {
     final rawDiscount = normalized['discount'] ??
         normalized['discount_value'] ??
         normalized['percentage'] ??
-        normalized['value'] ??
         normalized['amount'];
     normalized['discount'] = _parseApiPrice(rawDiscount);
 

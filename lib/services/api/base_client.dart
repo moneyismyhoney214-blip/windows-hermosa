@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'api_constants.dart';
@@ -8,8 +9,8 @@ import 'error_handler.dart';
 
 // HTTP Client Configuration Constants
 class _HttpConfig {
-  static const Duration requestTimeout = Duration(seconds: 30);
-  static const Duration connectionTimeout = Duration(seconds: 10);
+  static const Duration requestTimeout = Duration(seconds: 15);
+  static const Duration connectionTimeout = Duration(seconds: 8);
   static const Duration idleTimeout = Duration(seconds: 30);
   static const int maxConnectionsPerHost = 6;
   static const int maxRetries = 1;
@@ -62,7 +63,7 @@ class BaseClient {
       ..maxConnectionsPerHost = _HttpConfig.maxConnectionsPerHost;
 
     _client = IOClient(_httpClient);
-    print('🔧 BaseClient initialized with connection pooling');
+    if (kDebugMode) debugPrint('🔧 BaseClient initialized with connection pooling');
   }
 
   /// Get or recreate the HTTP client
@@ -75,7 +76,7 @@ class BaseClient {
 
   /// Recreate client if connection issues occur
   void _recreateClient() {
-    print('🔄 Recreating HTTP client due to connection issue');
+    if (kDebugMode) debugPrint('🔄 Recreating HTTP client due to connection issue');
     try {
       _client?.close();
     } catch (e) {
@@ -100,7 +101,7 @@ class BaseClient {
               errorString.contains('connection closed before full header');
 
       if (isConnectionClosedError && attempt < _HttpConfig.maxRetries) {
-        print(
+        if (kDebugMode) debugPrint(
             '⚠️ Connection closed error detected, retrying... (attempt ${attempt + 1})');
         _recreateClient();
         await Future.delayed(const Duration(milliseconds: 500));
@@ -129,7 +130,7 @@ class BaseClient {
 
   void setToken(String token) {
     _authToken = token;
-    print('🔑 BaseClient token set');
+    if (kDebugMode) debugPrint('🔑 BaseClient token set');
   }
 
   String? getToken() {
@@ -149,21 +150,30 @@ class BaseClient {
   }
 
   Future<dynamic> get(String endpoint,
-      {String? customBaseUrl, bool skipGlobalAuth = false}) async {
+      {String? customBaseUrl,
+      bool skipGlobalAuth = false,
+      Map<String, String>? headers}) async {
     return _executeWithRetry(
       () => _getInternal(endpoint,
-          customBaseUrl: customBaseUrl, skipGlobalAuth: skipGlobalAuth),
+          customBaseUrl: customBaseUrl,
+          skipGlobalAuth: skipGlobalAuth,
+          headers: headers),
       endpoint: endpoint,
       method: 'GET',
     );
   }
 
   Future<dynamic> _getInternal(String endpoint,
-      {String? customBaseUrl, bool skipGlobalAuth = false}) async {
+      {String? customBaseUrl,
+      bool skipGlobalAuth = false,
+      Map<String, String>? headers}) async {
     final uri = _getUri(endpoint, customBaseUrl: customBaseUrl);
     try {
+      // Per-request header overrides (e.g. forcing Accept-Language for a
+      // printed report) layer on top of the base auth/accept headers.
+      final effectiveHeaders = {..._headers, ...?headers};
       final response = await _safeClient
-          .get(uri, headers: _headers)
+          .get(uri, headers: effectiveHeaders)
           .timeout(_HttpConfig.requestTimeout);
       return await _processResponse(response,
           skipGlobalAuth: skipGlobalAuth, requestUrl: uri.toString());
@@ -444,11 +454,9 @@ class BaseClient {
     final uri = _getUri(endpoint, customBaseUrl: customBaseUrl);
     try {
       final encodedBody = jsonEncode(payload);
-      print('🌐 PATCH Request:');
-      print('  URL: $uri');
-      print('  Payload (Dart): $payload');
-      print('  Payload (JSON): $encodedBody');
-      print('  Headers: $_headers');
+      if (kDebugMode) {
+        debugPrint('🌐 PATCH Request: $uri');
+      }
 
       final response = await _safeClient
           .patch(
@@ -458,9 +466,9 @@ class BaseClient {
           )
           .timeout(_HttpConfig.requestTimeout);
 
-      print('🌐 PATCH Response:');
-      print('  Status: ${response.statusCode}');
-      print('  Body: ${response.body}');
+      if (kDebugMode) {
+        debugPrint('🌐 PATCH Response: ${response.statusCode}');
+      }
 
       return await _processResponse(response,
           skipGlobalAuth: skipGlobalAuth, requestUrl: uri.toString());
@@ -536,9 +544,9 @@ class BaseClient {
     };
     if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
-      print('🔒 Adding auth header');
+      if (kDebugMode) debugPrint('🔒 Adding auth header');
     } else {
-      print('⚠️ No auth token available for request');
+      if (kDebugMode) debugPrint('⚠️ No auth token available for request');
     }
     return headers;
   }
@@ -572,11 +580,11 @@ class BaseClient {
         );
       }
     } else if (response.statusCode == 401) {
-      print('🚫 401 Unauthorized from: ${requestUrl ?? 'unknown'}');
+      if (kDebugMode) debugPrint('🚫 401 Unauthorized from: ${requestUrl ?? 'unknown'}');
       // Trigger unauthorized callback (with guard to prevent multiple triggers)
       if (!skipGlobalAuth && !_isHandlingUnauthorized) {
         _isHandlingUnauthorized = true;
-        print('🚫 401 Unauthorized - triggering logout callback');
+        if (kDebugMode) debugPrint('🚫 401 Unauthorized - triggering logout callback');
         try {
           await onUnauthorized?.call();
         } finally {

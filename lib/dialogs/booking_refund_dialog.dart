@@ -1,8 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../models.dart';
 import '../services/api/api_constants.dart';
+import '../services/api/device_service.dart';
 import '../services/api/order_service.dart';
+import '../services/language_service.dart';
+import '../services/print_orchestrator_service.dart';
+import '../services/printer_language_settings_service.dart';
+import '../services/printer_role_registry.dart';
 import '../locator.dart';
+import '../services/app_themes.dart';
 
 class _RefundItem {
   final int id;
@@ -138,6 +147,15 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
     setState(() => _isProcessing = true);
     try {
       final refundIds = _selectedItems.map((item) => item.id).toList();
+      // Snapshot BEFORE awaiting the API call so we can notify the kitchen
+      // about the items that were actually refunded. `_selectedItems` is
+      // mutable — don't pass it by reference into the fire-and-forget hook.
+      final snapshot = List<_RefundItem>.from(_selectedItems);
+      // Partial when at least one item survives post-refund; full when we
+      // selected every remaining candidate. The kitchen ticket header
+      // changes based on this flag (partial cancel vs full cancel).
+      final isFullRefund =
+          _items.isNotEmpty && snapshot.length >= _items.length;
 
       await _orderService.processBookingRefund(
         orderId: widget.bookingId,
@@ -146,18 +164,147 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
 
       if (!mounted) return;
       final refundedPreTax =
-          _selectedItems.fold(0.0, (sum, item) => sum + item.price);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('تم الاسترجاع بنجاح'),
+          snapshot.fold(0.0, (sum, item) => sum + item.price);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(translationService.t('refund_success')),
         backgroundColor: Color(0xFF10B981),
       ));
+      // Fire-and-forget kitchen notification — mirrors the invoice-refund
+      // flow. Without this hook, refunds triggered from the Orders screen
+      // silently skipped the kitchen, so cooks kept preparing items the
+      // cashier had already voided.
+      unawaited(_notifyKitchenOfRefund(snapshot, isFullRefund: isFullRefund));
       Navigator.pop(context, refundedPreTax);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isProcessing = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر تنفيذ الاسترجاع: $e')),
+        SnackBar(content: Text(translationService.t('failed_execute_refund', args: {'error': e.toString()}))),
       );
+    }
+  }
+
+  Future<void> _notifyKitchenOfRefund(
+    List<_RefundItem> refundedItems, {
+    required bool isFullRefund,
+  }) async {
+    if (refundedItems.isEmpty) return;
+    try {
+      final String lang = printerLanguageSettings.primary;
+      final String langSecondary =
+          printerLanguageSettings.allowSecondary &&
+                  printerLanguageSettings.secondary != lang
+              ? printerLanguageSettings.secondary
+              : '';
+
+      String pick(String code, String ar, String en,
+          {String? es, String? tr, String? hi, String? ur}) {
+        switch (code) {
+          case 'es':
+            return es ?? en;
+          case 'tr':
+            return tr ?? en;
+          case 'hi':
+            return hi ?? en;
+          case 'ur':
+            return ur ?? en;
+          case 'en':
+            return en;
+          case 'ar':
+            return ar;
+          default:
+            return ar;
+        }
+      }
+
+      String tl(String ar, String en,
+              {String? es, String? tr, String? hi, String? ur}) =>
+          pick(lang, ar, en, es: es, tr: tr, hi: hi, ur: ur);
+      String tlSec(String ar, String en,
+          {String? es, String? tr, String? hi, String? ur}) {
+        if (langSecondary.isEmpty) return '';
+        return pick(langSecondary, ar, en, es: es, tr: tr, hi: hi, ur: ur);
+      }
+
+      // Collect every candidate printer — the orchestrator filters down to
+      // Kitchen / KDS / Bar roles internally, so we pass the whole set and
+      // let it do the last-mile validation (role + reachable transport).
+      final devices = await getIt<DeviceService>().getDevices();
+      final registry = getIt<PrinterRoleRegistry>();
+      await registry.initialize();
+
+      final kitchenPrinters = devices.where((d) {
+        final type = d.type.trim().toLowerCase();
+        if (type != 'printer') return false;
+        final role = registry.resolveRole(d);
+        if (role != PrinterRole.kitchen &&
+            role != PrinterRole.kds &&
+            role != PrinterRole.bar) {
+          return false;
+        }
+        if (d.connectionType == PrinterConnectionType.bluetooth) {
+          return (d.bluetoothAddress ?? '').trim().isNotEmpty;
+        }
+        return d.ip.trim().isNotEmpty;
+      }).toList();
+      if (kitchenPrinters.isEmpty) return;
+
+      final items = refundedItems.map((it) {
+        final primary = tl('ملغي', 'Cancelled',
+            es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ');
+        final secondary = tlSec('ملغي', 'Cancelled',
+            es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ');
+        return <String, dynamic>{
+          'name': it.name,
+          'nameAr': it.name,
+          'quantity': it.quantity,
+          'tag': 'Cancelled',
+          // Keep `tagAr` for older renderers that haven't picked up the
+          // primary/secondary rename; new renderers prefer `tagPrimary`.
+          'tagAr': primary,
+          'tagPrimary': primary,
+          'tagSecondary': secondary,
+          'cancelled': true,
+          'tagColor': 'black',
+        };
+      }).toList();
+
+      final orderTypeLabel = isFullRefund
+          ? tl('إلغاء فاتورة', 'Invoice Cancelled',
+              es: 'Factura Cancelada',
+              tr: 'Fatura İptal',
+              hi: 'इनवॉइस रद्द',
+              ur: 'انوائس منسوخ')
+          : tl('استرجاع جزئي', 'Partial Refund',
+              es: 'Reembolso Parcial',
+              tr: 'Kısmi İade',
+              hi: 'आंशिक रिफंड',
+              ur: 'جزوی واپسی');
+      final noteLabel = isFullRefund
+          ? tl('⛔ الطلب ملغي بالكامل', '⛔ Entire order cancelled',
+              es: '⛔ Pedido cancelado',
+              tr: '⛔ Sipariş tamamen iptal',
+              hi: '⛔ पूरा ऑर्डर रद्द',
+              ur: '⛔ پورا آرڈر منسوخ')
+          : tl('⚠️ إلغاء جزئي', '⚠️ Partial cancellation',
+              es: '⚠️ Cancelación parcial',
+              tr: '⚠️ Kısmi iptal',
+              hi: '⚠️ आंशिक रद्दीकरण',
+              ur: '⚠️ جزوی منسوخی');
+
+      await getIt<PrintOrchestratorService>().enqueueKitchenPrint(
+        printers: kitchenPrinters,
+        orderNumber: widget.bookingLabel,
+        orderType: orderTypeLabel,
+        items: items,
+        note: noteLabel,
+        isRtl: lang == 'ar' || lang == 'ur',
+        primaryLang: lang,
+        secondaryLang: langSecondary.isEmpty ? null : langSecondary,
+        allowSecondary: langSecondary.isNotEmpty,
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to notify kitchen of booking refund: $e');
     }
   }
 
@@ -203,7 +350,7 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
+        color: context.appCardBg.withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(LucideIcons.refreshCw,
@@ -302,7 +449,7 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
               _loadData();
             },
             icon: const Icon(LucideIcons.refreshCw, size: 16),
-            label: const Text('إعادة المحاولة'),
+            label: Text(translationService.t('retry')),
             style: ElevatedButton.styleFrom(
                 backgroundColor: _kAccent, foregroundColor: Colors.white),
           ),
@@ -488,7 +635,7 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.12),
+        color: context.appCardBg.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(LucideIcons.dollarSign,

@@ -520,6 +520,26 @@ class CustomerFacingScreen extends StatelessWidget {
                                 : const Color(0xFF1B2538),
                           ),
                         ),
+                        // Secondary-language name (Arabic/English pair) so
+                        // non-Arabic-speaking customers can confirm the item.
+                        if (item.displayNameEn.isNotEmpty &&
+                            item.displayNameEn != item.displayName)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              item.displayNameEn,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: unavailable
+                                    ? const Color(0xFFB0B7C3)
+                                    : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ),
                         // عرض الإضافات (extras)
                         if (item.selectedExtras.isNotEmpty && !unavailable)
                           Padding(
@@ -770,12 +790,25 @@ class CustomerFacingScreen extends StatelessWidget {
   }
 
   String _groupExtras(List<ProductExtra> extras) {
-    final counts = <String, int>{};
+    // Group by id so the Arabic/English pair for the same addon stays aligned.
+    // Rendering both names lets customers recognize the modifier regardless
+    // of which language they read.
+    final grouped = <String, _ExtraGroupEntry>{};
     for (final e in extras) {
-      counts[e.name] = (counts[e.name] ?? 0) + 1;
+      final key = e.id.isNotEmpty ? e.id : e.name;
+      final existing = grouped[key];
+      if (existing == null) {
+        grouped[key] =
+            _ExtraGroupEntry(nameAr: e.name, nameEn: e.nameEn, count: 1);
+      } else {
+        existing.count += 1;
+      }
     }
-    return counts.entries.map((e) {
-      return e.value > 1 ? '${e.value}x${e.key}' : e.key;
+    return grouped.values.map((entry) {
+      final label = (entry.nameEn.isNotEmpty && entry.nameEn != entry.nameAr)
+          ? '${entry.nameAr} / ${entry.nameEn}'
+          : entry.nameAr;
+      return entry.count > 1 ? '${entry.count}x$label' : label;
     }).join('، ');
   }
 
@@ -1036,4 +1069,15 @@ class _AutoScrollCartListState extends State<_AutoScrollCartList> {
       },
     );
   }
+}
+
+class _ExtraGroupEntry {
+  final String nameAr;
+  final String nameEn;
+  int count;
+  _ExtraGroupEntry({
+    required this.nameAr,
+    required this.nameEn,
+    required this.count,
+  });
 }

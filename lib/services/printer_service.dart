@@ -5,10 +5,12 @@ import 'dart:typed_data';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart' as esc;
 import 'package:flutter/material.dart';
+import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart' as fbp;
 import 'package:image/image.dart' as img;
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import '../models.dart';
 import '../models/receipt_data.dart';
+import 'network_print_helper.dart';
 
 class PrintRequest {
   final DeviceConfig device;
@@ -18,6 +20,9 @@ class PrintRequest {
   final bool isTest;
   final bool isCreditNote;
   final bool isRtl;
+  final String? primaryLang;
+  final String? secondaryLang;
+  final bool? allowSecondary;
   final String id;
 
   /// Completer that signals when this print job is fully done
@@ -39,6 +44,9 @@ class PrintRequest {
     this.isTest = false,
     this.isCreditNote = false,
     this.isRtl = true,
+    this.primaryLang,
+    this.secondaryLang,
+    this.allowSecondary,
   }) : id = DateTime.now().microsecondsSinceEpoch.toString();
 
   /// Future that completes when the print job finishes.
@@ -163,6 +171,9 @@ class PrinterService {
     bool isTest = false,
     bool isCreditNote = false,
     bool isRtl = true,
+    String? primaryLang,
+    String? secondaryLang,
+    bool? allowSecondary,
   }) async {
     _assertPrinterDevice(device);
     final request = PrintRequest(
@@ -171,6 +182,9 @@ class PrinterService {
       isTest: isTest,
       isCreditNote: isCreditNote,
       isRtl: isRtl,
+      primaryLang: primaryLang,
+      secondaryLang: secondaryLang,
+      allowSecondary: allowSecondary,
     );
     _addPrintRequest(request);
     await request.done;
@@ -208,6 +222,9 @@ class PrinterService {
     String? cashierName,
     String? printerName,
     bool isRtl = true,
+    String? primaryLang,
+    String? secondaryLang,
+    bool? allowSecondary,
   }) async {
     _assertPrinterDevice(device);
     final request = PrintRequest(
@@ -226,6 +243,9 @@ class PrinterService {
         'carNumber': carNumber,
         'cashierName': cashierName,
         'printerName': printerName,
+        if (primaryLang != null) 'primaryLang': primaryLang,
+        if (secondaryLang != null) 'secondaryLang': secondaryLang,
+        if (allowSecondary != null) 'allowSecondary': allowSecondary,
       },
       isRtl: isRtl,
     );
@@ -253,7 +273,29 @@ class PrinterService {
     final device = request.device;
 
     if (_isBluetoothPrinter(device)) {
-      // Bluetooth is handled directly by the Receipt widget's controller in the UI
+      // Encode the PNG through the same ESC/POS pipeline network printing uses,
+      // then stream the bytes over the Bluetooth transport. Previously this
+      // method returned early, so raw-image BT jobs (e.g. the closing report)
+      // silently did nothing on Bluetooth printers.
+      final address = device.bluetoothAddress?.trim() ?? '';
+      if (address.isEmpty) {
+        throw Exception('عنوان البلوتوث غير محدد للطابعة ${device.name}');
+      }
+      final escBytes = await NetworkPrintHelper.encodeImageToEscPos(
+        imageBytes: imageBytes,
+        paperWidthMm: device.paperWidthMm,
+        addFeeds: 4,
+      );
+      try {
+        await fbp.FlutterBluetoothPrinter.printBytes(
+          address: address,
+          data: escBytes,
+          keepConnected: false,
+        );
+      } catch (e) {
+        debugPrint('❌ BT raw-image print failed [${device.name}]: $e');
+        rethrow;
+      }
       return;
     }
 

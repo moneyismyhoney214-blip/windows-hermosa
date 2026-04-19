@@ -5,9 +5,11 @@ import 'settings/display_devices_tab_view.dart';
 import 'settings/profile_view.dart';
 import 'settings/cashier_settings_view.dart';
 import 'language_selector.dart';
+import 'printer_language_settings_view.dart';
 import '../services/api/auth_service.dart';
 import '../services/language_service.dart';
 import '../screens/login_screen.dart';
+import '../services/app_themes.dart';
 
 class SettingsView extends StatefulWidget {
   final List<DeviceConfig> devices;
@@ -24,6 +26,8 @@ class SettingsView extends StatefulWidget {
   final ValueChanged<bool> onAutoPrintCashierChanged;
   final bool autoPrintCustomer;
   final ValueChanged<bool> onAutoPrintCustomerChanged;
+  final bool autoPrintCustomerSecondCopy;
+  final ValueChanged<bool> onAutoPrintCustomerSecondCopyChanged;
   final bool printKitchenInvoices;
   final ValueChanged<bool> onPrintKitchenInvoicesChanged;
   final bool allowPrintWithKds;
@@ -32,6 +36,8 @@ class SettingsView extends StatefulWidget {
   final ValueChanged<double> onMealIconScaleChanged;
   final double sidebarIconScale;
   final ValueChanged<double> onSidebarIconScaleChanged;
+  final bool categoryLayoutVertical;
+  final ValueChanged<bool> onCategoryLayoutVerticalChanged;
   final VoidCallback? onBack;
   final VoidCallback? onSwitchBranch;
 
@@ -51,6 +57,8 @@ class SettingsView extends StatefulWidget {
     required this.onAutoPrintCashierChanged,
     required this.autoPrintCustomer,
     required this.onAutoPrintCustomerChanged,
+    required this.autoPrintCustomerSecondCopy,
+    required this.onAutoPrintCustomerSecondCopyChanged,
     required this.printKitchenInvoices,
     required this.onPrintKitchenInvoicesChanged,
     required this.allowPrintWithKds,
@@ -59,6 +67,8 @@ class SettingsView extends StatefulWidget {
     required this.onMealIconScaleChanged,
     required this.sidebarIconScale,
     required this.onSidebarIconScaleChanged,
+    required this.categoryLayoutVertical,
+    required this.onCategoryLayoutVerticalChanged,
     this.onBack,
     this.onSwitchBranch,
   });
@@ -116,6 +126,9 @@ class _SettingsViewState extends State<SettingsView> {
           onAutoPrintCashierChanged: widget.onAutoPrintCashierChanged,
           autoPrintCustomer: widget.autoPrintCustomer,
           onAutoPrintCustomerChanged: widget.onAutoPrintCustomerChanged,
+          autoPrintCustomerSecondCopy: widget.autoPrintCustomerSecondCopy,
+          onAutoPrintCustomerSecondCopyChanged:
+              widget.onAutoPrintCustomerSecondCopyChanged,
           printKitchenInvoices: widget.printKitchenInvoices,
           onPrintKitchenInvoicesChanged: widget.onPrintKitchenInvoicesChanged,
           allowPrintWithKds: widget.allowPrintWithKds,
@@ -124,11 +137,20 @@ class _SettingsViewState extends State<SettingsView> {
           onMealIconScaleChanged: widget.onMealIconScaleChanged,
           sidebarIconScale: widget.sidebarIconScale,
           onSidebarIconScaleChanged: widget.onSidebarIconScaleChanged,
+          categoryLayoutVertical: widget.categoryLayoutVertical,
+          onCategoryLayoutVerticalChanged: widget.onCategoryLayoutVerticalChanged,
         );
       case 3:
         return SingleChildScrollView(
           padding: EdgeInsets.all(isSmallScreen ? 12 : 24),
-          child: const LanguageSelector(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: const [
+              LanguageSelector(),
+              SizedBox(height: 16),
+              PrinterLanguageSettingsView(),
+            ],
+          ),
         );
       default:
         return ProfileView(
@@ -172,9 +194,9 @@ class _SettingsViewState extends State<SettingsView> {
           if (isSmallScreen) {
             final isVeryNarrow = constraints.maxWidth < 390;
             return Scaffold(
-              backgroundColor: const Color(0xFFF8FAFC),
+              backgroundColor: context.appBg,
               appBar: AppBar(
-                backgroundColor: Colors.white,
+                backgroundColor: context.appCardBg,
                 elevation: 0,
                 leading: widget.onBack != null
                     ? IconButton(
@@ -182,7 +204,7 @@ class _SettingsViewState extends State<SettingsView> {
                           translationService.isRTL
                               ? Icons.chevron_right
                               : Icons.chevron_left,
-                          color: const Color(0xFF64748B),
+                          color: context.appTextMuted,
                         ),
                         onPressed: widget.onBack,
                       )
@@ -211,9 +233,9 @@ class _SettingsViewState extends State<SettingsView> {
                         vertical: isVeryNarrow ? 8 : 10,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: context.appCardBg,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        border: Border.all(color: context.appBorder),
                       ),
                       child: _isLoadingBranch
                           ? const LinearProgressIndicator(minHeight: 2)
@@ -272,11 +294,11 @@ class _SettingsViewState extends State<SettingsView> {
                           0,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: context.appCardBg,
                           borderRadius: BorderRadius.vertical(
                             top: Radius.circular(isVeryNarrow ? 14 : 18),
                           ),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          border: Border.all(color: context.appBorder),
                         ),
                         child: _buildContent(isSmallScreen: true),
                       ),
@@ -301,14 +323,14 @@ class _SettingsViewState extends State<SettingsView> {
           }
 
           return Scaffold(
-            backgroundColor: const Color(0xFFF8FAFC),
+            backgroundColor: context.appBg,
             body: Row(
               children: [
                 // Sidebar for settings tabs
                 Container(
                   width: 280,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: context.appCardBg,
                     border: Border(
                       left: translationService.isRTL
                           ? BorderSide(color: Colors.grey.shade200)
@@ -338,7 +360,7 @@ class _SettingsViewState extends State<SettingsView> {
                                         ? Icons.chevron_right
                                         : Icons.chevron_left),
                                     onPressed: widget.onBack,
-                                    color: const Color(0xFF64748B),
+                                    color: context.appTextMuted,
                                   ),
                                   Text(
                                     translationService.t('back_to_main'),
@@ -592,8 +614,14 @@ class _SettingsViewState extends State<SettingsView> {
             vertical: 14,
           ),
           decoration: BoxDecoration(
-            color: const Color(0xFFFEF2F2),
+            color: context.isDark
+                ? const Color(0xFFEF4444).withValues(alpha: 0.15)
+                : const Color(0xFFFEF2F2),
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: const Color(0xFFEF4444).withValues(alpha: 0.35),
+              width: 1,
+            ),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -709,28 +737,28 @@ class _DevicesSettingsCombined extends StatelessWidget {
     return DefaultTabController(
       length: 2,
       child: Container(
-        color: const Color(0xFFF8FAFC),
+        color: context.appBg,
         child: Column(
           children: [
             Container(
-              color: Colors.white,
+              color: context.appBg,
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Container(
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
+                  color: context.appSurfaceAlt,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: context.appBorder),
                 ),
                 child: TabBar(
                   isScrollable: false,
                   indicator: BoxDecoration(
-                    color: const Color(0xFFF58220),
+                    color: context.appPrimary,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   indicatorSize: TabBarIndicatorSize.tab,
                   labelColor: Colors.white,
-                  unselectedLabelColor: const Color(0xFF475569),
+                  unselectedLabelColor: context.appTextMuted,
                   labelStyle: const TextStyle(fontWeight: FontWeight.w700),
                   dividerColor: Colors.transparent,
                   labelPadding: EdgeInsets.zero,

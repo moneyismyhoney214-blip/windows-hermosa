@@ -158,8 +158,8 @@ class PrinterRoleRegistry {
       return PrinterRole.kitchen;
     }
 
-    // Keep kitchen routing safe by default for unknown printers.
-    return PrinterRole.general;
+    // Default to kitchen so unrecognized printers still receive kitchen tickets.
+    return PrinterRole.kitchen;
   }
 
   Future<void> _persist() async {

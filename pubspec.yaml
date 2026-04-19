@@ -59,6 +59,11 @@ dependencies:
   # NearPay Terminal SDK (vendor)
   flutter_terminal_sdk:
     path: vendor/flutter_terminal_sdk
+  cached_network_image: ^3.4.1
+
+  # Waiter module — LAN service discovery + vibration feedback
+  bonsoir: ^5.1.11
+  vibration: ^2.0.0
 
 dev_dependencies:
   flutter_test:
@@ -82,7 +87,7 @@ flutter:
 
   assets:
     - assets/sounds/
-
+    - assets/database/database.sqlite
     - assets/splash/logo.png
 
     - assets/splash/butterfly.gif
@@ -91,3 +96,4 @@ flutter:
     - assets/certs/
     - assets/hermosa app ico.png
     - assets/animation/Success.gif
+    - assets/waiter_module/sounds/

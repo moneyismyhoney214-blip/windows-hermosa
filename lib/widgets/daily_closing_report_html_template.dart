@@ -1,5 +1,6 @@
 import 'package:intl/intl.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
+import 'package:hermosa_pos/services/printer_language_settings_service.dart';
 
 class DailyClosingReportLine {
   final String label;
@@ -10,6 +11,61 @@ class DailyClosingReportLine {
 
 class DailyClosingReportHtmlTemplate {
   static final _numberFormatter = NumberFormat('0.00', 'en');
+
+  /// Resolve the primary invoice language for every label on the HTML
+  /// closing receipt. Pulls from the printer-language settings so an
+  /// es/en branch doesn't still get Arabic headers — the previous template
+  /// had the labels baked directly into the HTML string.
+  static String _pickLang(String code,
+      {required String ar,
+      required String en,
+      String? hi,
+      String? ur,
+      String? tr,
+      String? es}) {
+    switch (code) {
+      case 'ar':
+        return ar;
+      case 'hi':
+        return hi ?? en;
+      case 'ur':
+        return ur ?? en;
+      case 'tr':
+        return tr ?? en;
+      case 'es':
+        return es ?? en;
+      case 'en':
+      default:
+        return en;
+    }
+  }
+
+  static String _main(
+      {required String ar,
+      required String en,
+      String? hi,
+      String? ur,
+      String? tr,
+      String? es}) {
+    final code = printerLanguageSettings.primary.trim().toLowerCase();
+    return _pickLang(code,
+        ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+  }
+
+  static String _sec(
+      {required String ar,
+      required String en,
+      String? hi,
+      String? ur,
+      String? tr,
+      String? es}) {
+    final primary = printerLanguageSettings.primary.trim().toLowerCase();
+    final secondary = printerLanguageSettings.secondary.trim().toLowerCase();
+    if (!printerLanguageSettings.allowSecondary) return '';
+    if (secondary == primary) return '';
+    return _pickLang(secondary,
+        ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+  }
 
   static String generate({
     required DateTime dateFrom,
@@ -22,9 +78,13 @@ class DailyClosingReportHtmlTemplate {
     final printTime =
         DateFormat('hh:mm a', 'en').format(generatedAt).toLowerCase();
 
+    final primary = printerLanguageSettings.primary.trim().toLowerCase();
+    // Arabic and Urdu are the two RTL locales we support; everything else
+    // reads left-to-right.
+    final isRtl = primary == 'ar' || primary == 'ur';
     return '''
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="$primary" dir="${isRtl ? 'rtl' : 'ltr'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -49,20 +109,41 @@ class DailyClosingReportHtmlTemplate {
   // ==========================================
 
   static String _buildHeader(String printDate, String printTime) {
+    // Primary label on the left of the row, secondary label on the right.
+    // When the cashier only configured a single language the secondary cell
+    // collapses to an empty span so the grid stays aligned.
+    final datePrimary = _escapeHtml(_main(ar: 'التاريخ', en: 'Date', hi: 'दिनांक', ur: 'تاریخ', es: 'Fecha', tr: 'Tarih'));
+    final dateSecondary = _escapeHtml(_sec(ar: 'التاريخ', en: 'Date', hi: 'दिनांक', ur: 'تاریخ', es: 'Fecha', tr: 'Tarih'));
+    final timePrimary = _escapeHtml(_main(ar: 'الوقت', en: 'Time', hi: 'समय', ur: 'وقت', es: 'Hora', tr: 'Saat'));
+    final timeSecondary = _escapeHtml(_sec(ar: 'الوقت', en: 'Time', hi: 'समय', ur: 'وقت', es: 'Hora', tr: 'Saat'));
+    final titlePrimary = _escapeHtml(_main(
+        ar: 'إقفالية مبيعات',
+        en: 'Sales Closing',
+        hi: 'बिक्री समापन',
+        ur: 'سیلز کلوزنگ',
+        es: 'Cierre de Ventas',
+        tr: 'Satış Kapanışı'));
+    final titleSecondary = _escapeHtml(_sec(
+        ar: 'إقفالية مبيعات',
+        en: 'Sales Closing',
+        hi: 'बिक्री समापन',
+        ur: 'سیلز کلوزنگ',
+        es: 'Cierre de Ventas',
+        tr: 'Satış Kapanışı'));
     return '''
     <div class="header-row">
-      <span>التاريخ</span>
+      <span>$datePrimary</span>
       <span class="center">$printDate</span>
-      <span class="left" dir="ltr">Date</span>
+      <span class="left">$dateSecondary</span>
     </div>
     <div class="header-row">
-      <span>الوقت</span>
+      <span>$timePrimary</span>
       <span class="center">$printTime</span>
-      <span class="left" dir="ltr">Time</span>
+      <span class="left">$timeSecondary</span>
     </div>
 
     <div class="receipt-title">
-      إقفالية مبيعات
+      $titlePrimary${titleSecondary.isEmpty || titleSecondary == titlePrimary ? '' : '<br><small>$titleSecondary</small>'}
     </div>
     ''';
   }
@@ -77,23 +158,59 @@ class DailyClosingReportHtmlTemplate {
       </tr>
     ''').join('\n');
 
+    final payMethodsHeader = _escapeHtml(_main(
+        ar: 'طرق الدفع',
+        en: 'Payment Methods',
+        hi: 'भुगतान विधियाँ',
+        ur: 'ادائیگی کے طریقے',
+        es: 'Métodos de Pago',
+        tr: 'Ödeme Yöntemleri'));
+    final amountHeader = _escapeHtml(_main(
+        ar: 'المبلغ',
+        en: 'Amount',
+        hi: 'राशि',
+        ur: 'رقم',
+        es: 'Monto',
+        tr: 'Tutar'));
+    final currencyHeader = _escapeHtml(_main(
+        ar: 'العملة',
+        en: 'Currency',
+        hi: 'मुद्रा',
+        ur: 'کرنسی',
+        es: 'Moneda',
+        tr: 'Para Birimi'));
+    final fromLabel = _escapeHtml(_main(
+        ar: 'من',
+        en: 'From',
+        hi: 'से',
+        ur: 'سے',
+        es: 'Desde',
+        tr: 'Başlangıç'));
+    final toLabel = _escapeHtml(_main(
+        ar: 'إلى',
+        en: 'To',
+        hi: 'तक',
+        ur: 'تک',
+        es: 'Hasta',
+        tr: 'Bitiş'));
+
     return '''
     <table class="receipt-table">
       <thead>
         <tr class="bold-row">
-          <th class="label-col">طرق الدفع</th>
-          <th class="val-col">المبلغ</th>
-          <th class="currency-col">العملة</th>
+          <th class="label-col">$payMethodsHeader</th>
+          <th class="val-col">$amountHeader</th>
+          <th class="currency-col">$currencyHeader</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td class="label-col">من</td>
+          <td class="label-col">$fromLabel</td>
           <td class="val-col" dir="ltr">${DateFormat('yyyy-MM-dd').format(dateFrom)}</td>
           <td class="currency-col">-</td>
         </tr>
         <tr>
-          <td class="label-col">إلى</td>
+          <td class="label-col">$toLabel</td>
           <td class="val-col" dir="ltr">${DateFormat('yyyy-MM-dd').format(dateTo)}</td>
           <td class="currency-col">-</td>
         </tr>
@@ -104,12 +221,26 @@ class DailyClosingReportHtmlTemplate {
   }
 
   static String _buildFooter() {
+    final thanks = _escapeHtml(_main(
+        ar: 'شكراً لثقتكم بنا',
+        en: 'Thank you for your trust',
+        hi: 'आपके विश्वास के लिए धन्यवाद',
+        ur: 'اعتماد پر شکریہ',
+        es: 'Gracias por su confianza',
+        tr: 'Güveniniz için teşekkürler'));
+    final tagline = _escapeHtml(_main(
+        ar: 'برنامج هيرموسا المحاسبي المتكامل',
+        en: 'Hermosa Integrated Accounting System',
+        hi: 'हर्मोसा एकीकृत लेखा प्रणाली',
+        ur: 'ہرموسا مربوط اکاؤنٹنگ سسٹم',
+        es: 'Sistema Contable Integral Hermosa',
+        tr: 'Hermosa Entegre Muhasebe Sistemi'));
     return '''
     <div class="footer-divider"></div>
     <div class="footer-text">
-      شكراً لثقتكم بنا<br>
-      <strong>برنامج هيرموسا المحاسبي المتكامل</strong><br>
-      <span dir="ltr">https://test.hermosaapp.com</span>
+      $thanks<br>
+      <strong>$tagline</strong><br>
+      <span dir="ltr">https://portal.hermosaapp.com</span>
     </div>
     ''';
   }

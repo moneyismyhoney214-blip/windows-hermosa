@@ -45,7 +45,7 @@ class ApiValidationResult {
 }
 
 class ApiValidationSuite {
-  static const String baseUrl = 'https://api.hermosaapp.com';
+  static const String baseUrl = 'https://portal.hermosaapp.com';
   static const Duration timeout = Duration(seconds: 15);
 
   final List<ApiValidationResult> results = [];

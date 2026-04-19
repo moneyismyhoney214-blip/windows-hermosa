@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allows plain ws:// traffic ONLY to private/LAN addresses, so waiter
+     peers can talk to each other on the local network without needing
+     TLS certificates. Public-internet HTTPS is still enforced. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Private IPv4 ranges -->
+        <domain includeSubdomains="true">10.0.0.0/8</domain>
+        <domain includeSubdomains="true">172.16.0.0/12</domain>
+        <domain includeSubdomains="true">192.168.0.0/16</domain>
+        <!-- Loopback -->
+        <domain includeSubdomains="true">127.0.0.0/8</domain>
+        <!-- mDNS / Link-local -->
+        <domain includeSubdomains="true">169.254.0.0/16</domain>
+        <domain includeSubdomains="true">.local</domain>
+    </domain-config>
+</network-security-config>

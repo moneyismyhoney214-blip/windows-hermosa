@@ -12,17 +12,42 @@ import 'package:hermosa_pos/dialogs/product_customization_dialog.dart';
 import 'package:hermosa_pos/widgets/product_card.dart';
 import '../locator.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
+
+/// Describes a single change in an order edit.
+/// Types: 'add', 'cancel', 'partial_cancel', 'qty_change', 'replace_old', 'replace_new'
+class OrderChange {
+  final String type;
+  final String name;
+  final int quantity;
+  final int? oldQuantity;
+  final int? cancelledQuantity;
+  final Map<String, String>? localizedNames;
+  final List<Extra> extras;
+
+  const OrderChange({
+    required this.type,
+    required this.name,
+    required this.quantity,
+    this.oldQuantity,
+    this.cancelledQuantity,
+    this.localizedNames,
+    this.extras = const [],
+  });
+}
 
 class EditOrderDialog extends StatefulWidget {
   final Booking booking;
   final Map<String, dynamic> bookingData;
   final double taxRate;
+  final void Function(List<OrderChange> changes, String orderNumber, {bool isFullCancel})? onPrintChanges;
 
   const EditOrderDialog({
     super.key,
     required this.booking,
     required this.bookingData,
     this.taxRate = 0.0,
+    this.onPrintChanges,
   });
 
   @override
@@ -32,6 +57,7 @@ class EditOrderDialog extends StatefulWidget {
 class _EditOrderDialogState extends State<EditOrderDialog> {
   final OrderService _orderService = getIt<OrderService>();
   final List<_EditableOrderItem> _items = [];
+  final List<_EditableOrderItem> _originalItems = [];
   bool _saving = false;
 
   bool get _useArabicUi {
@@ -51,9 +77,136 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     final data = _asMap(widget.bookingData['data']) ?? widget.bookingData;
     final meals = _extractMeals(data);
     _items.clear();
+    _originalItems.clear();
     for (final meal in meals) {
       _items.add(_EditableOrderItem.fromMap(meal));
+      _originalItems.add(_EditableOrderItem.fromMap(meal));
     }
+  }
+
+  List<OrderChange> _detectChanges() {
+    final changes = <OrderChange>[];
+    final matchedOriginals = <int>{};
+    final matchedNew = <int>{};
+
+    // PERF: build a mealId → [original indices] index so matching is O(n)
+    // instead of the previous O(n²) nested scan. With 50+ items this cuts
+    // the ~2500-comparison hot path down to one linear pass on save.
+    final originalByMealId = <Object, List<int>>{};
+    for (var i = 0; i < _originalItems.length; i++) {
+      originalByMealId
+          .putIfAbsent(_originalItems[i].mealId, () => <int>[])
+          .add(i);
+    }
+
+    // Step 1: Match items by mealId — detect quantity changes
+    for (var n = 0; n < _items.length; n++) {
+      final newItem = _items[n];
+      int? bestMatch;
+      final candidates = originalByMealId[newItem.mealId];
+      if (candidates != null) {
+        for (final idx in candidates) {
+          if (!matchedOriginals.contains(idx)) {
+            bestMatch = idx;
+            break;
+          }
+        }
+      }
+
+      if (bestMatch != null) {
+        final oldItem = _originalItems[bestMatch];
+        matchedOriginals.add(bestMatch);
+        matchedNew.add(n);
+
+        final oldQty = oldItem.quantity.round();
+        final newQty = newItem.quantity.round();
+
+        if (oldQty != newQty) {
+          if (newQty < oldQty) {
+            // Partial cancel — quantity decreased
+            changes.add(OrderChange(
+              type: 'partial_cancel',
+              name: newItem.name,
+              quantity: newQty,
+              oldQuantity: oldQty,
+              cancelledQuantity: oldQty - newQty,
+              localizedNames: newItem.localizedNames,
+              extras: newItem.extras,
+            ));
+          } else {
+            // Quantity increased
+            changes.add(OrderChange(
+              type: 'qty_change',
+              name: newItem.name,
+              quantity: newQty,
+              oldQuantity: oldQty,
+              localizedNames: newItem.localizedNames,
+              extras: newItem.extras,
+            ));
+          }
+        }
+      }
+    }
+
+    // Step 2: Collect unmatched (removed & added)
+    final removed = <_EditableOrderItem>[];
+    for (var i = 0; i < _originalItems.length; i++) {
+      if (!matchedOriginals.contains(i)) removed.add(_originalItems[i]);
+    }
+    final added = <_EditableOrderItem>[];
+    for (var n = 0; n < _items.length; n++) {
+      if (!matchedNew.contains(n)) added.add(_items[n]);
+    }
+
+    // Step 3: Pair removed+added as replacements
+    final pairedRemoved = <int>{};
+    final pairedAdded = <int>{};
+    for (var r = 0; r < removed.length && r < added.length; r++) {
+      pairedRemoved.add(r);
+      pairedAdded.add(r);
+      // Old item cancelled
+      changes.add(OrderChange(
+        type: 'replace_old',
+        name: removed[r].name,
+        quantity: removed[r].quantity.round(),
+        localizedNames: removed[r].localizedNames,
+        extras: removed[r].extras,
+      ));
+      // New item replaces it
+      changes.add(OrderChange(
+        type: 'replace_new',
+        name: added[r].name,
+        quantity: added[r].quantity.round(),
+        localizedNames: added[r].localizedNames,
+        extras: added[r].extras,
+      ));
+    }
+
+    // Step 4: Remaining removed = fully cancelled
+    for (var r = 0; r < removed.length; r++) {
+      if (pairedRemoved.contains(r)) continue;
+      changes.add(OrderChange(
+        type: 'cancel',
+        name: removed[r].name,
+        quantity: removed[r].quantity.round(),
+        localizedNames: removed[r].localizedNames,
+        extras: removed[r].extras,
+      ));
+    }
+
+    // Step 5: Remaining added = new additions
+    for (var a = 0; a < added.length; a++) {
+      if (pairedAdded.contains(a)) continue;
+      changes.add(OrderChange(
+        type: 'add',
+        name: added[a].name,
+        quantity: added[a].quantity.round(),
+        localizedNames: added[a].localizedNames,
+        extras: added[a].extras,
+      ));
+    }
+
+    return changes;
   }
 
   Map<String, dynamic>? _asMap(dynamic value) {
@@ -241,6 +394,66 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
 
   Future<void> _saveChanges() async {
     if (_saving) return;
+
+    // If all items removed, cancel the order instead
+    if (_items.isEmpty) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(_tr('إلغاء الطلب', 'Cancel Order')),
+          content: Text(_tr(
+            'لا يوجد عناصر في الطلب. هل تريد إلغاء الطلب بالكامل؟',
+            'No items in order. Cancel the entire order?',
+          )),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(_tr('لا', 'No')),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444),
+                foregroundColor: Colors.white,
+              ),
+              child: Text(_tr('نعم، إلغاء الطلب', 'Yes, Cancel Order')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      setState(() => _saving = true);
+      try {
+        await _orderService.updateBookingStatus(
+          orderId: widget.booking.id.toString(),
+          status: 8,
+        );
+        // Print cancellation ticket for all original items
+        if (widget.onPrintChanges != null) {
+          final cancelChanges = _originalItems.map((item) => OrderChange(
+            type: 'cancel',
+            name: item.name,
+            quantity: item.quantity.round(),
+            localizedNames: item.localizedNames,
+          )).toList();
+          final orderNum = (_asMap(widget.bookingData['data']) ?? widget.bookingData)['daily_order_number']?.toString() ??
+              widget.booking.orderNumber ?? widget.booking.id.toString();
+          widget.onPrintChanges!(cancelChanges, orderNum, isFullCancel: true);
+        }
+        if (!mounted) return;
+        Navigator.pop(context, true);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_tr('فشل إلغاء الطلب', 'Failed to cancel order'))),
+        );
+      } finally {
+        if (mounted) setState(() => _saving = false);
+      }
+      return;
+    }
+
     setState(() => _saving = true);
 
     try {
@@ -280,6 +493,22 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         updatedAt: updatedAt,
         typeExtra: typeExtra,
       );
+
+      // Detect changes and trigger print
+      final changes = _detectChanges();
+      debugPrint('🔄 Order edit: ${changes.length} changes detected (original=${_originalItems.length} items, new=${_items.length} items)');
+      for (final c in changes) {
+        debugPrint('🔄 Change: type=${c.type} name=${c.name} qty=${c.quantity} oldQty=${c.oldQuantity} cancelledQty=${c.cancelledQuantity}');
+      }
+      debugPrint('🔄 onPrintChanges callback: ${widget.onPrintChanges != null ? "SET" : "NULL"}');
+      if (changes.isNotEmpty && widget.onPrintChanges != null) {
+        final orderNum = data['daily_order_number']?.toString() ??
+            data['order_number']?.toString() ??
+            data['booking_number']?.toString() ??
+            widget.booking.orderNumber ??
+            widget.booking.id.toString();
+        widget.onPrintChanges!(changes, orderNum, isFullCancel: false);
+      }
 
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -415,7 +644,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: context.appBg,
                 border: Border(top: BorderSide(color: Colors.grey[200]!)),
               ),
               child: Row(
@@ -470,9 +699,9 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appCardBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: context.appBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -594,9 +823,9 @@ class _QtyButton extends StatelessWidget {
         width: 28,
         height: 28,
         decoration: BoxDecoration(
-          color: const Color(0xFFF1F5F9),
+          color: context.appSurfaceAlt,
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: context.appBorder),
         ),
         child: Icon(icon, size: 14, color: const Color(0xFF0F172A)),
       ),
@@ -611,6 +840,7 @@ class _EditableOrderItem {
   final double unitPrice;
   final List<Extra> extras;
   final String notes;
+  final Map<String, String>? localizedNames;
 
   _EditableOrderItem({
     required this.mealId,
@@ -619,6 +849,7 @@ class _EditableOrderItem {
     required this.unitPrice,
     required this.extras,
     required this.notes,
+    this.localizedNames,
   });
 
   double get totalPrice {
@@ -647,7 +878,11 @@ class _EditableOrderItem {
       'price': unitPrice,
       'unit_price': unitPrice,
       if (notes.isNotEmpty) 'note': notes,
-      if (extras.isNotEmpty) 'addons': extras.map((e) => e.id).toList(),
+      if (extras.isNotEmpty)
+        'addons': extras
+            .map((e) => int.tryParse(e.id.toString().trim()))
+            .whereType<int>()
+            .toList(),
     };
   }
 
@@ -664,6 +899,7 @@ class _EditableOrderItem {
       unitPrice: product.price,
       extras: extras,
       notes: notes,
+      localizedNames: product.localizedNames.isNotEmpty ? product.localizedNames : null,
     );
   }
 
@@ -772,6 +1008,19 @@ class _EditableOrderItem {
       }
     }
 
+    // Extract localizedNames from meal_name_translations
+    final Map<String, String>? locNames;
+    final mt = map['meal_name_translations'];
+    if (mt is Map) {
+      locNames = {};
+      for (final e in mt.entries) {
+        final v = e.value?.toString().trim() ?? '';
+        if (v.isNotEmpty) locNames[e.key.toString()] = v;
+      }
+    } else {
+      locNames = null;
+    }
+
     return _EditableOrderItem(
       mealId: mealId,
       name: name,
@@ -779,6 +1028,7 @@ class _EditableOrderItem {
       unitPrice: unitPrice,
       extras: extras,
       notes: map['note']?.toString() ?? map['notes']?.toString() ?? '',
+      localizedNames: locNames,
     );
   }
 }

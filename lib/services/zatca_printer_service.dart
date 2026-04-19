@@ -10,39 +10,41 @@ import '../models.dart';
 
 class ZatcaPrinterService {
   final ScreenshotController _screenshotController = ScreenshotController();
-  static const double _widgetCapturePixelRatio = 3.0;
   static const double _receiptPdfRasterDpi = 300;
 
   /// Captures a widget and prints it as an image
   Future<void> printWidget(DeviceConfig device, Widget widget) async {
-    // Build a shrink-wrapped tree so the captured bitmap only contains the
-    // receipt itself. Center/full-screen wrappers caused the printed receipt to
-    // appear tiny because large blank margins were rasterized too.
-    final view = WidgetsBinding.instance.platformDispatcher.views.first;
-    final mediaQuery = MediaQueryData.fromView(view);
-    final wrappedWidget = MediaQuery(
-      data: mediaQuery,
-      child: Directionality(
-        textDirection: TextDirection.rtl,
-        child: Material(
-          color: Colors.white,
-          child: Align(
-            alignment: Alignment.topCenter,
-            widthFactor: 1,
-            heightFactor: 1,
-            child: widget,
-          ),
+    // Use the same logical width as InvoicePrintWidget so text fills
+    // the receipt paper at a readable size.
+    final normalizedPaperWidthMm = normalizePaperWidthMm(device.paperWidthMm);
+    final double receiptWidth = invoiceWidgetWidthForPaper(normalizedPaperWidthMm);
+
+    final wrappedWidget = Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: Colors.white,
+        child: SizedBox(
+          width: receiptWidth,
+          child: widget,
         ),
       ),
     );
 
+    // Capture at high pixel ratio for crisp text
+    final int dotsWidth = thermalRasterWidthForPaper(normalizedPaperWidthMm);
+    final double captureRatio = dotsWidth / receiptWidth;
+
     final Uint8List imageBytes = await _screenshotController.captureFromWidget(
       wrappedWidget,
-      pixelRatio: _widgetCapturePixelRatio,
-      delay: const Duration(milliseconds: 120), // Wait for fonts/images
+      pixelRatio: captureRatio,
+      delay: const Duration(milliseconds: 120),
     );
 
-    await _printImageBytes(device, imageBytes);
+    // Send raw PNG directly to printer — NetworkPrintHelper / print_listener
+    // will handle the final thermal processing (resize + binarize).
+    // Skipping _printImageBytes avoids double-processing that destroys clarity.
+    final printerService = getIt<PrinterService>();
+    await printerService.printRawImage(device, imageBytes);
   }
 
   Future<void> printZatcaReceipt(

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models/customer.dart';
 import '../services/api/customer_service.dart';
 import '../locator.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 
 class CustomersScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -24,6 +27,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
   String _searchQuery = '';
   int _currentPage = 1;
   bool _hasMore = true;
+  Timer? _searchDebounce;
 
   final ScrollController _scrollController = ScrollController();
 
@@ -40,6 +44,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -118,10 +123,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
   }
 
   void _onSearch(String value) {
-    setState(() {
-      _searchQuery = value;
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) {
+        setState(() => _searchQuery = value);
+        _loadCustomers(refresh: true);
+      }
     });
-    _loadCustomers(refresh: true);
   }
 
   Future<void> _addCustomer() async {
@@ -168,7 +176,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.appBg,
       body: Directionality(
         textDirection: isRTL ? TextDirection.rtl : TextDirection.ltr,
         child: Column(
@@ -179,7 +187,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 horizontal: horizontalPadding,
                 vertical: 12,
               ),
-              color: Colors.white,
+              color: context.appCardBg,
               child: isCompact
                   ? Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -327,9 +335,9 @@ class _CustomerCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appCardBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: context.appBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

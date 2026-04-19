@@ -4,6 +4,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class CashierSoundService {
   final AudioPlayer _audioPlayer = AudioPlayer(playerId: 'cashier-button');
+  // Separate player for NearPay success so it doesn't stomp a button tap
+  // that may still be fading out when a successful purchase completes.
+  final AudioPlayer _nearPaySuccessPlayer =
+      AudioPlayer(playerId: 'cashier-nearpay-success');
   DateTime? _lastTapAt;
   bool _isInitialized = false;
   bool _isMuted = false;
@@ -29,9 +33,30 @@ class CashierSoundService {
       }
       await _audioPlayer.setReleaseMode(ReleaseMode.stop);
       await _audioPlayer.setVolume(_isMuted ? 0.0 : _volume);
+      await _nearPaySuccessPlayer.setReleaseMode(ReleaseMode.stop);
+      await _nearPaySuccessPlayer.setVolume(_isMuted ? 0.0 : 1.0);
       _isInitialized = true;
     } catch (e) {
       debugPrint('CashierSoundService init failed: $e');
+    }
+  }
+
+  /// Play the Apple-Pay-style confirmation chime. Called by the NearPay flow
+  /// after a successful purchase so the cashier gets audible feedback even
+  /// before the native reader UI animates away.
+  Future<void> playNearPaySuccess() async {
+    if (_isMuted || _isLinuxDesktop) return;
+    try {
+      if (!_isInitialized) {
+        await initialize();
+      }
+      await _nearPaySuccessPlayer.stop();
+      await _nearPaySuccessPlayer.play(
+        AssetSource('sounds/applepay.mp3'),
+        volume: _isMuted ? 0.0 : 1.0,
+      );
+    } catch (e) {
+      debugPrint('NearPay success sound failed: $e');
     }
   }
 
@@ -61,6 +86,7 @@ class CashierSoundService {
     _isMuted = value;
     if (!_isLinuxDesktop) {
       await _audioPlayer.setVolume(_isMuted ? 0.0 : _volume);
+      await _nearPaySuccessPlayer.setVolume(_isMuted ? 0.0 : 1.0);
     }
     await _saveSettings();
   }
@@ -99,5 +125,6 @@ class CashierSoundService {
   Future<void> dispose() async {
     if (_isLinuxDesktop) return;
     await _audioPlayer.dispose();
+    await _nearPaySuccessPlayer.dispose();
   }
 }

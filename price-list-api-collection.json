@@ -1,0 +1,484 @@
+{
+  "info": {
+    "name": "Price List (Menu Lists) APIs",
+    "_postman_id": "price-list-menu-lists-collection",
+    "description": "All APIs related to the Price List / Menu Lists feature for restaurant branches",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "{{base_url}}",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "{{admin_token}}",
+      "type": "string"
+    },
+    {
+      "key": "seller_token",
+      "value": "{{seller_token}}",
+      "type": "string"
+    },
+    {
+      "key": "branch_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "menu_list_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "menu_type_id",
+      "value": "1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Admin - Menu Types",
+      "item": [
+        {
+          "name": "List Menu Types",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/menuTypes?search=&is_active=&page=1",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "menuTypes"],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Search by Arabic name (optional)"
+                },
+                {
+                  "key": "is_active",
+                  "value": "",
+                  "description": "Filter by active status: true or false (optional)"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number for pagination"
+                }
+              ]
+            },
+            "description": "Get paginated list of all menu types.\n\nMiddleware: auth:sanctum, ability:admin, active"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    {\n      \"id\": 1,\n      \"name\": {\n        \"ar\": \"سعر التوصيل\",\n        \"en\": \"Delivery Price\",\n        \"es\": null\n      },\n      \"name_display\": \"سعر التوصيل\",\n      \"is_active\": true,\n      \"created_at\": \"2025-01-01T00:00:00.000000Z\",\n      \"updated_at\": \"2025-01-01T00:00:00.000000Z\"\n    }\n  ],\n  \"links\": { \"first\": \"...\", \"last\": \"...\", \"prev\": null, \"next\": null },\n  \"meta\": { \"current_page\": 1, \"last_page\": 1, \"per_page\": 15, \"total\": 1 }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Menu Types for Dropdown (Create)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/menuTypes/create",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "menuTypes", "create"]
+            },
+            "description": "Get available menu types for creation dropdown.\n\nMiddleware: auth:sanctum, ability:admin, active"
+          }
+        },
+        {
+          "name": "Create Menu Type",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": {\n    \"ar\": \"سعر التوصيل\",\n    \"en\": \"Delivery Price\",\n    \"es\": null\n  },\n  \"is_active\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/menuTypes",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "menuTypes"]
+            },
+            "description": "Create a new menu type.\n\nMiddleware: auth:sanctum, ability:admin, active\n\nValidation:\n- name.ar: required, string, max:255\n- name.en: required, string, max:255\n- name.es: optional, string, max:255\n- is_active: optional, boolean (default: true)"
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"data\": {\n    \"id\": 1,\n    \"name\": {\n      \"ar\": \"سعر التوصيل\",\n      \"en\": \"Delivery Price\",\n      \"es\": null\n    },\n    \"name_display\": \"سعر التوصيل\",\n    \"is_active\": true,\n    \"created_at\": \"2025-01-01T00:00:00.000000Z\",\n    \"updated_at\": \"2025-01-01T00:00:00.000000Z\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Menu Type",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": {\n    \"ar\": \"سعر التوصيل المحدّث\",\n    \"en\": \"Updated Delivery Price\",\n    \"es\": null\n  },\n  \"is_active\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/menuTypes/{{menu_type_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "menuTypes", "{{menu_type_id}}"]
+            },
+            "description": "Update an existing menu type.\n\nMiddleware: auth:sanctum, ability:admin, active"
+          }
+        },
+        {
+          "name": "Toggle Menu Type Active Status (Delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/menuTypes/{{menu_type_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "menuTypes", "{{menu_type_id}}"]
+            },
+            "description": "Toggle the active status of a menu type (soft delete).\n\nMiddleware: auth:sanctum, ability:admin, active"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Seller - Menu Lists",
+      "item": [
+        {
+          "name": "List Branch Menu Lists",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{seller_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/menuLists?page=1",
+              "host": ["{{base_url}}"],
+              "path": ["seller", "branches", "{{branch_id}}", "menuLists"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number for pagination"
+                }
+              ]
+            },
+            "description": "Get paginated list of all menu lists for a specific branch.\n\nMiddleware: auth:sanctum, ability:employee, active, branch:active|contract|seller|work\nExtra check: Branch must be a RESTAURANTS type module"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    {\n      \"id\": 1,\n      \"is_active\": true,\n      \"menu_type\": {\n        \"id\": 1,\n        \"name_display\": \"سعر التوصيل\"\n      },\n      \"items_count\": 10\n    }\n  ],\n  \"links\": { \"first\": \"...\", \"last\": \"...\", \"prev\": null, \"next\": null },\n  \"meta\": { \"current_page\": 1, \"last_page\": 1, \"per_page\": 15, \"total\": 1 }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Meals for Menu List Creation",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{seller_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/menuLists/create",
+              "host": ["{{base_url}}"],
+              "path": ["seller", "branches", "{{branch_id}}", "menuLists", "create"]
+            },
+            "description": "Get meals grouped by category for menu list creation form.\n\nMiddleware: auth:sanctum, ability:employee, active, branch:active|contract|seller|work\nExtra check: Branch must be a RESTAURANTS type module"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    {\n      \"category\": \"برجر\",\n      \"meals\": [\n        {\n          \"id\": 1,\n          \"name\": \"برجر كلاسيك\",\n          \"price\": \"15.000\",\n          \"image\": \"/storage/meals/burger.jpg\"\n        }\n      ]\n    },\n    {\n      \"category\": \"Uncategorized\",\n      \"meals\": [\n        {\n          \"id\": 5,\n          \"name\": \"بيتزا مارغريتا\",\n          \"price\": \"20.000\",\n          \"image\": \"/storage/meals/pizza.jpg\"\n        }\n      ]\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Menu List",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{seller_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"menu_type_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/menuLists",
+              "host": ["{{base_url}}"],
+              "path": ["seller", "branches", "{{branch_id}}", "menuLists"]
+            },
+            "description": "Create a new menu list for a branch.\n\nMiddleware: auth:sanctum, ability:employee, active, branch:active|contract|seller|work\nExtra check: Branch must be a RESTAURANTS type module\n\nValidation:\n- menu_type_id: required, integer, must exist in menu_types table, unique per branch\n\nNote: After creation, all existing branch meals are automatically added as menu list items with null prices."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"data\": {\n    \"id\": 1,\n    \"is_active\": true,\n    \"menu_type\": {\n      \"id\": 1,\n      \"name_display\": \"سعر التوصيل\"\n    },\n    \"items_count\": 10\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Menu List Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{seller_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/menuLists/{{menu_list_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["seller", "branches", "{{branch_id}}", "menuLists", "{{menu_list_id}}"]
+            },
+            "description": "Get detailed menu list with all items grouped by category, including delivery and pickup prices.\n\nMiddleware: auth:sanctum, ability:employee, active, branch:active|contract|seller|work\nExtra check: Branch must be a RESTAURANTS type module"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": {\n    \"id\": 1,\n    \"is_active\": true,\n    \"menu_type\": {\n      \"id\": 1,\n      \"name_display\": \"سعر التوصيل\"\n    },\n    \"categories\": [\n      {\n        \"name\": \"برجر\",\n        \"items\": [\n          {\n            \"id\": 101,\n            \"delivery_price\": \"15.000\",\n            \"pickup_price\": \"12.000\",\n            \"meal\": {\n              \"id\": 1,\n              \"name\": \"برجر كلاسيك\",\n              \"original_price\": \"14.000\",\n              \"image\": \"/storage/meals/burger.jpg\"\n            }\n          }\n        ]\n      },\n      {\n        \"name\": \"Uncategorized\",\n        \"items\": [\n          {\n            \"id\": 102,\n            \"delivery_price\": null,\n            \"pickup_price\": null,\n            \"meal\": {\n              \"id\": 5,\n              \"name\": \"بيتزا مارغريتا\",\n              \"original_price\": \"20.000\",\n              \"image\": \"/storage/meals/pizza.jpg\"\n            }\n          }\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Toggle Menu List Active Status (Delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{seller_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/menuLists/{{menu_list_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["seller", "branches", "{{branch_id}}", "menuLists", "{{menu_list_id}}"]
+            },
+            "description": "Toggle the active status of a menu list.\n\nMiddleware: auth:sanctum, ability:employee, active, branch:active|contract|seller|work\nExtra check: Branch must be a RESTAURANTS type module"
+          }
+        },
+        {
+          "name": "Bulk Update Menu List Item Prices",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{seller_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"id\": 101,\n      \"delivery_price\": \"15.000\",\n      \"pickup_price\": \"12.000\"\n    },\n    {\n      \"id\": 102,\n      \"delivery_price\": null,\n      \"pickup_price\": \"18.000\"\n    },\n    {\n      \"id\": 103,\n      \"delivery_price\": \"22.000\",\n      \"pickup_price\": null\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/menuLists/{{menu_list_id}}/bulk-items",
+              "host": ["{{base_url}}"],
+              "path": ["seller", "branches", "{{branch_id}}", "menuLists", "{{menu_list_id}}", "bulk-items"]
+            },
+            "description": "Bulk update delivery and pickup prices for multiple menu list items at once.\n\nMiddleware: auth:sanctum, ability:employee, active, branch:active|contract|seller|work\nExtra check: Branch must be a RESTAURANTS type module\n\nValidation:\n- items: required, array\n- items.*.id: required, integer, must exist in menu_list_items table\n- items.*.delivery_price: optional, nullable, decimal, min:0\n- items.*.pickup_price: optional, nullable, decimal, min:0\n\nNote: Items not included in the request are left unchanged."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Updated successfully\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Sync Menu List with New Meals",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{seller_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/menuLists/{{menu_list_id}}/sync",
+              "host": ["{{base_url}}"],
+              "path": ["seller", "branches", "{{branch_id}}", "menuLists", "{{menu_list_id}}", "sync"]
+            },
+            "description": "Sync the menu list with newly added branch meals. Automatically adds any branch meals that are not yet in this menu list (with null prices).\n\nMiddleware: auth:sanctum, ability:employee, active, branch:active|contract|seller|work\nExtra check: Branch must be a RESTAURANTS type module\n\nNote: Returns the full updated menu list (same structure as Show endpoint)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Updated successfully\",\n  \"data\": {\n    \"id\": 1,\n    \"is_active\": true,\n    \"menu_type\": {\n      \"id\": 1,\n      \"name_display\": \"سعر التوصيل\"\n    },\n    \"categories\": [\n      {\n        \"name\": \"برجر\",\n        \"items\": [\n          {\n            \"id\": 101,\n            \"delivery_price\": \"15.000\",\n            \"pickup_price\": \"12.000\",\n            \"meal\": {\n              \"id\": 1,\n              \"name\": \"برجر كلاسيك\",\n              \"original_price\": \"14.000\",\n              \"image\": \"/storage/meals/burger.jpg\"\n            }\n          }\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -112,6 +112,13 @@ class DisplayLanguageService {
     'currency_suffix': '{value} {currency}',
     'conn_reconnecting': 'جارٍ إعادة الاتصال...',
     'conn_reconnect_in': 'إعادة المحاولة خلال {seconds} ث',
+
+    // NearPay Payment Screen
+    'nearpay_payment': 'دفع NearPay',
+    'warning_title': 'تحذير',
+    'confirm_cancel_payment': 'هل أنت متأكد من إلغاء عملية الدفع؟',
+    'no': 'لا',
+    'yes': 'نعم',
   };
 
   static const Map<String, String> _en = <String, String>{
@@ -157,6 +164,13 @@ class DisplayLanguageService {
     'cds_current': 'Current: {amount}',
     'currency_default': 'SAR',
     'currency_suffix': '{value} {currency}',
+
+    // NearPay Payment Screen
+    'nearpay_payment': 'NearPay Payment',
+    'warning_title': 'Warning',
+    'confirm_cancel_payment': 'Are you sure you want to cancel the payment?',
+    'no': 'No',
+    'yes': 'Yes',
   };
 
   static const Map<String, String> _es = <String, String>{
@@ -200,6 +214,13 @@ class DisplayLanguageService {
     'cds_current': 'Actual: {amount}',
     'currency_default': 'SAR',
     'currency_suffix': '{value} {currency}',
+
+    // NearPay Payment Screen
+    'nearpay_payment': 'Pago NearPay',
+    'warning_title': 'Advertencia',
+    'confirm_cancel_payment': '¿Estás seguro de cancelar el pago?',
+    'no': 'No',
+    'yes': 'Sí',
   };
 
   static const Map<String, String> _hi = <String, String>{
@@ -243,7 +264,13 @@ class DisplayLanguageService {
     'cds_current': 'वर्तमान: {amount}',
     'currency_default': 'SAR',
     'currency_suffix': '{value} {currency}',
-    
+
+    // NearPay Payment Screen
+    'nearpay_payment': 'NearPay भुगतान',
+    'warning_title': 'चेतावनी',
+    'confirm_cancel_payment': 'क्या आप भुगतान रद्द करना चाहते हैं?',
+    'no': 'नहीं',
+    'yes': 'हाँ',
   };
 
   static const Map<String, String> _ur = <String, String>{
@@ -287,7 +314,13 @@ class DisplayLanguageService {
     'cds_current': 'موجودہ: {amount}',
     'currency_default': 'SAR',
     'currency_suffix': '{value} {currency}',
-    
+
+    // NearPay Payment Screen
+    'nearpay_payment': 'NearPay ادائیگی',
+    'warning_title': 'انتباہ',
+    'confirm_cancel_payment': 'کیا آپ واقعی ادائیگی منسوخ کرنا چاہتے ہیں؟',
+    'no': 'نہیں',
+    'yes': 'ہاں',
   };
 
   static const Map<String, String> _tr = <String, String>{
@@ -331,6 +364,12 @@ class DisplayLanguageService {
     'cds_current': 'Guncel: {amount}',
     'currency_default': 'SAR',
     'currency_suffix': '{value} {currency}',
-    
+
+    // NearPay Payment Screen
+    'nearpay_payment': 'NearPay Odeme',
+    'warning_title': 'Uyari',
+    'confirm_cancel_payment': 'Odemeyi iptal etmek istediginizden emin misiniz?',
+    'no': 'Hayir',
+    'yes': 'Evet',
   };
 }

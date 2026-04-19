@@ -1,0 +1,30 @@
+workflows:
+  windows-workflow:
+    name: Hermosa Windows Build
+    instance_type: windows_x2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+    scripts:
+      - name: Flutter version
+        script: flutter --version
+      - name: Enable Windows desktop
+        script: flutter config --enable-windows-desktop
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Build Windows Release
+        script: flutter build windows --release
+      - name: Package as ZIP
+        script: |
+          cd build\windows\x64\runner\Release
+          Compress-Archive -Path * -DestinationPath $env:CM_BUILD_DIR\hermosa-windows.zip
+    artifacts:
+      - hermosa-windows.zip
+      - build/windows/x64/runner/Release/**/*.exe
+    publishing:
+      email:
+        recipients:
+          - support@hermosaapp.com
+        notify:
+          success: true
+          failure: true
