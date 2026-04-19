@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models/customer.dart';
 import '../services/api/customer_service.dart';
 import '../locator.dart';
 import '../screens/customers_screen.dart'; // To reuse CustomerFormDialog
+import '../services/language_service.dart';
 
 class CustomerSelectionDialog extends StatefulWidget {
   const CustomerSelectionDialog({super.key});
@@ -20,6 +23,7 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
   List<Customer> _customers = [];
   bool _isLoading = false;
   String _searchQuery = '';
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -43,15 +47,27 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في تحميل العملاء: $e')),
+          SnackBar(content: Text(translationService.t('error_loading_customers', args: {'error': e.toString()}))),
         );
       }
     }
   }
 
   void _onSearch(String value) {
-    setState(() => _searchQuery = value);
-    _loadCustomers();
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) {
+        setState(() => _searchQuery = value);
+        _loadCustomers();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _addNewCustomer() async {
@@ -113,7 +129,7 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
                     controller: _searchController,
                     onChanged: _onSearch,
                     decoration: InputDecoration(
-                      hintText: 'بحث باسم العميل أو الرقم...',
+                      hintText: translationService.t('customer_search_dialog_hint'),
                       prefixIcon: const Icon(LucideIcons.search, size: 18),
                       filled: true,
                       fillColor: const Color(0xFFF1F5F9),
@@ -158,7 +174,7 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
                               ElevatedButton.icon(
                                 onPressed: _addNewCustomer,
                                 icon: const Icon(LucideIcons.plus, size: 18),
-                                label: const Text('إضافة عميل جديد'),
+                                label: Text(translationService.t('add_new_customer')),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFFF58220),
                                   foregroundColor: Colors.white,

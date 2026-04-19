@@ -1,0 +1,2050 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:hermosa_pos/utils/paper_width_utils.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import '../models/receipt_data.dart';
+import '../services/api/api_constants.dart';
+import 'invoice_html_template.dart';
+
+/// Dashed Divider Widget
+class DottedDivider extends StatelessWidget {
+  const DottedDivider({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final boxWidth = constraints.constrainWidth();
+        const dotWidth = 2.0;
+        const dotSpace = 4.0;
+        final dotCount = (boxWidth / (dotWidth + dotSpace)).floor();
+        return Flex(
+          direction: Axis.horizontal,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: List.generate(dotCount, (_) {
+            return SizedBox(
+              width: dotWidth,
+              height: 2,
+              child: const DecoratedBox(
+                decoration: BoxDecoration(color: Colors.grey),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+class DashedDivider extends StatelessWidget {
+  final Color color;
+  const DashedDivider({super.key, this.color = Colors.black});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final boxWidth = constraints.constrainWidth();
+        const dashWidth = 4.0;
+        const dashSpace = 3.0;
+        final dashCount = (boxWidth / (dashWidth + dashSpace)).floor();
+        return Flex(
+          direction: Axis.horizontal,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: List.generate(dashCount, (_) {
+            return SizedBox(
+              width: dashWidth,
+              height: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: color),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+/// Invoice Print Widget - Black & White Theme
+class InvoicePrintWidget extends StatelessWidget {
+  final OrderReceiptData? data;
+  final Map<String, dynamic>? kitchenData;
+  final bool isTest;
+  final int paperWidthMm;
+  final String? orderType;
+  final String? tableNumber;
+  final String? carNumber;
+  final String? dailyOrderNumber;
+  final String? carBrand;
+  final String? carModel;
+  final String? carPlateNumber;
+  final String? carYear;
+  final String? clientName;
+  final String? clientPhone;
+  final String? clientTaxNumber;
+  final String? commercialRegisterNumber;
+  final String? returnPolicy;
+  final bool useHtmlView;
+  final String primaryLang;
+  final String secondaryLang;
+  final bool allowSecondary;
+
+  const InvoicePrintWidget({
+    super.key,
+    this.data,
+    this.kitchenData,
+    this.isTest = false,
+    this.paperWidthMm = 58,
+    this.orderType,
+    this.tableNumber,
+    this.carNumber,
+    this.dailyOrderNumber,
+    this.carBrand,
+    this.carModel,
+    this.carPlateNumber,
+    this.carYear,
+    this.clientName,
+    this.clientPhone,
+    this.clientTaxNumber,
+    this.commercialRegisterNumber,
+    this.returnPolicy,
+    this.useHtmlView = false,
+    this.isRtl = true,
+    this.isCreditNote = false,
+    this.primaryLang = 'ar',
+    this.secondaryLang = 'en',
+    this.allowSecondary = true,
+  });
+
+  final bool isRtl;
+  final bool isCreditNote;
+
+  double get _receiptWidth => invoiceWidgetWidthForPaper(paperWidthMm);
+  double get _summaryLabelWidth => _receiptWidth * 0.52;
+
+  /// Resolve a label for a language code.
+  static String _r(String code, {required String ar, required String en, String? hi, String? ur, String? tr, String? es}) {
+    switch (code) {
+      case 'hi': return hi ?? en;
+      case 'ur': return ur ?? en;
+      case 'tr': return tr ?? en;
+      case 'es': return es ?? en;
+      case 'en': return en;
+      case 'ar': default: return ar;
+    }
+  }
+  /// Primary label.
+  String _ml({required String ar, required String en, String? hi, String? ur, String? tr, String? es}) =>
+      _r(primaryLang, ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+  /// Secondary label.
+  String _sl({required String ar, required String en, String? hi, String? ur, String? tr, String? es}) {
+    if (!allowSecondary || secondaryLang == primaryLang) return '';
+    return _r(secondaryLang, ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+  }
+
+  /// Format a datetime string to "yyyy-MM-dd hh:mm a" (no seconds)
+  static String _formatDateTime(String? raw) {
+    if (raw == null || raw.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(raw);
+      final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+      final amPm = dt.hour >= 12 ? 'PM' : 'AM';
+      return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} $amPm';
+    } catch (_) {
+      // If parsing fails, try to strip seconds from "2026-04-15 14:30:45"
+      final match = RegExp(r'(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})').firstMatch(raw);
+      if (match != null) {
+        final date = match.group(1)!;
+        final h = int.tryParse(match.group(2)!) ?? 0;
+        final m = match.group(3)!;
+        final hour = h % 12 == 0 ? 12 : h % 12;
+        final amPm = h >= 12 ? 'PM' : 'AM';
+        return '$date ${hour.toString().padLeft(2, '0')}:$m $amPm';
+      }
+      return raw;
+    }
+  }
+
+  double get _impliedDiscount {
+    if (data == null) return 0;
+    // If there's an explicit order discount, use it
+    if (data!.hasOrderDiscount) return data!.orderDiscountAmount ?? 0;
+    // Compare items sum with totalInclVat (both tax-inclusive) to avoid false discounts
+    final itemsSum = data!.items.fold<double>(0.0, (s, i) => s + i.total);
+    final totalWithTax = data!.totalInclVat;
+    return itemsSum > totalWithTax && (itemsSum - totalWithTax) > 0.01
+        ? itemsSum - totalWithTax
+        : 0.0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final receiptWidth = _receiptWidth;
+
+    // Restore the original wrapper (padding 8, fontSize 20, line-height 1.4)
+    // for every receipt type. Earlier tighter values broke QR capture on the
+    // cashier receipt; inner widgets still have their own compact font sizes
+    // where they explicitly set fontSize.
+    return Directionality(
+      textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
+      child: Container(
+        key: const ValueKey('invoice-print-root'),
+        width: receiptWidth,
+        color: Colors.white,
+        padding: const EdgeInsets.all(5),
+        child: DefaultTextStyle(
+          style: GoogleFonts.tajawal(
+            color: Colors.black,
+            fontSize: isTest ? 24 : 20,
+            fontWeight: FontWeight.bold,
+            height: 1.4,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (isTest)
+                _buildTestView()
+              else if (kitchenData != null)
+                _buildKitchenView()
+              else if (data != null) ...[
+                _buildHeader(),
+                _buildInvoiceTitle(),
+                if (clientName != null ||
+                    clientPhone != null ||
+                    clientTaxNumber != null)
+                  _buildClientInfo(),
+                if ((orderType?.isNotEmpty == true
+                            ? orderType
+                            : data!.orderType) ==
+                        'restaurant_parking' ||
+                    (data!.carNumber.isNotEmpty) ||
+                    (carNumber != null && carNumber!.isNotEmpty))
+                  _buildCarInfo(),
+                _buildItems(),
+                _buildTotals(),
+                _buildFooter(),
+              ] else
+                const Center(child: Text('لا توجد بيانات للطباعة')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String generateHtmlForPrint() {
+    if (data == null) return "<html><body>Test / Kitchen Print</body></html>";
+    return InvoiceHtmlTemplate.generateInvoiceHtml(
+      data: data!,
+      orderType: orderType,
+      tableNumber: tableNumber,
+      carNumber: carNumber,
+      dailyOrderNumber: dailyOrderNumber,
+      carBrand: carBrand,
+      carModel: carModel,
+      carPlateNumber: carPlateNumber,
+      carYear: carYear,
+      clientName: clientName,
+      clientPhone: clientPhone,
+      clientTaxNumber: clientTaxNumber,
+      commercialRegisterNumber: commercialRegisterNumber,
+      returnPolicy: returnPolicy,
+      paperWidthMm: paperWidthMm,
+      primaryLang: primaryLang,
+      secondaryLang: secondaryLang,
+      allowSecondary: allowSecondary,
+    );
+  }
+
+  Widget _buildHeader() {
+    if (data == null) return const SizedBox.shrink();
+    final hasLogo = data!.sellerLogo != null && data!.sellerLogo!.isNotEmpty;
+    final resolvedDailyOrderNumber =
+        (dailyOrderNumber != null && dailyOrderNumber!.trim().isNotEmpty)
+            ? dailyOrderNumber!.trim()
+            : (data!.orderNumber != null && data!.orderNumber!.trim().isNotEmpty)
+                ? data!.orderNumber!.trim()
+                : null;
+    final resolvedInvoiceNumber = data!.invoiceNumber.replaceAll('#', '').trim();
+
+    return Column(
+      children: [
+        // Centered Header
+        Center(
+          child: Column(
+            children: [
+              if (hasLogo)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2.0),
+                  child: Image.network(
+                    data!.sellerLogo!,
+                    height: 52,
+                    width: 52,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) =>
+                        const SizedBox(),
+                  ),
+                ),
+              Text(
+                data!.sellerNameAr,
+                style: GoogleFonts.tajawal(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black),
+                textAlign: TextAlign.center,
+              ),
+              if (data!.sellerNameEn.isNotEmpty && data!.sellerNameEn != data!.sellerNameAr)
+                Text(
+                  data!.sellerNameEn,
+                  style: GoogleFonts.tajawal(
+                      fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              if (data!.branchAddress != null && data!.branchAddress!.isNotEmpty)
+                Text(
+                  data!.branchAddress!,
+                  style: GoogleFonts.tajawal(fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              if (data!.branchMobile != null && data!.branchMobile!.isNotEmpty)
+                Text(
+                  data!.branchMobile!,
+                  style: GoogleFonts.tajawal(
+                      fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                  textDirection: TextDirection.ltr,
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 2),
+        const DashedDivider(),
+        const SizedBox(height: 2),
+        
+        // Daily Order Number — compact inline row + optional EN secondary line
+        if (resolvedDailyOrderNumber != null) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  '${_ml(ar: 'رقم الطلب اليومي', en: 'Daily Order', hi: 'दैनिक ऑर्डर', ur: 'روزانہ آرڈر', es: 'Pedido Diario', tr: 'Günlük Sipariş')}: ',
+                  style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  '#$resolvedDailyOrderNumber',
+                  style: GoogleFonts.tajawal(fontSize: 36, fontWeight: FontWeight.w900, height: 1.0),
+                ),
+              ],
+            ),
+          ),
+          if (_sl(ar: 'رقم الطلب اليومي', en: 'Daily Order', hi: 'दैनिक ऑर्डर', ur: 'روزانہ آرڈر', es: 'Pedido Diario', tr: 'Günlük Sipariş').isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                _sl(ar: 'رقم الطلب اليومي', en: 'Daily Order', hi: 'दैनिक ऑर्डर', ur: 'روزانہ آرڈر', es: 'Pedido Diario', tr: 'Günlük Sipariş'),
+                style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+            ),
+        ],
+
+        // Invoice Number — compact inline row + optional EN secondary line
+        if (resolvedInvoiceNumber.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  isCreditNote
+                      ? '${_ml(ar: 'رقم إشعار الدائن', en: 'Credit Note No.')}: '
+                      : '${_ml(ar: 'رقم الفاتورة', en: 'Invoice No.')}: ',
+                  style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  resolvedInvoiceNumber,
+                  style: GoogleFonts.tajawal(fontSize: 24, fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+          if ((isCreditNote
+                  ? _sl(ar: 'رقم إشعار الدائن', en: 'Credit Note No.')
+                  : _sl(ar: 'رقم الفاتورة', en: 'Invoice No.'))
+              .isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                isCreditNote
+                    ? _sl(ar: 'رقم إشعار الدائن', en: 'Credit Note No.')
+                    : _sl(ar: 'رقم الفاتورة', en: 'Invoice No.'),
+                style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+            ),
+        ],
+
+        const DashedDivider(),
+        const SizedBox(height: 2),
+
+        _buildInfoItem(
+            _ml(ar: 'الكاشير', en: 'Cashier', hi: 'कैशियर', ur: 'کیشیئر', es: 'Cajero', tr: 'Kasiyer'),
+            _sl(ar: 'الكاشير', en: 'Cashier', hi: 'कैशियर', ur: 'کیشیئر', es: 'Cajero', tr: 'Kasiyer'),
+            data!.cashierName?.isNotEmpty == true
+                ? data!.cashierName!
+                : (primaryLang != 'ar' && data!.sellerNameEn.isNotEmpty ? data!.sellerNameEn : data!.sellerNameAr)),
+        _buildInfoItem(
+            _ml(ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası'),
+            _sl(ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası'),
+            data!.vatNumber.isNotEmpty ? data!.vatNumber : _ml(ar: 'غير متوفر', en: 'N/A', hi: 'उपलब्ध नहीं', ur: 'دستیاب نہیں', es: 'No disponible', tr: 'Mevcut değil')),
+        if (data!.commercialRegisterNumber?.isNotEmpty == true || commercialRegisterNumber?.isNotEmpty == true)
+          _buildInfoItem(
+              _ml(ar: 'رقم السجل التجاري', en: 'Commercial Register', hi: 'व्यावसायिक रजिस्टर', ur: 'تجارتی رجسٹر', es: 'Registro Comercial', tr: 'Ticari Sicil'),
+              _sl(ar: 'رقم السجل التجاري', en: 'Commercial Register', hi: 'व्यावसायिक रजिस्टर', ur: 'تجارتی رجسٹر', es: 'Registro Comercial', tr: 'Ticari Sicil'),
+              (data!.commercialRegisterNumber?.isNotEmpty == true ? data!.commercialRegisterNumber : commercialRegisterNumber)!),
+        _buildInfoItem(
+            _ml(ar: 'التاريخ والوقت', en: 'Date & Time', hi: 'दिनांक और समय', ur: 'تاریخ اور وقت', es: 'Fecha y Hora', tr: 'Tarih ve Saat'),
+            _sl(ar: 'التاريخ والوقت', en: 'Date & Time', hi: 'दिनांक और समय', ur: 'تاریخ اور وقت', es: 'Fecha y Hora', tr: 'Tarih ve Saat'),
+            _formatDateTime(data!.issueDateTime),
+            isLtr: true),
+        if (data?.paymentMethod != null)
+          _buildInfoItem(
+              _ml(ar: 'طريقة الدفع', en: 'Payment Method', hi: 'भुगतान विधि', ur: 'ادائیگی کا طریقہ', es: 'Método de Pago', tr: 'Ödeme Yöntemi'),
+              _sl(ar: 'طريقة الدفع', en: 'Payment Method', hi: 'भुगतान विधि', ur: 'ادائیگی کا طریقہ', es: 'Método de Pago', tr: 'Ödeme Yöntemi'),
+              _translatePayMethod(data!.paymentMethod)),
+
+        if ((orderType?.isNotEmpty == true) || (data!.orderType?.isNotEmpty == true))
+          _buildInfoItem(
+              _ml(ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü'),
+              _sl(ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü'),
+              _getOrderTypeArabic(orderType?.isNotEmpty == true ? orderType! : data!.orderType!)),
+
+        if (tableNumber != null || data!.tableNumber != null)
+          _buildInfoItem(
+              _ml(ar: 'رقم الطاولة', en: 'Table Number', hi: 'टेबल संख्या', ur: 'ٹیبل نمبر', es: 'Número de Mesa', tr: 'Masa Numarası'),
+              _sl(ar: 'رقم الطاولة', en: 'Table Number', hi: 'टेबल संख्या', ur: 'ٹیبل نمبر', es: 'Número de Mesa', tr: 'Masa Numarası'),
+              (tableNumber ?? data!.tableNumber)!),
+
+        if ((clientName ?? data!.clientName) != null)
+          _buildInfoItem(
+              _ml(ar: 'العميل', en: 'Customer', hi: 'ग्राहक', ur: 'کسٹمر', es: 'Cliente', tr: 'Müşteri'),
+              _sl(ar: 'العميل', en: 'Customer', hi: 'ग्राहक', ur: 'کسٹمر', es: 'Cliente', tr: 'Müşteri'),
+              _translateClientName((clientName ?? data!.clientName)!)),
+
+        if ((clientPhone ?? data!.clientPhone) != null)
+          _buildInfoItem(
+              _ml(ar: 'جوال العميل', en: 'Customer Phone', hi: 'ग्राहक फोन', ur: 'کسٹمر فون', es: 'Teléfono del Cliente', tr: 'Müşteri Telefonu'),
+              _sl(ar: 'جوال العميل', en: 'Customer Phone', hi: 'ग्राहक फोन', ur: 'کسٹمر فون', es: 'Teléfono del Cliente', tr: 'Müşteri Telefonu'),
+              (clientPhone ?? data!.clientPhone)!, isLtr: true),
+          
+        const SizedBox(height: 2),
+      ],
+    );
+  }
+
+  Widget _buildNumberBadge({
+    required String labelAr,
+    required String labelEn,
+    required String value,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 3),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.black, width: 1.5),
+          ),
+          child: Text(
+            value,
+            style: GoogleFonts.tajawal(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+            textAlign: TextAlign.center,
+            textDirection: TextDirection.ltr,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoItem(String labelAr, String labelEn, String value,
+      {bool isLtr = false}) {
+    if (value.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  labelAr,
+                  style: GoogleFonts.tajawal(fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  value,
+                  style: GoogleFonts.tajawal(
+                    fontSize: 19,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                  textAlign: TextAlign.end,
+                  textDirection: isLtr ? TextDirection.ltr : TextDirection.rtl,
+                ),
+              ),
+            ],
+          ),
+          if (labelEn.isNotEmpty)
+            Text(
+              labelEn,
+              style: GoogleFonts.tajawal(fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInvoiceTitle() {
+    return Column(
+      children: [
+        // Credit Note badge (above the tax invoice box)
+        if (isCreditNote)
+          Container(
+            margin: const EdgeInsets.only(top: 7, bottom: 8),
+            padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 16),
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  _ml(ar: 'إشعار دائن', en: 'Credit Note', hi: 'क्रेडिट नोट', ur: 'کریڈٹ نوٹ', es: 'Nota de Crédito', tr: 'Alacak Dekontu'),
+                  style: GoogleFonts.tajawal(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white),
+                  textAlign: TextAlign.center,
+                ),
+                if (_sl(ar: 'إشعار دائن', en: 'Credit Note', hi: 'क्रेडिट नोट', ur: 'کریڈٹ نوٹ', es: 'Nota de Crédito', tr: 'Alacak Dekontu').isNotEmpty)
+                  Text(
+                    _sl(ar: 'إشعار دائن', en: 'Credit Note', hi: 'क्रेडिट नोट', ur: 'کریڈٹ نوٹ', es: 'Nota de Crédito', tr: 'Alacak Dekontu'),
+                    style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+              ],
+            ),
+          ),
+        Container(
+      margin: EdgeInsets.symmetric(vertical: isCreditNote ? 0 : 4),
+      padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.black, width: 1.5),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _ml(ar: 'فاتورة ضريبية مبسطة', en: 'Simplified Tax Invoice', hi: 'सरलीकृत कर चालान', ur: 'آسان ٹیکس انوائس', es: 'Factura Fiscal Simplificada', tr: 'Basitleştirilmiş Vergi Faturası'),
+            style: GoogleFonts.tajawal(
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              color: Colors.black,
+              letterSpacing: 0.3,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          if (_sl(ar: 'فاتورة ضريبية مبسطة', en: 'Simplified Tax Invoice', hi: 'सरलीकृत कर चालान', ur: 'آسان ٹیکس انوائس', es: 'Factura Fiscal Simplificada', tr: 'Basitleştirilmiş Vergi Faturası').isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              _sl(ar: 'فاتورة ضريبية مبسطة', en: 'Simplified Tax Invoice', hi: 'सरलीकृत कर चालان', ur: 'آسان ٹیکس انوائس', es: 'Factura Fiscal Simplificada', tr: 'Basitleştirilmiş Vergi Faturası'),
+              style: GoogleFonts.tajawal(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: Colors.black,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ],
+      ),
+    ),
+      ],
+    );
+  }
+
+  Widget _buildClientInfo() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 2),
+      child: Column(
+        children: [
+          if (clientName != null)
+            _buildInfoItem(_ml(ar: 'اسم العميل', en: 'Client Name', hi: 'ग्राहक का नाम', ur: 'کلائنٹ کا نام', es: 'Nombre del Cliente', tr: 'Müşteri Adı'), _sl(ar: 'اسم العميل', en: 'Client Name', hi: 'ग्राहक का नाम', ur: 'کلائنٹ کا نام', es: 'Nombre del Cliente', tr: 'Müşteri Adı'), _translateClientName(clientName!)),
+          if (clientPhone != null)
+            _buildInfoItem(_ml(ar: 'جوال العميل', en: 'Client Phone', hi: 'ग्राहक फोन', ur: 'کلائنٹ فون', es: 'Teléfono del Cliente', tr: 'Müşteri Telefonu'), _sl(ar: 'جوال العميل', en: 'Client Phone', hi: 'ग्राहक फोन', ur: 'کلائنٹ فون', es: 'Teléfono del Cliente', tr: 'Müşteri Telefonu'), clientPhone!,
+                isLtr: true),
+          if (clientTaxNumber != null)
+            _buildInfoItem(_ml(ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası'), _sl(ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası'), clientTaxNumber!),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCarInfo([String? overrideCarNumber]) {
+    final effectiveCarNumber = overrideCarNumber?.trim().isNotEmpty == true
+        ? overrideCarNumber!
+        : (data?.carNumber.isNotEmpty == true) ? data!.carNumber : (carNumber ?? '');
+    return Container(
+      margin: const EdgeInsets.only(top: 2, bottom: 6),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.black)),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  _ml(ar: 'معلومات السيارة', en: 'Car Info', hi: 'कार की जानकारी', ur: 'گاڑی کی معلومات', es: 'Información del Vehículo', tr: 'Araç Bilgileri'),
+                  style: GoogleFonts.tajawal(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          if (effectiveCarNumber.isNotEmpty)
+            _buildCarInfoRow(_ml(ar: 'رقم اللوحة / التفاصيل', en: 'Plate No. / Details', hi: 'प्लेट नं. / विवरण', ur: 'پلیٹ نمبر / تفصیلات', es: 'Matrícula / Detalles', tr: 'Plaka No. / Detaylar'), _sl(ar: 'رقم اللوحة / التفاصيل', en: 'Plate No. / Details', hi: 'प्लेट नं. / विवरण', ur: 'پلیٹ نمبر / تفصیلات', es: 'Matrícula / Detalles', tr: 'Plaka No. / Detaylar'), effectiveCarNumber, isLast: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCarInfoRow(String labelAr, String labelEn, String value,
+      {bool isLast = false}) {
+    return Row(
+      children: [
+        Container(
+          width: 95,
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+          decoration: const BoxDecoration(
+            border: Border(left: BorderSide(color: Colors.black)),
+          ),
+          child: Text(labelAr,
+              style: GoogleFonts.tajawal(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black)),
+        ),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+            child: Text(value,
+                style:
+                    GoogleFonts.tajawal(fontSize: 17, color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildItems() {
+    if (data == null) return const SizedBox.shrink();
+    return Column(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.black, width: 1),
+          ),
+          child: IntrinsicHeight(
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 5,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_ml(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün'),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black)),
+                        if (_sl(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün').isNotEmpty)
+                          Text(_sl(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün'),
+                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                      ],
+                    ),
+                  ),
+                ),
+                Container(width: 1, color: Colors.black),
+                SizedBox(
+                  width: 55,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(_ml(ar: 'كمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet'),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black)),
+                        if (_sl(ar: 'كمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet').isNotEmpty)
+                          Text(_sl(ar: 'كمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet'),
+                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                      ],
+                    ),
+                  ),
+                ),
+                Container(width: 1, color: Colors.black),
+                SizedBox(
+                  width: 68,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(_ml(ar: 'سعر', en: 'Price', hi: 'कीमत', ur: 'قیمت', es: 'Precio', tr: 'Fiyat'),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black)),
+                        if (_sl(ar: 'سعر', en: 'Price', hi: 'कीमत', ur: 'قیمت', es: 'Precio', tr: 'Fiyat').isNotEmpty)
+                          Text(_sl(ar: 'سعر', en: 'Price', hi: 'कीमत', ur: 'قیمت', es: 'Precio', tr: 'Fiyat'),
+                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                      ],
+                    ),
+                  ),
+                ),
+                Container(width: 1, color: Colors.black),
+                SizedBox(
+                  width: 75,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(_ml(ar: 'مجموع', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam'),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black)),
+                        if (_sl(ar: 'مجموع', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam').isNotEmpty)
+                          Text(_sl(ar: 'مجموع', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam'),
+                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        ...data!.items.map((item) {
+          final itemPrice =
+              item.quantity > 0 ? (item.total / item.quantity) : item.total;
+          final hasAddons = item.addons != null && item.addons!.isNotEmpty;
+          final hasDiscount = item.hasDiscount;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IntrinsicHeight(
+                child: Container(
+                  decoration: const BoxDecoration(
+                    border: Border(
+                      left: BorderSide(color: Colors.black),
+                      right: BorderSide(color: Colors.black),
+                      bottom: BorderSide(color: Colors.black),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        flex: 5,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 3, vertical: 3),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                item.nameAr,
+                                style: GoogleFonts.tajawal(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black),
+                              ),
+                              if (item.nameEn.isNotEmpty && item.nameEn != item.nameAr)
+                                Text(
+                                  item.nameEn,
+                                  style: GoogleFonts.tajawal(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black),
+                                ),
+                              // Addons inside the item cell, grouped by name
+                              if (hasAddons)
+                                ..._groupedAddons(item.addons!).map((entry) {
+                                  final addon = entry.key;
+                                  final qty = entry.value;
+                                  final label = qty > 1
+                                      ? '+ ${addon.nameAr} x$qty'
+                                      : '+ ${addon.nameAr}';
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            label,
+                                            style: GoogleFonts.tajawal(
+                                                fontSize: 15,
+                                                color: Colors.black54,
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                        Text(
+                                          (addon.price * qty).toStringAsFixed(2),
+                                          style: GoogleFonts.tajawal(
+                                              fontSize: 15,
+                                              color: Colors.black54,
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Container(width: 1, color: Colors.black),
+                      SizedBox(
+                        width: 55,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          alignment: Alignment.center,
+                          child: Text(
+                            item.quantity % 1 == 0 ? item.quantity.toStringAsFixed(0) : item.quantity.toString(),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black),
+                          ),
+                        ),
+                      ),
+                      Container(width: 1, color: Colors.black),
+                      SizedBox(
+                        width: 68,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          alignment: Alignment.center,
+                          child: Text(
+                            itemPrice.toStringAsFixed(2),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black),
+                          ),
+                        ),
+                      ),
+                      Container(width: 1, color: Colors.black),
+                      SizedBox(
+                        width: 75,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          alignment: Alignment.center,
+                          child: Text(
+                            item.total.toStringAsFixed(2),
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 19,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (hasDiscount)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                  decoration: const BoxDecoration(
+                    border: Border(bottom: BorderSide(color: Colors.black38)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${item.discountName ?? 'خصم'}${item.discountPercentage != null ? ' (${item.discountPercentage!.toStringAsFixed(0)}%)' : ''}',
+                        style: GoogleFonts.tajawal(
+                            fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '-${item.discountAmount!.toStringAsFixed(2)}',
+                        style: GoogleFonts.tajawal(
+                            fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildTotals() {
+    if (data == null) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 3, top: 6),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Column(
+        children: [
+          _buildTotalRow(_ml(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), _sl(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), data!.totalExclVat),
+
+          // Order discount (promo code / manual / free)
+          if (data!.hasOrderDiscount) ...[
+            _buildDiscountRow(
+              // Build label with discount details
+              () {
+                final name = data!.orderDiscountName;
+                final pct = data!.orderDiscountPercentage;
+                if (name != null && name.isNotEmpty && pct != null && pct > 0) {
+                  return '$name (${pct.toStringAsFixed(0)}%)';
+                } else if (pct != null && pct > 0) {
+                  return '${_ml(ar: 'خصم', en: 'Discount', es: 'Descuento', tr: 'İndirim', hi: 'छूट', ur: 'ڈسکاؤنٹ')} (${pct.toStringAsFixed(0)}%)';
+                } else if (name != null && name.isNotEmpty) {
+                  return name;
+                }
+                return _ml(ar: 'خصم على الإجمالي', en: 'Order Discount', es: 'Descuento del Pedido', tr: 'Sipariş İndirimi', hi: 'ऑर्डर छूट', ur: 'آرڈر ڈسکاؤنٹ');
+              }(),
+              '',
+              data!.orderDiscountAmount!,
+            ),
+          ]
+          // Implied items discount (only if no explicit order discount)
+          else if (_impliedDiscount > 0.01)
+            _buildDiscountRow(
+              _ml(ar: 'اجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹمز ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
+              _sl(ar: 'اجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹمز ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
+              _impliedDiscount,
+            ),
+          _buildTotalRow(_ml(ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı'), _sl(ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı'), data!.vatAmount),
+          const Divider(height: 8, thickness: 1, color: Colors.black),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: Colors.black, width: 2)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_ml(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam'),
+                          style: GoogleFonts.tajawal(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.black)),
+                      if (_sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam').isNotEmpty)
+                        Text(_sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam'),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      '${(data?.totalInclVat ?? 0.0).toStringAsFixed(2)} ${_ml(ar: 'ريال', en: 'SAR', hi: 'SAR', ur: 'SAR', es: 'SAR', tr: 'SAR')}',
+                      style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.black),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _buildTotalRow(_ml(ar: 'المدفوع', en: 'Paid', hi: 'भुगतान किया', ur: 'ادا شدہ', es: 'Pagado', tr: 'Ödenen'), _sl(ar: 'المدفوع', en: 'Paid', hi: 'भुगतान किया', ur: 'ادا شدہ', es: 'Pagado', tr: 'Ödenen'), data!.totalInclVat),
+          _buildTotalRow(_ml(ar: 'المتبقي', en: 'Remaining', hi: 'शेष', ur: 'بقایا', es: 'Restante', tr: 'Kalan'), _sl(ar: 'المتبقي', en: 'Remaining', hi: 'शेष', ur: 'بقایا', es: 'Restante', tr: 'Kalan'), 0.0),
+          const DashedDivider(),
+          if (data!.payments.isNotEmpty)
+            ...data!.payments.map((p) => _buildTotalRow(_translatePayMethod(p.methodLabel), '', p.amount)),
+          if (data!.paymentMethod.isNotEmpty && data!.payments.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: _summaryLabelWidth,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_ml(ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान के तरीके', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri'),
+                            style: GoogleFonts.tajawal(
+                                fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold)),
+                        if (_sl(ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान के तरीके', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri').isNotEmpty)
+                          Text(_sl(ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान के तरीके', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri'),
+                              style: GoogleFonts.tajawal(
+                                  fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _translatePayMethod(data?.paymentMethod ?? ''),
+                      style: GoogleFonts.tajawal(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black),
+                      textAlign: TextAlign.left,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTotalRow(String labelAr, String labelEn, double amount) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(labelAr,
+                    style: GoogleFonts.tajawal(
+                        fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold)),
+                if (labelEn.isNotEmpty)
+                  Text(labelEn,
+                      style: GoogleFonts.tajawal(
+                          fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    amount.toStringAsFixed(2),
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 19,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(_translateCurrency(ApiConstants.currency),
+                      style: GoogleFonts.tajawal(
+                          fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDiscountRow(String labelAr, String labelEn, double amount,
+      {double? percentage}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(labelAr,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.tajawal(
+                              fontSize: 19,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black)),
+                    ),
+                    if (percentage != null)
+                      Text(' (${percentage.toStringAsFixed(0)}%)',
+                          style: GoogleFonts.tajawal(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black)),
+                  ],
+                ),
+                if (labelEn.isNotEmpty)
+                  Text(labelEn,
+                      style: GoogleFonts.tajawal(
+                          fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    '-${amount.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 19,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(_translateCurrency(ApiConstants.currency),
+                      style: GoogleFonts.tajawal(
+                          fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFooter() {
+    return Container(
+      margin: const EdgeInsets.only(top: 3),
+      child: Column(
+        children: [
+          _buildQrSection(),
+          if (returnPolicy != null && returnPolicy!.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(bottom: 2),
+              padding: const EdgeInsets.only(bottom: 2),
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.black38)),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    _ml(ar: 'سياسة الاسترجاع والاستبدال', en: 'Return Policy', hi: 'वापसी नीति', ur: 'واپسی پالیسی', es: 'Política de Devolución', tr: 'İade Politikası'),
+                    style: GoogleFonts.tajawal(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (_sl(ar: 'سياسة الاسترجاع والاستبدال', en: 'Return Policy', hi: 'वापसी नीति', ur: 'واپسی پالیسی', es: 'Política de Devolución', tr: 'İade Politikası').isNotEmpty)
+                    Text(
+                      _sl(ar: 'سياسة الاسترجاع والاستبدال', en: 'Return Policy', hi: 'वापसी नीति', ur: 'واپسی پالیسی', es: 'Política de Devolución', tr: 'İade Politikası'),
+                      style: GoogleFonts.tajawal(
+                          fontSize: 13, color: Colors.black, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                  Text(
+                    returnPolicy!,
+                    style: GoogleFonts.tajawal(
+                        fontSize: 15, color: Colors.black, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          Container(
+            margin: const EdgeInsets.only(top: 2),
+            child: Column(
+              children: [
+                Text(
+                  _ml(ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर भरोसा करने के लिए धन्यवाद', ur: 'ہم پر بھروسہ کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güvendiğiniz için teşekkürler'),
+                  style: GoogleFonts.tajawal(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black),
+                  textAlign: TextAlign.center,
+                ),
+                if (_sl(ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर भरोसा करने के लिए धन्यवाद', ur: 'ہم پر بھروسہ کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güvendiğiniz için teşekkürler').isNotEmpty)
+                  Text(
+                    _sl(ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर भरोसा करने के लिए धन्यवाद', ur: 'ہم پر بھروسہ کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güvendiğiniz için teşekkürler'),
+                    style: GoogleFonts.tajawal(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black),
+                    textAlign: TextAlign.center,
+                  ),
+
+                const SizedBox(height: 2),
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.black38),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        _ml(ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Hermosa Accounting Software', hi: 'हरमोसा लेखा सॉफ्टवेयर', ur: 'ہرموسا اکاؤنٹنگ سافٹ ویئر', es: 'Hermosa Contable', tr: 'Hermosa Muhasebe'),
+                        style: GoogleFonts.tajawal(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (_sl(ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Hermosa Accounting Software', hi: 'हरमोसा लेखा सॉफ्टवेयर', ur: 'ہرموسا اکاؤنٹنگ سافٹ ویئر', es: 'Hermosa Contable', tr: 'Hermosa Muhasebe').isNotEmpty)
+                        Text(
+                          _sl(ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Hermosa Accounting Software', hi: 'हरमोसा लेखा सॉफ्टवेयर', ur: 'ہرموسا اکاؤنٹنگ سافٹ ویئر', es: 'Hermosa Contable', tr: 'Hermosa Muhasebe'),
+                          style: GoogleFonts.tajawal(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black),
+                          textAlign: TextAlign.center,
+                        ),
+                      Text(
+                        'hermosaapp.com',
+                        style: GoogleFonts.tajawal(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQrSection() {
+    final zatcaImage = data?.zatcaQrImage?.trim() ?? '';
+    final rawQr = data?.qrCodeBase64.trim() ?? '';
+    Widget? qrWidget;
+
+    // Highest priority: Generate the QR synchronously to avoid screenshot timing issues
+    if (rawQr.isNotEmpty && !rawQr.startsWith('http') && !rawQr.startsWith('data:')) {
+      try {
+        // Decode base64 to ensure it builds correctly for ZATCA format
+        final bytes = base64Decode(rawQr);
+        final tlvString = String.fromCharCodes(bytes);
+        qrWidget = QrImageView(
+          data: tlvString,
+          version: QrVersions.auto,
+          size: 150,
+          gapless: true,
+          backgroundColor: Colors.white,
+        );
+      } catch (_) {
+        qrWidget = QrImageView(
+          data: rawQr,
+          version: QrVersions.auto,
+          size: 150,
+          gapless: true,
+          backgroundColor: Colors.white,
+        );
+      }
+    } else if (rawQr.startsWith('data:image')) {
+      // Synchronous data image
+      try {
+        final parts = rawQr.split(',');
+        final base64Part = parts.length > 1 ? parts.last : '';
+        if (base64Part.isNotEmpty) {
+          final bytes = base64Decode(base64Part);
+          qrWidget = Image.memory(
+            bytes,
+            width: 150,
+            height: 150,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+          );
+        }
+      } catch (_) {
+        qrWidget = null;
+      }
+    } else if (zatcaImage.isNotEmpty) {
+      // Fallback: network image (risks being missed by screenshot if slow)
+      qrWidget = Image.network(
+        zatcaImage,
+        width: 150,
+        height: 150,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    } else if (rawQr.startsWith('http')) {
+      qrWidget = Image.network(
+        rawQr,
+        width: 150,
+        height: 150,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+
+    if (qrWidget == null || qrWidget is SizedBox) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 3),
+      color: Colors.white,
+      padding: const EdgeInsets.all(2),
+      child: Center(child: qrWidget),
+    );
+  }
+
+  String _getOrderTypeArabic(String type) {
+    final normalizedType = type.toLowerCase().trim();
+    switch (normalizedType) {
+      case 'restaurant_internal':
+        return _ml(ar: 'طلب داخلي', en: 'Dine In', hi: 'डाइन इन', ur: 'اندرونی', es: 'Comer Aquí', tr: 'İçeride');
+      case 'restaurant_pickup':
+      case 'restaurant_takeaway':
+        return _ml(ar: 'طلب خارجي', en: 'Takeaway', hi: 'टेकअवे', ur: 'ٹیک اوے', es: 'Para Llevar', tr: 'Paket');
+      case 'restaurant_delivery':
+        return _ml(ar: 'توصيل', en: 'Delivery', hi: 'डिलीवरी', ur: 'ڈیلیوری', es: 'Entrega', tr: 'Teslimat');
+      case 'restaurant_parking':
+      case 'cars':
+      case 'car':
+        return _ml(ar: 'سيارات', en: 'Drive-through', hi: 'ड्राइव-थ्रू', ur: 'ڈرائیو تھرو', es: 'Auto-servicio', tr: 'Araç Servisi');
+      case 'services':
+      case 'service':
+        return _ml(ar: 'محلي', en: 'Local', hi: 'स्थानीय', ur: 'مقامی', es: 'Local', tr: 'Yerel');
+      case 'talabat_delivery':
+        return _ml(ar: 'طلبات (توصيل)', en: 'Talabat (Delivery)', hi: 'तलबात (डिलीवरी)', ur: 'طلبات (ڈیلیوری)', es: 'Talabat (Entrega)', tr: 'Talabat (Teslimat)');
+      case 'talabat_pickup':
+        return _ml(ar: 'طلبات (استلام)', en: 'Talabat (Pickup)', hi: 'तलबात (पिकअप)', ur: 'طلبات (پک اپ)', es: 'Talabat (Recogida)', tr: 'Talabat (Teslim Alma)');
+      case 'hungerstation_delivery':
+      case 'hunger_station_delivery':
+        return _ml(ar: 'هنقر ستيشن (توصيل)', en: 'HungerStation (Delivery)', hi: 'हंगरस्टेशन (डिलीवरी)', ur: 'ہنگر سٹیشن (ڈیلیوری)', es: 'HungerStation (Entrega)', tr: 'HungerStation (Teslimat)');
+      case 'hungerstation_pickup':
+      case 'hunger_station_pickup':
+        return _ml(ar: 'هنقر ستيشن (استلام)', en: 'HungerStation (Pickup)', hi: 'हंगरस्टेशन (पिकअप)', ur: 'ہنگر سٹیشن (پک اپ)', es: 'HungerStation (Recogida)', tr: 'HungerStation (Teslim Alma)');
+      case 'jahez_delivery':
+      case 'gahez_delivery':
+        return _ml(ar: 'جاهز (توصيل)', en: 'Jahez (Delivery)', hi: 'जाहेज़ (डिलीवरी)', ur: 'جاہز (ڈیلیوری)', es: 'Jahez (Entrega)', tr: 'Jahez (Teslimat)');
+      case 'jahez_pickup':
+      case 'gahez_pickup':
+        return _ml(ar: 'جاهز (استلام)', en: 'Jahez (Pickup)', hi: 'जाहेज़ (पिकअप)', ur: 'جاہز (پک اپ)', es: 'Jahez (Recogida)', tr: 'Jahez (Teslim Alma)');
+      case 'payment':
+        return _ml(ar: 'دفع نقدي', en: 'Cash Payment', hi: 'नकद भुगतान', ur: 'نقد ادائیگی', es: 'Pago en Efectivo', tr: 'Nakit Ödeme');
+      case 'postpaid':
+      case 'pay_later':
+        return _ml(ar: 'دفع لاحقاً', en: 'Pay Later', hi: 'बाद में भुगतान', ur: 'بعد میں ادائیگی', es: 'Pagar Después', tr: 'Sonra Öde');
+      default:
+        // Handle compound types like "services (هنقر ستيشن توصيل)"
+        if (type.contains('هنقر') || type.toLowerCase().contains('hunger')) {
+          if (type.contains('توصيل') || type.toLowerCase().contains('delivery')) {
+            return _ml(ar: 'هنقر ستيشن (توصيل)', en: 'HungerStation (Delivery)', hi: 'हंगरस्टेशन (डिलीवरी)', ur: 'ہنگر سٹیشن (ڈیلیوری)', es: 'HungerStation (Entrega)', tr: 'HungerStation (Teslimat)');
+          }
+          if (type.contains('استلام') || type.toLowerCase().contains('pickup')) {
+            return _ml(ar: 'هنقر ستيشن (استلام)', en: 'HungerStation (Pickup)', hi: 'हंगरस्टेशन (पिكअप)', ur: 'ہنگر سٹیشن (پک اپ)', es: 'HungerStation (Recogida)', tr: 'HungerStation (Teslim Alma)');
+          }
+        }
+        if (type.contains('طلبات') || type.toLowerCase().contains('talabat')) {
+          if (type.contains('توصيل') || type.toLowerCase().contains('delivery')) {
+            return _ml(ar: 'طلبات (توصيل)', en: 'Talabat (Delivery)', hi: 'तलबात (डिलीवरी)', ur: 'طلبات (ڈیلیوری)', es: 'Talabat (Entrega)', tr: 'Talabat (Teslimat)');
+          }
+          if (type.contains('استلام') || type.toLowerCase().contains('pickup')) {
+            return _ml(ar: 'طلبات (استلام)', en: 'Talabat (Pickup)', hi: 'तलबात (पिकअप)', ur: 'طلبات (پک اپ)', es: 'Talabat (Recogida)', tr: 'Talabat (Teslim Alma)');
+          }
+        }
+        if (type.contains('جاهز') || type.toLowerCase().contains('jahez') || type.toLowerCase().contains('gahez')) {
+          if (type.contains('توصيل') || type.toLowerCase().contains('delivery')) {
+            return _ml(ar: 'جاهز (توصيل)', en: 'Jahez (Delivery)', hi: 'जाहेज़ (डिलीवरी)', ur: 'جاہز (ڈیلیوری)', es: 'Jahez (Entrega)', tr: 'Jahez (Teslimat)');
+          }
+          if (type.contains('استلام') || type.toLowerCase().contains('pickup')) {
+            return _ml(ar: 'جاهز (استلام)', en: 'Jahez (Pickup)', hi: 'जاहेज़ (पिकअप)', ur: 'جاہز (پک اپ)', es: 'Jahez (Recogida)', tr: 'Jahez (Teslim Alma)');
+          }
+        }
+        return type;
+    }
+  }
+
+  String _translateClientName(String name) {
+    final normalized = name.trim().toLowerCase();
+    if (normalized == 'عميل عام' || normalized == 'general customer' || normalized == 'walk-in' || normalized == 'walk in') {
+      return _ml(ar: 'عميل عام', en: 'General Customer', hi: 'सामान्य ग्राहक', ur: 'عام گاہک', es: 'Cliente general', tr: 'Genel Müşteri');
+    }
+    return name;
+  }
+
+  /// Group addons by name, returning a list of (addon, count) entries.
+  static List<MapEntry<ReceiptAddon, int>> _groupedAddons(List<ReceiptAddon> addons) {
+    final map = <String, MapEntry<ReceiptAddon, int>>{};
+    for (final addon in addons) {
+      final key = addon.nameAr;
+      if (map.containsKey(key)) {
+        map[key] = MapEntry(addon, map[key]!.value + 1);
+      } else {
+        map[key] = MapEntry(addon, 1);
+      }
+    }
+    return map.values.toList();
+  }
+
+  /// Translate currency symbol based on invoice language.
+  /// Arabic currencies stay as-is for Arabic, use ISO code for other languages.
+  String _translateCurrency(String currency) {
+    final trimmed = currency.trim();
+    // Map common Arabic currency symbols to ISO codes
+    const arabicToIso = {
+      'ر.س': 'SAR',
+      'ريال': 'SAR',
+      'ر.ي': 'YER',
+      'د.ك': 'KWD',
+      'د.إ': 'AED',
+      'ر.ع': 'OMR',
+      'ر.ق': 'QAR',
+      'د.ب': 'BHD',
+      'ج.م': 'EGP',
+      'د.ج': 'DZD',
+      'د.ل': 'LYD',
+      'د.ت': 'TND',
+      'د.م': 'MAD',
+      'ل.ل': 'LBP',
+      'ل.س': 'SYP',
+      'د.ع': 'IQD',
+      'ج.س': 'SDG',
+    };
+    if (primaryLang == 'ar') return trimmed;
+    return arabicToIso[trimmed] ?? trimmed;
+  }
+
+  /// Translate payment method name based on invoice language.
+  String _translatePayMethod(String method) {
+    final normalized = method.trim().toLowerCase();
+    switch (normalized) {
+      case 'cash':
+      case 'نقدي':
+      case 'نقد':
+      case 'كاش':
+      case 'دفع':
+      case 'دفع نقدي':
+        return _ml(ar: 'نقدي', en: 'Cash', hi: 'नकद', ur: 'نقد', es: 'Efectivo', tr: 'Nakit');
+      case 'card':
+      case 'بطاقة':
+      case 'credit_card':
+      case 'visa':
+      case 'فيزا':
+      case 'ماستر':
+      case 'ماستر كارد':
+        return _ml(ar: 'بطاقة', en: 'Card', hi: 'कार्ड', ur: 'کارڈ', es: 'Tarjeta', tr: 'Kart');
+      case 'mada':
+      case 'مدى':
+        return _ml(ar: 'مدى', en: 'Mada', hi: 'मदा', ur: 'مدی', es: 'Mada', tr: 'Mada');
+      case 'benefit':
+      case 'benefit_pay':
+      case 'benefit pay':
+      case 'بينيفت':
+      case 'بينيفت باي':
+        return _ml(ar: 'بينيفت', en: 'Benefit Pay', hi: 'बेनिफिट पे', ur: 'بینیفٹ پے', es: 'Benefit Pay', tr: 'Benefit Pay');
+      case 'stc':
+      case 'stc_pay':
+      case 'stc pay':
+      case 'اس تي سي':
+      case 'اس تي سي باي':
+        return 'STC Pay';
+      case 'bank_transfer':
+      case 'bank':
+      case 'bank transfer':
+      case 'تحويل بنكي':
+      case 'تحويل بنكى':
+        return _ml(ar: 'تحويل بنكي', en: 'Bank Transfer', hi: 'बैंक ट्रांसफर', ur: 'بینک ٹرانسفر', es: 'Transferencia Bancaria', tr: 'Banka Transferi');
+      case 'wallet':
+      case 'محفظة':
+      case 'المحفظة':
+      case 'المحفظة الالكترونية':
+      case 'المحفظة الإلكترونية':
+        return _ml(ar: 'محفظة', en: 'Wallet', hi: 'वॉलेट', ur: 'والیٹ', es: 'Billetera', tr: 'Cüzdan');
+      case 'cheque':
+      case 'check':
+      case 'شيك':
+        return _ml(ar: 'شيك', en: 'Cheque', hi: 'चेक', ur: 'چیک', es: 'Cheque', tr: 'Çek');
+      case 'petty_cash':
+      case 'petty cash':
+      case 'بيتي كاش':
+        return _ml(ar: 'بيتي كاش', en: 'Petty Cash', hi: 'पेटी कैश', ur: 'پیٹی کیش', es: 'Caja Chica', tr: 'Küçük Kasa');
+      case 'pay_later':
+      case 'pay later':
+      case 'postpaid':
+      case 'deferred':
+      case 'دفع لاحقاً':
+      case 'الدفع بالآجل':
+      case 'الدفع بالاجل':
+        return _ml(ar: 'الدفع بالآجل', en: 'Pay Later', hi: 'बाद में भुगतान', ur: 'بعد میں ادائیگی', es: 'Pagar Después', tr: 'Sonra Öde');
+      case 'tabby':
+      case 'تابي':
+        return 'Tabby';
+      case 'tamara':
+      case 'تمارا':
+        return 'Tamara';
+      case 'keeta':
+      case 'كيتا':
+        return 'Keeta';
+      case 'my_fatoorah':
+      case 'myfatoorah':
+      case 'my fatoorah':
+      case 'ماي فاتورة':
+      case 'ماي فاتوره':
+        return _ml(ar: 'ماي فاتورة', en: 'MyFatoorah', hi: 'माई फतूरा', ur: 'مائی فتوره', es: 'MyFatoorah', tr: 'MyFatoorah');
+      case 'jahez':
+      case 'جاهز':
+        return _ml(ar: 'جاهز', en: 'Jahez', hi: 'जाहेज़', ur: 'جاہز', es: 'Jahez', tr: 'Jahez');
+      case 'talabat':
+      case 'طلبات':
+        return _ml(ar: 'طلبات', en: 'Talabat', hi: 'तलबात', ur: 'طلبات', es: 'Talabat', tr: 'Talabat');
+      default:
+        return method;
+    }
+  }
+
+  Widget _buildTestView() {
+    return Column(
+      children: [
+        const Icon(Icons.print, size: 64, color: Colors.black),
+        const SizedBox(height: 6),
+        Text(
+          'اختبار الطباعة',
+          style: GoogleFonts.tajawal(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        Text(
+          'Test Print',
+          style: GoogleFonts.tajawal(fontSize: 24, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 24),
+        const DashedDivider(),
+        const SizedBox(height: 8),
+        Text(
+          'التاريخ: ${DateTime.now().toString().split('.').first}',
+          style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        Text(
+          'عرض الورق: $paperWidthMm ملم',
+          style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const DashedDivider(),
+        const SizedBox(height: 24),
+        Text(
+          'اللغة العربية تعمل بنجاح',
+          style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 40),
+        const Text('! @ # \$ % ^ & * ( )'),
+        const SizedBox(height: 48),
+        const DashedDivider(),
+        Text(
+          '✂ قُص هنا / CUT HERE ✂',
+          style: GoogleFonts.tajawal(fontSize: 22, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        const DashedDivider(),
+        const SizedBox(height: 60), // Extra space for physical cutting
+      ],
+    );
+  }
+
+  Widget _buildChangeDetailRow(String labelAr, String labelEn, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                labelAr,
+                style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+              ),
+              if (labelEn != labelAr)
+                Text(
+                  labelEn,
+                  style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black54),
+                ),
+            ],
+          ),
+          Text(
+            value,
+            style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetaRow(String labelAr, String labelEn, String value, {bool isLarge = false}) {
+    // Use start/end alignment so it adapts to Directionality (RTL/LTR)
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                labelAr,
+                style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              Text(
+                labelEn,
+                style: GoogleFonts.tajawal(fontSize: 16, color: Colors.black87, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.tajawal(
+                fontSize: isLarge ? 18 : 14,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKitchenView() {
+    if (kitchenData == null) return const SizedBox.shrink();
+
+    final orderNumber = kitchenData!['orderNumber'] ?? '';
+    final orderTypeRaw = kitchenData!['orderType'] ?? '';
+    final items = (kitchenData!['items'] as List? ?? []);
+    final note = kitchenData!['note'];
+    final createdAt = kitchenData!['createdAt'] as DateTime?;
+
+    final clientNameLocal = kitchenData!['clientName'] ?? clientName;
+    final clientPhoneLocal = kitchenData!['clientPhone'] ?? clientPhone;
+    final tableNumberLocal = kitchenData!['tableNumber'] ?? tableNumber;
+    final carNumberLocal = kitchenData!['carNumber'] ?? carNumber;
+    final printerNameLocal = kitchenData!['printerName'];
+
+    final displayOrderTypeAr = _getOrderTypeArabic(orderTypeRaw);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Header
+        Column(
+          children: [
+            Text(
+              'طلب مطبخ / Kitchen Ticket',
+              style: GoogleFonts.tajawal(fontSize: 24, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            if (printerNameLocal != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'القسم / Dept: $printerNameLocal',
+                  style: GoogleFonts.tajawal(fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        const DashedDivider(),
+        
+        // Large Order Number and Table Number Row
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      'رقم الطلب',
+                      style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      orderNumber.toString().replaceAll('#', ''),
+                      style: GoogleFonts.tajawal(fontSize: 56, fontWeight: FontWeight.w900, height: 1.0),
+                    ),
+                    Text(
+                      'ORDER #',
+                      style: GoogleFonts.tajawal(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              if (tableNumberLocal != null)
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'طاولة',
+                          style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                        Text(
+                          tableNumberLocal.toString(),
+                          style: GoogleFonts.tajawal(fontSize: 48, fontWeight: FontWeight.w900, color: Colors.white, height: 1.0),
+                        ),
+                        Text(
+                          'TABLE',
+                          style: GoogleFonts.tajawal(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const DashedDivider(),
+        const SizedBox(height: 12),
+
+        // Metadata Section
+        _buildMetaRow('نوع الطلب', 'Order Type', displayOrderTypeAr, isLarge: true),
+        if (tableNumberLocal != null)
+          _buildMetaRow('رقم الطاولة', 'Table Number', tableNumberLocal.toString(), isLarge: true),
+        if (clientNameLocal != null)
+          _buildMetaRow('العميل', 'Customer', clientNameLocal.toString()),
+        if (clientPhoneLocal != null)
+          _buildMetaRow('الجوال', 'Phone', clientPhoneLocal.toString().trim()),
+        if (createdAt != null)
+          _buildMetaRow(
+            'التاريخ',
+            'Date & Time',
+            '${createdAt.year}-${createdAt.month.toString().padLeft(2, '0')}-${createdAt.day.toString().padLeft(2, '0')} ${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}'
+          ),
+        if (carNumberLocal?.isNotEmpty == true || data?.carNumber.isNotEmpty == true)
+          _buildCarInfo(carNumberLocal),
+
+        const SizedBox(height: 16),
+        const Divider(thickness: 3, color: Colors.black),
+        
+        // Items Table Header
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('الصنف', style: GoogleFonts.tajawal(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text('Item', style: GoogleFonts.tajawal(fontSize: 10, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 50,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('الكمية', style: GoogleFonts.tajawal(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text('Qty', style: GoogleFonts.tajawal(fontSize: 10, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const Divider(thickness: 1, color: Colors.black54),
+        
+        // Items List
+        ...items.map((item) {
+          final rawNameAr = item['nameAr']?.toString() ?? '';
+          String nameAr = rawNameAr.isNotEmpty ? rawNameAr : (item['name']?.toString() ?? '');
+
+          final rawNameEn = item['nameEn']?.toString() ?? '';
+          String nameEn = rawNameEn.isNotEmpty ? rawNameEn : '';
+
+          if (nameEn.isEmpty && nameAr.contains(' - ')) {
+            final parts = nameAr.split(' - ');
+            nameAr = parts.first.trim();
+            nameEn = parts.last.trim();
+          }
+          final rawQty = item['quantity'] ?? 1;
+          final double parsedQty = double.tryParse(rawQty.toString()) ?? 1.0;
+          final qtyStr = parsedQty == parsedQty.toInt() ? parsedQty.toInt().toString() : parsedQty.toString();
+          final extras = (item['extras'] as List? ?? []);
+          final itemNote = item['notes'];
+
+          // Change-ticket support: Add / Cancelled / Partial Cancel / Qty Change
+          final tag = item['tag']?.toString();
+          final tagAr = item['tagAr']?.toString();
+          final tagColor = item['tagColor']?.toString();
+          final isCancelled = item['cancelled'] == true;
+          final oldQuantity = item['oldQuantity'];
+          final cancelledQuantity = item['cancelledQuantity'];
+
+          Color resolveTagColor() {
+            if (tagColor == 'green') return const Color(0xFF16A34A);
+            if (tagColor == 'black') return Colors.black;
+            if (tagColor == 'orange') return const Color(0xFFF59E0B);
+            return const Color(0xFFF59E0B);
+          }
+
+          if (tag != null) {
+            // Change ticket layout (edit order): badge + item + per-tag details
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: resolveTagColor(),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        tagAr ?? tag,
+                        style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (tagAr != null && tag != tagAr)
+                        Text(
+                          tag,
+                          style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white.withValues(alpha: 0.85)),
+                          textAlign: TextAlign.center,
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    nameAr,
+                    style: GoogleFonts.tajawal(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      decoration: isCancelled ? TextDecoration.lineThrough : null,
+                      color: isCancelled ? Colors.grey[600] : Colors.black,
+                    ),
+                  ),
+                ),
+                if (nameEn.isNotEmpty && nameEn != nameAr)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      nameEn,
+                      style: GoogleFonts.tajawal(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        decoration: isCancelled ? TextDecoration.lineThrough : null,
+                        color: isCancelled ? Colors.grey[600] : Colors.black,
+                      ),
+                    ),
+                  ),
+
+                // Fully cancelled item → ✗
+                if (isCancelled && cancelledQuantity == null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      '✗',
+                      style: GoogleFonts.tajawal(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.red),
+                    ),
+                  ),
+
+                // Partial cancel: show original / cancelled / remaining
+                if (cancelledQuantity != null) ...[
+                  const SizedBox(height: 4),
+                  _buildChangeDetailRow('الكمية الأصلية', 'Original Qty', '$oldQuantity'),
+                  _buildChangeDetailRow('الكمية الملغاة', 'Cancelled', '$cancelledQuantity  ✗'),
+                  const DashedDivider(),
+                  _buildChangeDetailRow('الكمية المطلوبة الآن', 'Remaining', '$qtyStr  ✓'),
+                ],
+
+                // Quantity change (no partial cancel): old → new
+                if (tag == 'Qty Change' && cancelledQuantity == null) ...[
+                  const SizedBox(height: 4),
+                  _buildChangeDetailRow('الكمية السابقة', 'Previous Qty', '$oldQuantity'),
+                  _buildChangeDetailRow('الكمية الجديدة', 'New Qty', qtyStr),
+                ],
+
+                // Add / new item: show ✓ qty
+                if ((tag == 'Add' || tag == 'New') && cancelledQuantity == null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      '✓  $qtyStr',
+                      style: GoogleFonts.tajawal(fontSize: 22, fontWeight: FontWeight.bold, color: const Color(0xFF16A34A)),
+                    ),
+                  ),
+
+                const SizedBox(height: 8),
+                const DashedDivider(),
+              ],
+            );
+          }
+
+          // Regular (non-tagged) kitchen item layout
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Item Name
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            nameAr,
+                            style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                          if (nameEn.isNotEmpty && nameEn != nameAr)
+                            Text(
+                              nameEn,
+                              style: GoogleFonts.tajawal(fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold),
+                            ),
+
+                          // Extras
+                          if (extras.isNotEmpty)
+                            ...extras.map((ex) => Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '+ ${ex['name']}',
+                                style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                            )),
+
+                          // Item specific notes
+                          if (itemNote != null && itemNote.toString().isNotEmpty)
+                            Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.05),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                'ملاحظة: $itemNote',
+                                style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    // Quantity
+                    Container(
+                      width: 50,
+                      alignment: AlignmentDirectional.topEnd,
+                      child: Text(
+                        qtyStr,
+                        style: GoogleFonts.tajawal(fontSize: 26, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const DashedDivider(),
+            ],
+          );
+        }),
+
+        // General Booking Note
+        if (note != null && note.toString().isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.05),
+              border: Border.all(color: Colors.black, width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ملاحظة عامة / General Note:',
+                  style: GoogleFonts.tajawal(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  note.toString(),
+                  style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+}

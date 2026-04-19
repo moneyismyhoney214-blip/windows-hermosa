@@ -1,0 +1,2985 @@
+{
+  "info": {
+    "_postman_id": "692a4f1d-f40e-4de9-890a-f4e940ce1803",
+    "name": "Salon Management System - Complete API",
+    "description": "كولكشن كامل لإدارة الصالونات - يشمل الحجوزات، الخدمات، الموظفين، العملاء، والفواتير\n\nComplete collection for salon management including bookings, services, employees, customers, and invoices",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "52250189"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.data && response.data.access_token) {",
+                  "        pm.collectionVariables.set('access_token', response.data.access_token);",
+                  "        console.log('Access token saved:', response.data.access_token);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"seller@example.com\",\n  \"password\": \"password123\",\n  \"device_name\": \"postman\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "login"
+              ]
+            },
+            "description": "تسجيل دخول البائع والحصول على access token\n\nLogin as seller and get access token"
+          },
+          "response": [
+            {
+              "name": "Login",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"a.lamal@live.com\",\n  \"password\": \"258000\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/seller/login",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "seller",
+                    "login"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "Text",
+              "header": [
+                {
+                  "key": "Date",
+                  "value": "Sun, 01 Mar 2026 20:49:57 GMT"
+                },
+                {
+                  "key": "Server",
+                  "value": "Apache"
+                },
+                {
+                  "key": "Cache-Control",
+                  "value": "no-cache, private"
+                },
+                {
+                  "key": "Access-Control-Allow-Origin",
+                  "value": "*"
+                },
+                {
+                  "key": "Access-Control-Allow-Methods",
+                  "value": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                },
+                {
+                  "key": "Access-Control-Allow-Headers",
+                  "value": "Content-Type, Authorization"
+                },
+                {
+                  "key": "X-App-Locale",
+                  "value": "ar"
+                },
+                {
+                  "key": "X-RateLimit-Limit",
+                  "value": "150"
+                },
+                {
+                  "key": "X-RateLimit-Remaining",
+                  "value": "148"
+                },
+                {
+                  "key": "Keep-Alive",
+                  "value": "timeout=5, max=100"
+                },
+                {
+                  "key": "Connection",
+                  "value": "Keep-Alive"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n    \"maintenance\": \"stopped\",\n    \"today\": \"2026-03-01\",\n    \"status\": 200,\n    \"message\": \"تم تسجيل الدخول بنجاح.\",\n    \"errors\": [],\n    \"data\": {\n        \"token\": \"10804|NjyOTgOnlTdc5O77OZfAIf4KMXOi0jilcY5D9boDcec86a97\",\n        \"user\": {\n            \"seller_id\": 14,\n            \"role\": \"OWNER\",\n            \"permissions\": [],\n            \"language\": \"ar\",\n            \"options\": null\n        },\n        \"branches\": [\n            {\n                \"id\": 14,\n                \"name\": \"مركز الأمل1 للتزيين النسائي\",\n                \"district\": \"المسعودي\",\n                \"whatsapp_status\": true,\n                \"count_days\": 286,\n                \"country_id\": 1,\n                \"has_tax\": true,\n                \"city_id\": 8,\n                \"is_valid\": true,\n                \"is_bio\": true,\n                \"sn\": \"JJA1242900334\",\n                \"device_id\": 40,\n                \"evaluation_link\": null,\n                \"tax_number\": null,\n                \"taxObject\": {\n                    \"has_tax\": true,\n                    \"tax_percentage\": 15,\n                    \"digits_number\": 2,\n                    \"currency\": \"ر.س\",\n                    \"today\": \"2026-03-01\"\n                },\n                \"printers_settings\": {\n                    \"active\": true,\n                    \"recipt_printer\": null,\n                    \"link\": null\n                },\n                \"subscription\": [\n                    {\n                        \"id\": 1,\n                        \"name\": \"online_booking\",\n                        \"type\": \"boolean\",\n                        \"created_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"updated_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"pivot\": {\n                            \"plan_id\": 1,\n                            \"feature_id\": 1,\n                            \"value\": \"1\"\n                        }\n                    },\n                    {\n                        \"id\": 2,\n                        \"name\": \"online_product\",\n                        \"type\": \"boolean\",\n                        \"created_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"updated_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"pivot\": {\n                            \"plan_id\": 1,\n                            \"feature_id\": 2,\n                            \"value\": \"1\"\n                        }\n                    },\n                    {\n                        \"id\": 3,\n                        \"name\": \"view_statistics\",\n                        \"type\": \"boolean\",\n                        \"created_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"updated_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"pivot\": {\n                            \"plan_id\": 1,\n                            \"feature_id\": 3,\n                            \"value\": \"1\"\n                        }\n                    },\n                    {\n                        \"id\": 4,\n                        \"name\": \"view_reports\",\n                        \"type\": \"boolean\",\n                        \"created_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"updated_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"pivot\": {\n                            \"plan_id\": 1,\n                            \"feature_id\": 4,\n                            \"value\": \"1\"\n                        }\n                    },\n                    {\n                        \"id\": 5,\n                        \"name\": \"attendance_system\",\n                        \"type\": \"boolean\",\n                        \"created_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"updated_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"pivot\": {\n                            \"plan_id\": 1,\n                            \"feature_id\": 5,\n                            \"value\": \"1\"\n                        }\n                    },\n                    {\n                        \"id\": 6,\n                        \"name\": \"guide_system\",\n                        \"type\": \"boolean\",\n                        \"created_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"updated_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"pivot\": {\n                            \"plan_id\": 1,\n                            \"feature_id\": 6,\n                            \"value\": \"1\"\n                        }\n                    },\n                    {\n                        \"id\": 7,\n                        \"name\": \"bio_system\",\n                        \"type\": \"boolean\",\n                        \"created_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"updated_at\": \"2023-12-22T20:23:01.000000Z\",\n                        \"pivot\": {\n                            \"plan_id\": 1,\n                            \"feature_id\": 7,\n                            \"value\": \"1\"\n                        }\n                    }\n                ]\n            }\n        ],\n        \"is_accepted\": true\n    }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "logout"
+              ]
+            },
+            "description": "تسجيل خروج البائع\n\nLogout seller"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "profile"
+              ]
+            },
+            "description": "الحصول على معلومات البائع\n\nGet seller profile information"
+          },
+          "response": []
+        }
+      ],
+      "description": "Authentication endpoints for seller login/logout"
+    },
+    {
+      "name": "Bookings - الحجوزات",
+      "item": [
+        {
+          "name": "List Bookings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings?page=1&per_page=15",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "15"
+                },
+                {
+                  "key": "status",
+                  "value": "1",
+                  "description": "Filter by status: 1=pending, 2=confirmed, 3=completed, 4=cancelled",
+                  "disabled": true
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Search by booking number or customer name",
+                  "disabled": true
+                },
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01",
+                  "disabled": true
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "عرض قائمة الحجوزات مع إمكانية الفلترة\n\nList all bookings with filtering options"
+          },
+          "response": [
+            {
+              "name": "List Bookings",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings?page=1&per_page=15",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "seller",
+                    "branches",
+                    "{{branch_id}}",
+                    "bookings"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "per_page",
+                      "value": "15"
+                    },
+                    {
+                      "key": "status",
+                      "value": "1",
+                      "description": "Filter by status: 1=pending, 2=confirmed, 3=completed, 4=cancelled",
+                      "disabled": true
+                    },
+                    {
+                      "key": "search",
+                      "value": "",
+                      "description": "Search by booking number or customer name",
+                      "disabled": true
+                    },
+                    {
+                      "key": "date_from",
+                      "value": "2024-01-01",
+                      "disabled": true
+                    },
+                    {
+                      "key": "date_to",
+                      "value": "2024-12-31",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "Text",
+              "header": [
+                {
+                  "key": "Date",
+                  "value": "Sun, 01 Mar 2026 20:51:50 GMT"
+                },
+                {
+                  "key": "Server",
+                  "value": "Apache"
+                },
+                {
+                  "key": "Cache-Control",
+                  "value": "no-cache, private"
+                },
+                {
+                  "key": "Access-Control-Allow-Origin",
+                  "value": "*"
+                },
+                {
+                  "key": "Access-Control-Allow-Methods",
+                  "value": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                },
+                {
+                  "key": "Access-Control-Allow-Headers",
+                  "value": "Content-Type, Authorization"
+                },
+                {
+                  "key": "X-App-Locale",
+                  "value": "ar"
+                },
+                {
+                  "key": "X-RateLimit-Limit",
+                  "value": "150"
+                },
+                {
+                  "key": "X-RateLimit-Remaining",
+                  "value": "149"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Authorization"
+                },
+                {
+                  "key": "Keep-Alive",
+                  "value": "timeout=5, max=100"
+                },
+                {
+                  "key": "Connection",
+                  "value": "Keep-Alive"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n    \"data\": [\n        {\n            \"id\": 415857,\n            \"booking_number\": \"#BOK-415857\",\n            \"customer\": {\n                \"name\": \"جمانه الجميع\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 1,\n            \"status_display\": \"حجز مؤكد \",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-03-01 23:10:30\",\n            \"updated_at\": \"23:10:30\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 608.700000000000045474735088646411895751953125\n        },\n        {\n            \"id\": 415825,\n            \"booking_number\": \"#BOK-415825\",\n            \"customer\": {\n                \"name\": \"جمانه الجميع\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-28 15:31:28\",\n            \"updated_at\": \"15:31:50\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 608.700000000000045474735088646411895751953125\n        },\n        {\n            \"id\": 415620,\n            \"booking_number\": \"#BOK-415620\",\n            \"customer\": {\n                \"name\": \"شهد الحميدي\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-26 00:25:04\",\n            \"updated_at\": \"00:25:28\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 18.260000000000001563194018672220408916473388671875\n        },\n        {\n            \"id\": 415617,\n            \"booking_number\": \"#BOK-415617\",\n            \"customer\": {\n                \"name\": \"ليلى بو دريس\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-26 00:22:49\",\n            \"updated_at\": \"00:23:09\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 8.699999999999999289457264239899814128875732421875\n        },\n        {\n            \"id\": 415593,\n            \"booking_number\": \"#BOK-415593\",\n            \"customer\": {\n                \"name\": \"رباب المهنا\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-26 00:03:04\",\n            \"updated_at\": \"00:06:58\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 152.169999999999987494447850622236728668212890625\n        },\n        {\n            \"id\": 415583,\n            \"booking_number\": \"#BOK-415583\",\n            \"customer\": {\n                \"name\": \"مها احمد\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:56:04\",\n            \"updated_at\": \"23:56:31\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 26.08999999999999630517777404747903347015380859375\n        },\n        {\n            \"id\": 415578,\n            \"booking_number\": \"#BOK-415578\",\n            \"customer\": {\n                \"name\": \"فاطمه احمد\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:50:59\",\n            \"updated_at\": \"23:51:25\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 113.049999999999982946974341757595539093017578125\n        },\n        {\n            \"id\": 415572,\n            \"booking_number\": \"#BOK-415572\",\n            \"customer\": {\n                \"name\": \"روز الاحمد\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:47:43\",\n            \"updated_at\": \"23:48:08\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 113.049999999999982946974341757595539093017578125\n        },\n        {\n            \"id\": 415571,\n            \"booking_number\": \"#BOK-415571\",\n            \"customer\": {\n                \"name\": \"روبا يوسف\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:46:26\",\n            \"updated_at\": \"23:49:11\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 8.699999999999999289457264239899814128875732421875\n        },\n        {\n            \"id\": 415570,\n            \"booking_number\": \"#BOK-415570\",\n            \"customer\": {\n                \"name\": \"زينب بوسهيل\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:45:33\",\n            \"updated_at\": \"23:45:39\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 8.699999999999999289457264239899814128875732421875\n        },\n        {\n            \"id\": 415568,\n            \"booking_number\": \"#BOK-415568\",\n            \"customer\": {\n                \"name\": \"امل البشر\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:44:05\",\n            \"updated_at\": \"23:44:37\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 47.8299999999999982946974341757595539093017578125\n        },\n        {\n            \"id\": 415564,\n            \"booking_number\": \"#BOK-415564\",\n            \"customer\": {\n                \"name\": \"هيفاء الصقر\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:42:03\",\n            \"updated_at\": \"23:42:09\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 8.699999999999999289457264239899814128875732421875\n        },\n        {\n            \"id\": 415551,\n            \"booking_number\": \"#BOK-415551\",\n            \"customer\": {\n                \"name\": \"بيان الغافلي\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:35:11\",\n            \"updated_at\": \"23:35:26\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 4.3499999999999996447286321199499070644378662109375\n        },\n        {\n            \"id\": 415541,\n            \"booking_number\": \"#BOK-415541\",\n            \"customer\": {\n                \"name\": \"سعديه المبارك\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:28:08\",\n            \"updated_at\": \"23:28:47\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 34.780000000000001136868377216160297393798828125\n        },\n        {\n            \"id\": 415531,\n            \"booking_number\": \"#BOK-415531\",\n            \"customer\": {\n                \"name\": \"فاطمه الجبران\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\"\n            },\n            \"platform\": \"dashboard\",\n            \"type\": \"services\",\n            \"type_text\": \"خدمات\",\n            \"notes\": null,\n            \"status\": 3,\n            \"status_display\": \"انتهي\",\n            \"has_cancelled\": false,\n            \"book_appointment\": false,\n            \"created_at\": \"2026-02-25 23:21:30\",\n            \"updated_at\": \"23:21:41\",\n            \"delivery_man\": {\n                \"id\": null,\n                \"name\": null,\n                \"mobile\": null\n            },\n            \"total_price\": 26.08999999999999630517777404747903347015380859375\n        }\n    ],\n    \"links\": {\n        \"first\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=1\",\n        \"last\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=6981\",\n        \"prev\": null,\n        \"next\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=2\"\n    },\n    \"meta\": {\n        \"current_page\": 1,\n        \"from\": 1,\n        \"last_page\": 6981,\n        \"links\": [\n            {\n                \"url\": null,\n                \"label\": \"&laquo; Previous\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=1\",\n                \"label\": \"1\",\n                \"active\": true\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=2\",\n                \"label\": \"2\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=3\",\n                \"label\": \"3\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=4\",\n                \"label\": \"4\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=5\",\n                \"label\": \"5\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=6\",\n                \"label\": \"6\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=7\",\n                \"label\": \"7\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=8\",\n                \"label\": \"8\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=9\",\n                \"label\": \"9\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=10\",\n                \"label\": \"10\",\n                \"active\": false\n            },\n            {\n                \"url\": null,\n                \"label\": \"...\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=6980\",\n                \"label\": \"6980\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=6981\",\n                \"label\": \"6981\",\n                \"active\": false\n            },\n            {\n                \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings?page=2\",\n                \"label\": \"Next &raquo;\",\n                \"active\": false\n            }\n        ],\n        \"path\": \"https://api.hermosaapp.com/seller/branches/14/bookings\",\n        \"per_page\": 15,\n        \"to\": 15,\n        \"total\": 104704\n    },\n    \"status\": 200,\n    \"maintenance\": \"stopped\",\n    \"today\": \"2026-03-01\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Booking - Prepare",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings/create?type=services",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "bookings",
+                "create"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "services",
+                  "description": "services | packageServices | meals"
+                }
+              ]
+            },
+            "description": "الحصول على البيانات اللازمة لإنشاء حجز جديد (الخدمات المتاحة)\n\nGet data needed to create a new booking (available services)"
+          },
+          "response": [
+            {
+              "name": "Create Booking - Prepare",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings/create?type=services",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "seller",
+                    "branches",
+                    "{{branch_id}}",
+                    "bookings",
+                    "create"
+                  ],
+                  "query": [
+                    {
+                      "key": "type",
+                      "value": "services",
+                      "description": "services | packageServices | meals"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "Text",
+              "header": [
+                {
+                  "key": "Date",
+                  "value": "Sun, 01 Mar 2026 20:52:13 GMT"
+                },
+                {
+                  "key": "Server",
+                  "value": "Apache"
+                },
+                {
+                  "key": "Cache-Control",
+                  "value": "no-cache, private"
+                },
+                {
+                  "key": "Access-Control-Allow-Origin",
+                  "value": "*"
+                },
+                {
+                  "key": "Access-Control-Allow-Methods",
+                  "value": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                },
+                {
+                  "key": "Access-Control-Allow-Headers",
+                  "value": "Content-Type, Authorization"
+                },
+                {
+                  "key": "X-App-Locale",
+                  "value": "ar"
+                },
+                {
+                  "key": "X-RateLimit-Limit",
+                  "value": "150"
+                },
+                {
+                  "key": "X-RateLimit-Remaining",
+                  "value": "148"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Authorization"
+                },
+                {
+                  "key": "Keep-Alive",
+                  "value": "timeout=5, max=100"
+                },
+                {
+                  "key": "Connection",
+                  "value": "Keep-Alive"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n    \"maintenance\": \"stopped\",\n    \"today\": \"2026-03-01\",\n    \"status\": 200,\n    \"message\": \"\",\n    \"errors\": [],\n    \"data\": {\n        \"today\": \"2026-03-01\",\n        \"collection\": {\n            \"current_page\": 1,\n            \"data\": [\n                {\n                    \"id\": 1623,\n                    \"name\": \"مكياج عروس\",\n                    \"image\": null,\n                    \"minutes_format\": \"1.25 ساعة\",\n                    \"minutes\": 75,\n                    \"price_before_offer\": null,\n                    \"price\": \"700.01 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1624,\n                    \"name\": \"مكياج خطوبة\",\n                    \"image\": null,\n                    \"minutes_format\": \"1.25 ساعة\",\n                    \"minutes\": 75,\n                    \"price_before_offer\": null,\n                    \"price\": \"350.00 ر.س\",\n                    \"is_favourite\": false,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1625,\n                    \"name\": \"مكياج وسط\",\n                    \"image\": null,\n                    \"minutes_format\": \"1.25 ساعة\",\n                    \"minutes\": 75,\n                    \"price_before_offer\": null,\n                    \"price\": \"250.00 ر.س\",\n                    \"is_favourite\": false,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1626,\n                    \"name\": \"مكياج ثقيل\",\n                    \"image\": null,\n                    \"minutes_format\": \"1.25 ساعة\",\n                    \"minutes\": 75,\n                    \"price_before_offer\": null,\n                    \"price\": \"300.00 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1627,\n                    \"name\": \"مكياج فرنسي\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"180.00 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1628,\n                    \"name\": \"مكياج اطفال\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"100.00 ر.س\",\n                    \"is_favourite\": false,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1629,\n                    \"name\": \"كحل مع اساس\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"100.00 ر.س\",\n                    \"is_favourite\": false,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1630,\n                    \"name\": \"كحل بدون اساس\",\n                    \"image\": null,\n                    \"minutes_format\": \"10 دقيقة\",\n                    \"minutes\": 10,\n                    \"price_before_offer\": null,\n                    \"price\": \"25.00 ر.س\",\n                    \"is_favourite\": false,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1631,\n                    \"name\": \"تركيب فقط بدون رموش\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"11.01 ر.س\",\n                    \"is_favourite\": false,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1632,\n                    \"name\": \"رموش قطعه وحده\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"30.00 ر.س\",\n                    \"is_favourite\": false,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1633,\n                    \"name\": \"رموش اسبوعي كتله كتله\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"115.00 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1634,\n                    \"name\": \"رموش اسبوعي طرفي كتله كتله\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"57.99 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1635,\n                    \"name\": \"رموش طرفي كلاسيك\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"100.00 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1636,\n                    \"name\": \"رموش شعره شعره كلاسيك\",\n                    \"image\": null,\n                    \"minutes_format\": \"5 دقيقة\",\n                    \"minutes\": 5,\n                    \"price_before_offer\": null,\n                    \"price\": \"149.99 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                },\n                {\n                    \"id\": 1637,\n                    \"name\": \"مكياج ام محمد\",\n                    \"image\": null,\n                    \"minutes_format\": \"1.33 ساعة\",\n                    \"minutes\": 80,\n                    \"price_before_offer\": null,\n                    \"price\": \"1000.01 ر.س\",\n                    \"is_favourite\": true,\n                    \"addons_groups\": [],\n                    \"addons\": []\n                }\n            ],\n            \"first_page_url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=1\",\n            \"from\": 1,\n            \"last_page\": 20,\n            \"last_page_url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=20\",\n            \"links\": [\n                {\n                    \"url\": null,\n                    \"label\": \"&laquo; Previous\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=1\",\n                    \"label\": \"1\",\n                    \"active\": true\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=2\",\n                    \"label\": \"2\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=3\",\n                    \"label\": \"3\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=4\",\n                    \"label\": \"4\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=5\",\n                    \"label\": \"5\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=6\",\n                    \"label\": \"6\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=7\",\n                    \"label\": \"7\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=8\",\n                    \"label\": \"8\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=9\",\n                    \"label\": \"9\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=10\",\n                    \"label\": \"10\",\n                    \"active\": false\n                },\n                {\n                    \"url\": null,\n                    \"label\": \"...\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=19\",\n                    \"label\": \"19\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=20\",\n                    \"label\": \"20\",\n                    \"active\": false\n                },\n                {\n                    \"url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=2\",\n                    \"label\": \"Next &raquo;\",\n                    \"active\": false\n                }\n            ],\n            \"next_page_url\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create?page=2\",\n            \"path\": \"https://api.hermosaapp.com/seller/branches/14/bookings/create\",\n            \"per_page\": 15,\n            \"prev_page_url\": null,\n            \"to\": 15,\n            \"total\": 286\n        },\n        \"has_favourite\": false,\n        \"pay_later\": true,\n        \"customer_required\": true\n    }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Booking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.data && response.data.id) {",
+                  "        pm.collectionVariables.set('booking_id', response.data.id);",
+                  "        console.log('Booking ID saved:', response.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": 155752,\n  \"card\": [\n    {\n      \"package_service_id\": null,\n      \"item_name\": \"مكياج عروس\",\n      \"service_id\": 1623,\n      \"minutes\": 75,\n      \"employee_name\": \"ليلى المهدي\",\n      \"employee_id\": 111,\n      \"date\": \"2026-03-01\",\n      \"time\": \"15:05\",\n      \"session_numbers\": 0,\n      \"quantity\": 1,\n      \"price\": 700.01,\n      \"unitPrice\": 700.01,\n      \"modified_unit_price\": null\n    }\n  ],\n  \"type\": null,\n  \"type_extra\": {\n    \"car_number\": null,\n    \"table_name\": null,\n    \"latitude\": null,\n    \"longitude\": null\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "bookings"
+              ]
+            },
+            "description": "إنشاء حجز جديد مع الخدمات\n\nCreate a new booking with services\n\nالحقول المطلوبة:\n- customer_id: معرف العميل\n- date: تاريخ الحجز\n- time: وقت الحجز\n- card: مصفوفة الخدمات المحجوزة\n  - service_id: معرف الخدمة\n  - employee_id: معرف الموظف\n  - date: تاريخ الخدمة\n  - time: وقت الخدمة\n  - quantity: الكمية\n  - price: السعر\n  - addons: مصفوفة معرفات الإضافات (اختياري)"
+          },
+          "response": [
+            {
+              "name": "Create Booking",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"customer_id\": 155752,\n  \"card\": [\n    {\n      \"package_service_id\": null,\n      \"item_name\": \"مكياج عروس\",\n      \"service_id\": 1623,\n      \"minutes\": 75,\n      \"employee_name\": \"ليلى المهدي\",\n      \"employee_id\": 111,\n      \"date\": \"2026-03-01\",\n      \"time\": \"15:05\",\n      \"session_numbers\": 0,\n      \"quantity\": 1,\n      \"price\": 700.01,\n      \"unitPrice\": 700.01,\n      \"modified_unit_price\": null\n    }\n  ],\n  \"type\": null,\n  \"type_extra\": {\n    \"car_number\": null,\n    \"table_name\": null,\n    \"latitude\": null,\n    \"longitude\": null\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "seller",
+                    "branches",
+                    "{{branch_id}}",
+                    "bookings"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "Text",
+              "header": [
+                {
+                  "key": "Date",
+                  "value": "Sun, 01 Mar 2026 20:54:45 GMT"
+                },
+                {
+                  "key": "Server",
+                  "value": "Apache"
+                },
+                {
+                  "key": "Cache-Control",
+                  "value": "no-cache, private"
+                },
+                {
+                  "key": "Access-Control-Allow-Origin",
+                  "value": "*"
+                },
+                {
+                  "key": "Access-Control-Allow-Methods",
+                  "value": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                },
+                {
+                  "key": "Access-Control-Allow-Headers",
+                  "value": "Content-Type, Authorization"
+                },
+                {
+                  "key": "X-App-Locale",
+                  "value": "ar"
+                },
+                {
+                  "key": "X-RateLimit-Limit",
+                  "value": "150"
+                },
+                {
+                  "key": "X-RateLimit-Remaining",
+                  "value": "149"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Authorization"
+                },
+                {
+                  "key": "Keep-Alive",
+                  "value": "timeout=5, max=100"
+                },
+                {
+                  "key": "Connection",
+                  "value": "Keep-Alive"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n    \"maintenance\": \"stopped\",\n    \"today\": \"2026-03-01\",\n    \"status\": 200,\n    \"message\": \"تم الاضافة بنجاح.\",\n    \"errors\": [],\n    \"data\": {\n        \"id\": 415859,\n        \"booking\": {\n            \"type_extra\": {\n                \"car_number\": null,\n                \"table_name\": null,\n                \"latitude\": null,\n                \"longitude\": null\n            },\n            \"platform\": \"dashboard\",\n            \"book_appointment\": false,\n            \"cashier_id\": 84,\n            \"branch_id\": 14,\n            \"userable_id\": 155752,\n            \"userable_type\": \"App\\\\Models\\\\Customer\",\n            \"updated_at\": \"20:54:45\",\n            \"created_at\": \"2026-03-01 20:54:45\",\n            \"id\": 415859,\n            \"cashier\": {\n                \"id\": 84,\n                \"seller_id\": 14,\n                \"country_id\": 1,\n                \"city_id\": 8,\n                \"fullname\": \"{\\\"ar\\\":\\\"نعيمه طاهر العبدالله\\\",\\\"en\\\":\\\"Naimah Tahar Al-Abdullah\\\"}\",\n                \"email\": \"a.lamal@live.com\",\n                \"role\": \"OWNER\",\n                \"mobile\": \"0531022226\",\n                \"birthdate\": null,\n                \"is_active\": true,\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\",\n                \"contract_file\": null,\n                \"email_verified_at\": \"2023-07-06T11:19:36.000000Z\",\n                \"deleted_at\": null,\n                \"created_at\": \"2023-07-06\",\n                \"updated_at\": \"منذ 5 دقائق\",\n                \"bank_transfer_number\": null,\n                \"benefit_number\": null,\n                \"stc_number\": null,\n                \"payment_type\": null,\n                \"receipt_copy\": null,\n                \"account_holder_name\": null,\n                \"port\": null,\n                \"port_status\": false,\n                \"ip\": null,\n                \"nami_port\": null,\n                \"port_status_nami\": false,\n                \"nami_with_ip\": null,\n                \"serial_port\": null,\n                \"serial_baud_rate\": \"0\",\n                \"is_bio\": 0,\n                \"sallary\": 0,\n                \"addition\": 0,\n                \"parents\": null,\n                \"options\": null,\n                \"language\": \"ar\",\n                \"active_of_agent\": false,\n                \"agent_id\": null,\n                \"order_count\": 0,\n                \"branches\": [\n                    {\n                        \"id\": 14,\n                        \"tap_lead_id\": \"led_b8UaS46261845IhDl247q1Q104\",\n                        \"tap_lead_status\": \"active\",\n                        \"tap_destination_id\": null,\n                        \"tap_file_ids\": {\n                            \"logo\": \"file_EXSI25261022PnlO1b21X767\",\n                            \"cr\": \"file_PdIP29261022XrxW1uR1i435\",\n                            \"id\": \"file_9W1531261022IbfA1UZ1i858\"\n                        },\n                        \"tap_registered_at\": null,\n                        \"tap_entity_license_number\": \"2252037949\",\n                        \"seller_id\": 14,\n                        \"type_id\": 1,\n                        \"country_id\": 1,\n                        \"city_id\": 8,\n                        \"name\": \"{\\\"ar\\\":\\\"مركز الأمل1 للتزيين النسائي\\\",\\\"en\\\":\\\"Center Al-Amil 1 Women beauty Shop\\\"}\",\n                        \"district\": \"{\\\"ar\\\":\\\"المسعودي\\\",\\\"en\\\":\\\"Masoudi\\\"}\",\n                        \"latitude\": \"25.403895099133745\",\n                        \"longitude\": \"49.594902992248535\",\n                        \"mobile\": \"0509095842\",\n                        \"logo\": \"/storage/seller/logo/hE0JkxHKMi0Qevq8XORUOWIiN4SdrjOPJKxrsxVf.jpg\",\n                        \"telephone\": \"0135878459\",\n                        \"status\": 3,\n                        \"is_active\": true,\n                        \"has_online_pay\": true,\n                        \"is_use_application\": true,\n                        \"has_tax\": true,\n                        \"delivery_fee\": null,\n                        \"delivery_type\": \"fixed\",\n                        \"min_order_price\": 0,\n                        \"commercial_number\": \"7011464026\",\n                        \"bank_name\": \"بنك الرياض\",\n                        \"bank_account_number\": \"3184122269940\",\n                        \"benefit\": null,\n                        \"stc\": null,\n                        \"commercial_number_file\": null,\n                        \"bank_account_file\": \"/storage/seller/branch-bankAccount/j3iPvhxsCGUl290RbjpJaa3hFonL04DRci71FjFB.jpg\",\n                        \"contract_file\": \"/storage/seller/branch-contract/H4zqhl894lsb5fSHa92WG7h2EzJcpHX9mWVA0eqf.jpg\",\n                        \"zatca_fields\": null,\n                        \"zatca_settings\": null,\n                        \"created_at\": \"2023-07-06\",\n                        \"updated_at\": \"منذ 5 أيام\",\n                        \"snapchat\": null,\n                        \"instagram\": null,\n                        \"policy\": \"{\\\"ar\\\":\\\"عزيزتي الزبونة استخراج سياستنا: 1- جميع اسعار الخدمات والمبيعات ثابتة 2- جميع اسعار الخدمات والمبيعات لاترد ولاتستبدل 3- العربون لايسترجع ولكن يستبدل شهر من تاريخ اصدار الفاتورة 4- مبيعات بالشعر والبشرة لايمكن استبدالها او استرجاعها 5- برامج العناية بالشعر الخدمة والخدمة بعد اتمام الخدمة.\\\",\\\"en\\\":\\\"Dear customer, extract our policy: 1- All service and sales prices are fixed 2- All service and sales prices are non-refundable and non-exchangeable 3- The deposit is not refundable but can be replaced one month from the date of issuing the invoice 4- Hair and skin sales cannot be exchanged or refunded 5- Hair care programs service and service after completion of the service .\\\"}\",\n                        \"instance_id\": \"E6CC3147A94C\",\n                        \"instance_token\": \"1hSIrJn9px4Tgl\",\n                        \"bank_transfer_number\": null,\n                        \"benefit_number\": null,\n                        \"stc_number\": null,\n                        \"payment_type\": null,\n                        \"receipt_copy\": null,\n                        \"favorite_langs\": null,\n                        \"account_holder_name\": null,\n                        \"whatsapp_status\": true,\n                        \"device_id\": 40,\n                        \"is_bio\": true,\n                        \"allow\": 0,\n                        \"sn\": \"JJA1242900334\",\n                        \"evaluation_link\": null,\n                        \"tax_number\": null,\n                        \"tiktok\": null,\n                        \"tap_entity_unified_number\": \"7011464026\",\n                        \"tap_entity_license_type\": \"Establishment\",\n                        \"tap_entity_country\": \"SA\",\n                        \"tap_user_first_name\": \"نعيمه\",\n                        \"tap_user_middle_name\": \"طاهر\",\n                        \"tap_user_last_name\": \"العبدالله\",\n                        \"tap_user_email\": \"a.lamal@live.com\",\n                        \"tap_user_phone_country_code\": \"966\",\n                        \"tap_user_phone_number\": \"531022226\",\n                        \"tap_user_id_type\": \"national_id\",\n                        \"tap_user_id_number\": \"1019011459\",\n                        \"tap_user_id_country\": \"SA\",\n                        \"tap_user_birth_date\": \"1975-02-11\",\n                        \"tap_bank_iban\": \"SA9620000003183581419940\",\n                        \"tap_bank_account_number\": \"3183581419940\",\n                        \"tap_bank_name\": \"بنك الرياض\",\n                        \"tap_bank_swift_code\": \"RIBLSARI\",\n                        \"tap_bank_currency\": \"SAR\",\n                        \"tap_brand_names\": [\n                            {\n                                \"text\": \"مركز الأمل واحد للتزيين النسائي\",\n                                \"lang\": \"ar\"\n                            },\n                            {\n                                \"text\": \"Al Amal One Ladies Beauty Center\",\n                                \"lang\": \"en\"\n                            }\n                        ],\n                        \"tap_channel_services\": [\n                            {\n                                \"channel\": \"instagram\",\n                                \"address\": \"https://www.instagram.com/alamal.center0?igsh=bWR4ZTBjdHk3Y3h5\"\n                            }\n                        ],\n                        \"nearpay_merchant_id\": null,\n                        \"nearpay_terminal_id\": null,\n                        \"pivot\": {\n                            \"employee_id\": 84,\n                            \"branch_id\": 14\n                        }\n                    }\n                ],\n                \"permissions\": [],\n                \"roles\": [\n                    {\n                        \"id\": 2,\n                        \"name\": \"OWNER\",\n                        \"guard_name\": \"employee\",\n                        \"created_at\": \"2023-05-27T19:31:24.000000Z\",\n                        \"updated_at\": \"2023-05-27T19:31:24.000000Z\",\n                        \"pivot\": {\n                            \"model_id\": 84,\n                            \"role_id\": 2,\n                            \"model_type\": \"App\\\\Models\\\\Employee\"\n                        }\n                    }\n                ]\n            },\n            \"branch\": {\n                \"id\": 14,\n                \"tap_lead_id\": \"led_b8UaS46261845IhDl247q1Q104\",\n                \"tap_lead_status\": \"active\",\n                \"tap_destination_id\": null,\n                \"tap_file_ids\": {\n                    \"logo\": \"file_EXSI25261022PnlO1b21X767\",\n                    \"cr\": \"file_PdIP29261022XrxW1uR1i435\",\n                    \"id\": \"file_9W1531261022IbfA1UZ1i858\"\n                },\n                \"tap_registered_at\": null,\n                \"tap_entity_license_number\": \"2252037949\",\n                \"seller_id\": 14,\n                \"type_id\": 1,\n                \"country_id\": 1,\n                \"city_id\": 8,\n                \"name\": \"{\\\"ar\\\":\\\"مركز الأمل1 للتزيين النسائي\\\",\\\"en\\\":\\\"Center Al-Amil 1 Women beauty Shop\\\"}\",\n                \"district\": \"{\\\"ar\\\":\\\"المسعودي\\\",\\\"en\\\":\\\"Masoudi\\\"}\",\n                \"latitude\": \"25.403895099133745\",\n                \"longitude\": \"49.594902992248535\",\n                \"mobile\": \"0509095842\",\n                \"logo\": \"/storage/seller/logo/hE0JkxHKMi0Qevq8XORUOWIiN4SdrjOPJKxrsxVf.jpg\",\n                \"telephone\": \"0135878459\",\n                \"status\": 3,\n                \"is_active\": true,\n                \"has_online_pay\": true,\n                \"is_use_application\": true,\n                \"has_tax\": true,\n                \"delivery_fee\": null,\n                \"delivery_type\": \"fixed\",\n                \"min_order_price\": 0,\n                \"commercial_number\": \"7011464026\",\n                \"bank_name\": \"بنك الرياض\",\n                \"bank_account_number\": \"3184122269940\",\n                \"benefit\": null,\n                \"stc\": null,\n                \"commercial_number_file\": null,\n                \"bank_account_file\": \"/storage/seller/branch-bankAccount/j3iPvhxsCGUl290RbjpJaa3hFonL04DRci71FjFB.jpg\",\n                \"contract_file\": \"/storage/seller/branch-contract/H4zqhl894lsb5fSHa92WG7h2EzJcpHX9mWVA0eqf.jpg\",\n                \"zatca_fields\": null,\n                \"zatca_settings\": null,\n                \"created_at\": \"2023-07-06\",\n                \"updated_at\": \"منذ 5 أيام\",\n                \"snapchat\": null,\n                \"instagram\": null,\n                \"policy\": \"{\\\"ar\\\":\\\"عزيزتي الزبونة استخراج سياستنا: 1- جميع اسعار الخدمات والمبيعات ثابتة 2- جميع اسعار الخدمات والمبيعات لاترد ولاتستبدل 3- العربون لايسترجع ولكن يستبدل شهر من تاريخ اصدار الفاتورة 4- مبيعات بالشعر والبشرة لايمكن استبدالها او استرجاعها 5- برامج العناية بالشعر الخدمة والخدمة بعد اتمام الخدمة.\\\",\\\"en\\\":\\\"Dear customer, extract our policy: 1- All service and sales prices are fixed 2- All service and sales prices are non-refundable and non-exchangeable 3- The deposit is not refundable but can be replaced one month from the date of issuing the invoice 4- Hair and skin sales cannot be exchanged or refunded 5- Hair care programs service and service after completion of the service .\\\"}\",\n                \"instance_id\": \"E6CC3147A94C\",\n                \"instance_token\": \"1hSIrJn9px4Tgl\",\n                \"bank_transfer_number\": null,\n                \"benefit_number\": null,\n                \"stc_number\": null,\n                \"payment_type\": null,\n                \"receipt_copy\": null,\n                \"favorite_langs\": null,\n                \"account_holder_name\": null,\n                \"whatsapp_status\": true,\n                \"device_id\": 40,\n                \"is_bio\": true,\n                \"allow\": 0,\n                \"sn\": \"JJA1242900334\",\n                \"evaluation_link\": null,\n                \"tax_number\": null,\n                \"tiktok\": null,\n                \"tap_entity_unified_number\": \"7011464026\",\n                \"tap_entity_license_type\": \"Establishment\",\n                \"tap_entity_country\": \"SA\",\n                \"tap_user_first_name\": \"نعيمه\",\n                \"tap_user_middle_name\": \"طاهر\",\n                \"tap_user_last_name\": \"العبدالله\",\n                \"tap_user_email\": \"a.lamal@live.com\",\n                \"tap_user_phone_country_code\": \"966\",\n                \"tap_user_phone_number\": \"531022226\",\n                \"tap_user_id_type\": \"national_id\",\n                \"tap_user_id_number\": \"1019011459\",\n                \"tap_user_id_country\": \"SA\",\n                \"tap_user_birth_date\": \"1975-02-11\",\n                \"tap_bank_iban\": \"SA9620000003183581419940\",\n                \"tap_bank_account_number\": \"3183581419940\",\n                \"tap_bank_name\": \"بنك الرياض\",\n                \"tap_bank_swift_code\": \"RIBLSARI\",\n                \"tap_bank_currency\": \"SAR\",\n                \"tap_brand_names\": [\n                    {\n                        \"text\": \"مركز الأمل واحد للتزيين النسائي\",\n                        \"lang\": \"ar\"\n                    },\n                    {\n                        \"text\": \"Al Amal One Ladies Beauty Center\",\n                        \"lang\": \"en\"\n                    }\n                ],\n                \"tap_channel_services\": [\n                    {\n                        \"channel\": \"instagram\",\n                        \"address\": \"https://www.instagram.com/alamal.center0?igsh=bWR4ZTBjdHk3Y3h5\"\n                    }\n                ],\n                \"nearpay_merchant_id\": null,\n                \"nearpay_terminal_id\": null,\n                \"type\": {\n                    \"id\": 1,\n                    \"name\": \"{\\\"ar\\\":\\\"صالون نسائي\\\",\\\"en\\\":\\\"Women saloon\\\"}\",\n                    \"module\": \"salons\",\n                    \"created_at\": \"2023-12-02T21:46:48.000000Z\",\n                    \"updated_at\": \"2023-12-02T21:46:48.000000Z\"\n                }\n            },\n            \"userable\": {\n                \"id\": 155752,\n                \"seller_id\": 14,\n                \"country_id\": 1,\n                \"city_id\": 8,\n                \"name\": \"جمانه الجميع\",\n                \"email\": null,\n                \"mobile\": \"0530325983\",\n                \"avatar\": \"https://api.hermosaapp.com/logo.png\",\n                \"birthdate\": null,\n                \"type\": \"individual\",\n                \"is_active\": true,\n                \"use_cash_back\": false,\n                \"tax_number\": null,\n                \"commercial_register\": null,\n                \"zatca_postal_number\": null,\n                \"zatca_street_name\": null,\n                \"zatca_building_number\": null,\n                \"zatca_plot_identification\": null,\n                \"deleted_at\": null,\n                \"created_at\": \"2026-02-25\",\n                \"updated_at\": \"منذ 4 أيام\"\n            }\n        },\n        \"sections\": [],\n        \"has_sales_invoice_redirect\": true,\n        \"has_favourite\": false,\n        \"pay_later\": true,\n        \"customer\": true\n    }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Show Booking",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings/{{booking_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "bookings",
+                "{{booking_id}}"
+              ]
+            },
+            "description": "عرض تفاصيل حجز معين\n\nShow specific booking details"
+          },
+          "response": [
+            {
+              "name": "Show Booking",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings/{{booking_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "seller",
+                    "branches",
+                    "{{branch_id}}",
+                    "bookings",
+                    "{{booking_id}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "Text",
+              "header": [
+                {
+                  "key": "Date",
+                  "value": "Sun, 01 Mar 2026 20:55:25 GMT"
+                },
+                {
+                  "key": "Server",
+                  "value": "Apache"
+                },
+                {
+                  "key": "Cache-Control",
+                  "value": "no-cache, private"
+                },
+                {
+                  "key": "Access-Control-Allow-Origin",
+                  "value": "*"
+                },
+                {
+                  "key": "Access-Control-Allow-Methods",
+                  "value": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                },
+                {
+                  "key": "Access-Control-Allow-Headers",
+                  "value": "Content-Type, Authorization"
+                },
+                {
+                  "key": "X-App-Locale",
+                  "value": "ar"
+                },
+                {
+                  "key": "X-RateLimit-Limit",
+                  "value": "150"
+                },
+                {
+                  "key": "X-RateLimit-Remaining",
+                  "value": "148"
+                },
+                {
+                  "key": "Vary",
+                  "value": "Authorization"
+                },
+                {
+                  "key": "Keep-Alive",
+                  "value": "timeout=5, max=100"
+                },
+                {
+                  "key": "Connection",
+                  "value": "Keep-Alive"
+                },
+                {
+                  "key": "Transfer-Encoding",
+                  "value": "chunked"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n    \"maintenance\": \"stopped\",\n    \"today\": \"2026-03-01\",\n    \"status\": 200,\n    \"message\": \"\",\n    \"errors\": [],\n    \"data\": {\n        \"id\": 415859,\n        \"type\": \"services\",\n        \"type_text\": \"خدمات\",\n        \"type_extra\": {\n            \"car_number\": null,\n            \"table_name\": null,\n            \"latitude\": null,\n            \"longitude\": null\n        },\n        \"notes\": null,\n        \"has_invoice\": false,\n        \"invoice_id\": null,\n        \"booking_number\": \"#BOK-415859\",\n        \"daily_order_number\": null,\n        \"cashier\": {\n            \"avatar\": \"https://api.hermosaapp.com/logo.png\",\n            \"fullname\": \"نعيمه طاهر العبدالله\"\n        },\n        \"platform\": \"dashboard\",\n        \"status\": 1,\n        \"status_display\": \"حجز مؤكد \",\n        \"has_cancelled\": false,\n        \"created_at\": \"2026-03-01 23:54:45\",\n        \"time\": \"23:55:25\",\n        \"updated_at\": \"23:54:45\",\n        \"user\": {\n            \"avatar\": \"https://api.hermosaapp.com/logo.png\",\n            \"name\": \"جمانه الجميع\",\n            \"mobile\": \"+9660530325983\",\n            \"whatsapp_url\": \"https://wa.me/+9660530325983\",\n            \"id\": 155752\n        },\n        \"booking_services\": [\n            {\n                \"id\": 586590,\n                \"employee_id\": 111,\n                \"service_id\": 1623,\n                \"package_service_id\": null,\n                \"employee\": {\n                    \"avatar\": \"https://api.hermosaapp.com/logo.png\",\n                    \"fullname\": \"ليلى المهدي\"\n                },\n                \"service_name\": \"مكياج عروس\",\n                \"service\": {\n                    \"id\": 1623,\n                    \"name\": \"مكياج عروس\",\n                    \"price\": 608.700000000000045474735088646411895751953125\n                },\n                \"order\": null,\n                \"addons\": [],\n                \"service_price\": 608.700000000000045474735088646411895751953125,\n                \"addons_price\": 0,\n                \"total_price\": 608.700000000000045474735088646411895751953125,\n                \"price\": 608.700000000000045474735088646411895751953125,\n                \"unit_price\": 608.700000000000045474735088646411895751953125,\n                \"modified_unit_price\": null,\n                \"discount\": null,\n                \"discount_type\": null,\n                \"quantity\": null,\n                \"session_numbers\": 0,\n                \"minutes\": null,\n                \"date\": \"2026-03-01\",\n                \"time\": \"15:05\",\n                \"status\": 1,\n                \"status_display\": \"قيد الانتظار\"\n            }\n        ],\n        \"branch\": {\n            \"seller_name\": \"مركز الأمل1 للتزيين النسائي | Center Al-Amil 1 Women beauty Shop\",\n            \"commercial_number\": \"7011464026\",\n            \"seller\": {\n                \"commercial_register\": null,\n                \"tax_number\": \"300425942800003\",\n                \"logo\": \"https://api.hermosaapp.com/storage/seller/logo/hE0JkxHKMi0Qevq8XORUOWIiN4SdrjOPJKxrsxVf.jpg\"\n            },\n            \"original_seller\": {\n                \"id\": 14,\n                \"name\": \"{\\\"ar\\\":\\\"مركز الأمل1 للتزيين النسائي\\\",\\\"en\\\":\\\"Center Al-Amil 1 Women beauty Shop\\\"}\",\n                \"policy\": \"{\\\"ar\\\":\\\"عزيزتي الزبونة استخراج سياستنا: 1- جميع اسعار الخدمات والمبيعات ثابتة 2- جميع اسعار الخدمات والمبيعات لاترد ولاتستبدل 3- العربون لايسترجع ولكن يستبدل شهر من تاريخ اصدار الفاتورة 4- مبيعات بالشعر والبشرة لايمكن استبدالها او استرجاعها 5- برامج العناية بالشعر الخدمة والخدمة بعد اتمام الخدمة.\\\",\\\"en\\\":\\\"عزيزتي الزبونة نأمل منكِ قراءة سياستنا:\\\\r\\\\n1- جميع اسعار الخدمات والمبيعات ثابتة\\\\r\\\\n2- جميع اسعار الخدمات والمبيعات المخفضة لاترد ولاتستبدل\\\\r\\\\n3- العربون لايسترجع ولكن يستبدل خلال شهر من تاريخ اصدار الفاتورة\\\\r\\\\n4- مبيعات العناية بالشعر والبشرة لايمكن استبدالها او استرجاعها\\\\r\\\\n5- برامج العناية بالشعر والبشرة لايمكن صالحة للاستخدام خلال شهرين من اصدار الفاتورة ولايحق المطالبة بالخدمة بعد اتمام الشهرين \\\\r\\\\n6- في حال وجود ملاحظة على الخدمة يتم التواصل مباشرة بعد الخدمة بمدة اقصاها ثلاثة ايام فقط\\\"}\",\n                \"tax_number\": \"300425942800003\",\n                \"national_id\": \"1019011459\",\n                \"iso2\": null,\n                \"commission_percentage\": null,\n                \"logo\": \"/storage/seller/logo/hE0JkxHKMi0Qevq8XORUOWIiN4SdrjOPJKxrsxVf.jpg\",\n                \"tax_number_file\": \"/storage/seller/tax-number/xDSpE5QzKzbmCOvpv7cOo6Q0sBu1OzPESa6MWJ1f.jpg\",\n                \"national_id_file\": \"/storage/seller/national-id/aFPSzVCktyt48kWi033cw5IKxMREHkZTKuxB225x.pdf\",\n                \"commercial_register\": null,\n                \"pusher_settings\": null,\n                \"is_active\": true,\n                \"created_at\": \"2023-07-06T11:18:43.000000Z\",\n                \"updated_at\": \"2024-04-26T19:06:01.000000Z\",\n                \"endDateOfBranch\": false,\n                \"active_of_agent\": false,\n                \"agent_id\": null,\n                \"is_collected\": false\n            },\n            \"address\": \"المملكة العربية السعودية , الأحساء\",\n            \"district\": \"المسعودي\",\n            \"mobile\": \"+9660509095842\",\n            \"telephone\": \"+9660135878459\",\n            \"map\": {\n                \"latitude\": \"25.403895099133745\",\n                \"longitude\": \"49.594902992248535\"\n            },\n            \"currency\": {\n                \"ar\": \"ر.س\",\n                \"en\": \"SAR\"\n            },\n            \"snapchat\": null,\n            \"instagram\": null,\n            \"tiktok\": null,\n            \"has_tax\": true,\n            \"country\": {\n                \"id\": 1,\n                \"name\": \"{\\\"ar\\\":\\\"المملكة العربية السعودية\\\",\\\"en\\\":\\\"Saudi Arabia\\\"}\",\n                \"currency\": \"{\\\"ar\\\":\\\"ر.س\\\",\\\"en\\\":\\\"SAR\\\"}\",\n                \"tax_percentage\": 15,\n                \"area_code\": \"+966\",\n                \"iso\": \"SAU\",\n                \"digits_number\": 2,\n                \"flag\": \"https://api.hermosaapp.com/logo.png\",\n                \"discount_factor\": 1,\n                \"absence_factor\": 1,\n                \"add_factor\": 1\n            },\n            \"city\": {\n                \"id\": 8,\n                \"country_id\": 1,\n                \"name\": \"{\\\"ar\\\":\\\"الأحساء\\\",\\\"en\\\":\\\"Al Ahssa\\\"}\",\n                \"is_active\": true\n            },\n            \"logo\": \"https://api.hermosaapp.com/storage/seller/logo/hE0JkxHKMi0Qevq8XORUOWIiN4SdrjOPJKxrsxVf.jpg\",\n            \"working_day_status\": {\n                \"is_open\": false,\n                \"work_from\": null,\n                \"work_to\": null,\n                \"break_from\": null,\n                \"break_to\": null\n            },\n            \"delivery_type\": \"fixed\",\n            \"delivery_fee\": 0,\n            \"min_order_price\": 0,\n            \"bank_name\": \"بنك الرياض\",\n            \"bank_account_number\": \"3184122269940\",\n            \"bank_iban\": \"SA9620000003183581419940\",\n            \"bank_logo\": null,\n            \"email\": null\n        },\n        \"delivery_man\": {\n            \"id\": null,\n            \"name\": null,\n            \"mobile\": null\n        },\n        \"total_price\": 608.700000000000045474735088646411895751953125\n    }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Booking",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": 1,\n  \"date\": \"2024-03-15\",\n  \"time\": \"11:00\",\n  \"notes\": \"تم تعديل الموعد\",\n  \"updated_at\": \"2024-03-14 10:30:00\",\n  \"card\": [\n    {\n      \"id\": 1,\n      \"service_id\": 1,\n      \"employee_id\": 2,\n      \"date\": \"2024-03-15\",\n      \"time\": \"11:00\",\n      \"quantity\": 1,\n      \"session_numbers\": 1,\n      \"price\": 50.00,\n      \"discount\": 5,\n      \"discount_type\": \"fixed\",\n      \"notes\": \"قص شعر مع خصم\",\n      \"addons\": []\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/bookings/{{booking_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "bookings",
+                "{{booking_id}}"
+              ]
+            },
+            "description": "تحديث حجز موجود\n\nUpdate existing booking\n\nملاحظة: يجب إرسال updated_at للتحقق من عدم تعديل الحجز من قبل مستخدم آخر"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Booking Status",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": 2\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/status/bookings/{{booking_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "status",
+                "bookings",
+                "{{booking_id}}"
+              ]
+            },
+            "description": "تحديث حالة الحجز\n\nUpdate booking status\n\nالحالات المتاحة:\n1 = pending (قيد الانتظار)\n2 = confirmed (مؤكد)\n3 = completed (مكتمل)\n4 = cancelled (ملغي)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Appointments Calendar",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculated/reports/appointments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculated",
+                "reports",
+                "appointments"
+              ]
+            },
+            "description": "عرض المواعيد في التقويم لجميع الموظفين\n\nShow appointments calendar for all employees"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Booking Data (Single Service)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2024-03-16\",\n  \"time\": \"14:00\",\n  \"employee_id\": 2\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/update-booking-data/{{booking_service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "update-booking-data",
+                "{{booking_service_id}}"
+              ]
+            },
+            "description": "تحديث بيانات خدمة واحدة في الحجز (التاريخ، الوقت، الموظف)\n\nUpdate single service data in booking (date, time, employee)"
+          },
+          "response": []
+        },
+        {
+          "name": "Send WhatsApp Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "multipart/form-data"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "message",
+                  "value": "مرحباً @، لديك موعد في @ غداً الساعة 10 صباحاً",
+                  "type": "text",
+                  "description": "@ will be replaced with customer name and branch name"
+                },
+                {
+                  "key": "attachment",
+                  "type": "file",
+                  "value": null,
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/booking/send-whatsapp/{{booking_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "booking",
+                "send-whatsapp",
+                "{{booking_id}}"
+              ]
+            },
+            "description": "إرسال رسالة واتساب للعميل\n\nSend WhatsApp message to customer\n\nملاحظة: يجب أن تحتوي الرسالة على @ مرتين على الأقل"
+          },
+          "response": []
+        }
+      ],
+      "description": "Booking management endpoints"
+    },
+    {
+      "name": "Services - الخدمات",
+      "item": [
+        {
+          "name": "List Services",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/services?page=1&per_page=15",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "services"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "15"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "category_id",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "عرض قائمة الخدمات\n\nList all services"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.data && response.data.id) {",
+                  "        pm.collectionVariables.set('service_id', response.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"قص شعر رجالي\",\n  \"name_en\": \"Men's Haircut\",\n  \"description\": \"قص شعر احترافي للرجال\",\n  \"description_en\": \"Professional men's haircut\",\n  \"category_id\": 1,\n  \"price\": 50.00,\n  \"duration\": 30,\n  \"is_active\": true,\n  \"is_online\": true,\n  \"is_home\": false,\n  \"is_favourite\": false,\n  \"image\": \"\",\n  \"employees\": [1, 2, 3]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/services",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "services"
+              ]
+            },
+            "description": "إنشاء خدمة جديدة\n\nCreate a new service"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Service",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"قص شعر رجالي - محدث\",\n  \"name_en\": \"Men's Haircut - Updated\",\n  \"description\": \"قص شعر احترافي للرجال مع تصفيف\",\n  \"description_en\": \"Professional men's haircut with styling\",\n  \"category_id\": 1,\n  \"price\": 60.00,\n  \"duration\": 40,\n  \"is_active\": true,\n  \"is_online\": true,\n  \"is_home\": true,\n  \"is_favourite\": true,\n  \"employees\": [1, 2]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/services/{{service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "services",
+                "{{service_id}}"
+              ]
+            },
+            "description": "تحديث خدمة موجودة\n\nUpdate existing service"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Service Employees",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/employees/services/{{service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "employees",
+                "services",
+                "{{service_id}}"
+              ]
+            },
+            "description": "عرض الموظفين المتاحين لخدمة معينة\n\nShow available employees for a service"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Service Employees",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employees\": [1, 2, 3, 4]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/employees/services/{{service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "employees",
+                "services",
+                "{{service_id}}"
+              ]
+            },
+            "description": "تحديث الموظفين المرتبطين بالخدمة\n\nUpdate employees assigned to service"
+          },
+          "response": []
+        },
+        {
+          "name": "Toggle Service Online",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/online/services/{{service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "online",
+                "services",
+                "{{service_id}}"
+              ]
+            },
+            "description": "تفعيل/إلغاء تفعيل الخدمة للحجز أونلاين\n\nToggle service online booking"
+          },
+          "response": []
+        },
+        {
+          "name": "Toggle Service Home",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/home/services/{{service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "home",
+                "services",
+                "{{service_id}}"
+              ]
+            },
+            "description": "تفعيل/إلغاء تفعيل الخدمة المنزلية\n\nToggle home service"
+          },
+          "response": []
+        },
+        {
+          "name": "Toggle Service Favourite",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/favourite/services/{{service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "favourite",
+                "services",
+                "{{service_id}}"
+              ]
+            },
+            "description": "إضافة/إزالة الخدمة من المفضلة\n\nToggle service favourite"
+          },
+          "response": []
+        },
+        {
+          "name": "Service Addons - List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/services/{{service_id}}/serviceAddons",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "services",
+                "{{service_id}}",
+                "serviceAddons"
+              ]
+            },
+            "description": "عرض إضافات الخدمة\n\nList service addons"
+          },
+          "response": []
+        },
+        {
+          "name": "Service Addons - Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"غسيل شعر\",\n  \"name_en\": \"Hair Wash\",\n  \"price\": 10.00,\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/services/{{service_id}}/serviceAddons",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "services",
+                "{{service_id}}",
+                "serviceAddons"
+              ]
+            },
+            "description": "إضافة إضافة جديدة للخدمة\n\nAdd new addon to service"
+          },
+          "response": []
+        }
+      ],
+      "description": "Service management endpoints"
+    },
+    {
+      "name": "Employees - الموظفين",
+      "item": [
+        {
+          "name": "List Employees",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/employees?page=1&per_page=15",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "employees"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "15"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "role",
+                  "value": "",
+                  "description": "Filter by role",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "عرض قائمة الموظفين\n\nList all employees"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Employee Options",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/employees/options",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "employees",
+                "options"
+              ]
+            },
+            "description": "الحصول على قائمة الموظفين كخيارات (للاستخدام في القوائم المنسدلة)\n\nGet employees as options (for dropdowns)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Employee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.data && response.data.id) {",
+                  "        pm.collectionVariables.set('employee_id', response.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullname\": \"أحمد محمد\",\n  \"email\": \"ahmed@example.com\",\n  \"mobile\": \"0501234567\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\",\n  \"role\": \"employee\",\n  \"is_active\": true,\n  \"salary\": 3000.00,\n  \"commission_percentage\": 10,\n  \"branches\": [1]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/employees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "employees"
+              ]
+            },
+            "description": "إنشاء موظف جديد\n\nCreate a new employee"
+          },
+          "response": []
+        },
+        {
+          "name": "Show Employee",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/employees/{{employee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "employees",
+                "{{employee_id}}"
+              ]
+            },
+            "description": "عرض تفاصيل موظف\n\nShow employee details"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Employee",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullname\": \"أحمد محمد - محدث\",\n  \"email\": \"ahmed.updated@example.com\",\n  \"mobile\": \"0501234567\",\n  \"role\": \"employee\",\n  \"is_active\": true,\n  \"salary\": 3500.00,\n  \"commission_percentage\": 15,\n  \"branches\": [1, 2]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/employees/{{employee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "employees",
+                "{{employee_id}}"
+              ]
+            },
+            "description": "تحديث بيانات موظف\n\nUpdate employee data"
+          },
+          "response": []
+        },
+        {
+          "name": "Activate/Deactivate Employee",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/activate/employees/{{employee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "activate",
+                "employees",
+                "{{employee_id}}"
+              ]
+            },
+            "description": "تفعيل/إلغاء تفعيل موظف\n\nActivate/Deactivate employee"
+          },
+          "response": []
+        },
+        {
+          "name": "Employee Working Days - List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/employees/{{employee_id}}/workingDays",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "employees",
+                "{{employee_id}}",
+                "workingDays"
+              ]
+            },
+            "description": "عرض أيام عمل الموظف\n\nList employee working days"
+          },
+          "response": []
+        },
+        {
+          "name": "Employee Working Days - Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"day\": \"sunday\",\n  \"from\": \"09:00\",\n  \"to\": \"17:00\",\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/employees/{{employee_id}}/workingDays",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "employees",
+                "{{employee_id}}",
+                "workingDays"
+              ]
+            },
+            "description": "إضافة يوم عمل للموظف\n\nAdd working day for employee\n\nالأيام المتاحة: sunday, monday, tuesday, wednesday, thursday, friday, saturday"
+          },
+          "response": []
+        },
+        {
+          "name": "Employee Services - Show",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/services/employees/{{employee_id}}/branches/{{branch_id}}/edit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "services",
+                "employees",
+                "{{employee_id}}",
+                "branches",
+                "{{branch_id}}",
+                "edit"
+              ]
+            },
+            "description": "عرض خدمات الموظف في فرع معين\n\nShow employee services in a branch"
+          },
+          "response": []
+        },
+        {
+          "name": "Employee Services - Update",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"services\": [1, 2, 3, 4, 5]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/services/employees/{{employee_id}}/branches/{{branch_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "services",
+                "employees",
+                "{{employee_id}}",
+                "branches",
+                "{{branch_id}}"
+              ]
+            },
+            "description": "تحديث خدمات الموظف\n\nUpdate employee services"
+          },
+          "response": []
+        },
+        {
+          "name": "Employee Bonus Services - Show",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/servicesBonus/employees/{{employee_id}}/branches/{{branch_id}}/edit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "servicesBonus",
+                "employees",
+                "{{employee_id}}",
+                "branches",
+                "{{branch_id}}",
+                "edit"
+              ]
+            },
+            "description": "عرض عمولات الموظف على الخدمات\n\nShow employee service bonuses"
+          },
+          "response": []
+        },
+        {
+          "name": "Employee Bonus Services - Update",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bonuses\": [\n    {\n      \"service_id\": 1,\n      \"bonus_type\": \"percentage\",\n      \"bonus_value\": 10\n    },\n    {\n      \"service_id\": 2,\n      \"bonus_type\": \"fixed\",\n      \"bonus_value\": 5\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/servicesBonus/employees/{{employee_id}}/branches/{{branch_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "servicesBonus",
+                "employees",
+                "{{employee_id}}",
+                "branches",
+                "{{branch_id}}"
+              ]
+            },
+            "description": "تحديث عمولات الموظف على الخدمات\n\nUpdate employee service bonuses"
+          },
+          "response": []
+        }
+      ],
+      "description": "Employee management endpoints"
+    },
+    {
+      "name": "Customers - العملاء",
+      "item": [
+        {
+          "name": "List Customers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/sellers/{{seller_id}}/customers?page=1&per_page=15",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "sellers",
+                "{{seller_id}}",
+                "customers"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "15"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "عرض قائمة العملاء\n\nList all customers"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.data && response.data.id) {",
+                  "        pm.collectionVariables.set('customer_id', response.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"محمد أحمد\",\n  \"mobile\": \"0501234567\",\n  \"email\": \"mohamed@example.com\",\n  \"gender\": \"male\",\n  \"birth_date\": \"1990-01-15\",\n  \"country_id\": 1,\n  \"city_id\": 1,\n  \"district\": \"حي النخيل\",\n  \"notes\": \"عميل مميز\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/sellers/{{seller_id}}/customers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "sellers",
+                "{{seller_id}}",
+                "customers"
+              ]
+            },
+            "description": "إنشاء عميل جديد\n\nCreate a new customer"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Customer",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"محمد أحمد - محدث\",\n  \"mobile\": \"0501234567\",\n  \"email\": \"mohamed.updated@example.com\",\n  \"gender\": \"male\",\n  \"birth_date\": \"1990-01-15\",\n  \"country_id\": 1,\n  \"city_id\": 1,\n  \"district\": \"حي الورود\",\n  \"notes\": \"عميل VIP\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/sellers/{{seller_id}}/customers/{{customer_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "sellers",
+                "{{seller_id}}",
+                "customers",
+                "{{customer_id}}"
+              ]
+            },
+            "description": "تحديث بيانات عميل\n\nUpdate customer data"
+          },
+          "response": []
+        },
+        {
+          "name": "Activate/Deactivate Customer",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/sellers/{{seller_id}}/customers/{{customer_id}}/activate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "sellers",
+                "{{seller_id}}",
+                "customers",
+                "{{customer_id}}",
+                "activate"
+              ]
+            },
+            "description": "تفعيل/إلغاء تفعيل عميل\n\nActivate/Deactivate customer"
+          },
+          "response": []
+        },
+        {
+          "name": "Activate Customer CashBack",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cashback_percentage\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/sellers/{{seller_id}}/customers/{{customer_id}}/activateCashBack",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "sellers",
+                "{{seller_id}}",
+                "customers",
+                "{{customer_id}}",
+                "activateCashBack"
+              ]
+            },
+            "description": "تفعيل نظام الكاش باك للعميل\n\nActivate cashback for customer"
+          },
+          "response": []
+        },
+        {
+          "name": "Send WhatsApp to Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "multipart/form-data"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "message",
+                  "value": "مرحباً @، نود إعلامك بعرض خاص في @",
+                  "type": "text"
+                },
+                {
+                  "key": "attachment",
+                  "type": "file",
+                  "value": null,
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/customers/send-whatsapp/{{branch_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "customers",
+                "send-whatsapp",
+                "{{branch_id}}"
+              ]
+            },
+            "description": "إرسال رسالة واتساب للعميل\n\nSend WhatsApp message to customer"
+          },
+          "response": []
+        },
+        {
+          "name": "Import Customers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Excel file with customers data",
+                  "value": null
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/import/sellers/{{seller_id}}/customers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "import",
+                "sellers",
+                "{{seller_id}}",
+                "customers"
+              ]
+            },
+            "description": "استيراد العملاء من ملف Excel\n\nImport customers from Excel file"
+          },
+          "response": []
+        }
+      ],
+      "description": "Customer management endpoints"
+    },
+    {
+      "name": "Sales Invoices - فواتير المبيعات",
+      "item": [
+        {
+          "name": "List Invoices",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices?page=1&per_page=15",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "15"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01",
+                  "disabled": true
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31",
+                  "disabled": true
+                },
+                {
+                  "key": "customer_id",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "عرض قائمة الفواتير\n\nList all invoices"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Invoice - Prepare",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices",
+                "create"
+              ]
+            },
+            "description": "الحصول على البيانات اللازمة لإنشاء فاتورة\n\nGet data needed to create invoice"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Invoice from Booking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.data && response.data.id) {",
+                  "        pm.collectionVariables.set('invoice_id', response.data.id);",
+                  "        console.log('Invoice ID saved:', response.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"booking_id\": 1,\n  \"customer_id\": 1,\n  \"date\": \"2024-03-15\",\n  \"time\": \"10:00\",\n  \"notes\": \"فاتورة من حجز\",\n  \"discount\": 0,\n  \"discount_type\": \"fixed\",\n  \"tax_percentage\": 15,\n  \"payment_method\": \"cash\",\n  \"paid_amount\": 100.00,\n  \"services\": [\n    {\n      \"booking_service_id\": 1,\n      \"service_id\": 1,\n      \"employee_id\": 1,\n      \"quantity\": 1,\n      \"price\": 50.00,\n      \"discount\": 0,\n      \"discount_type\": \"fixed\",\n      \"notes\": \"\",\n      \"addons\": []\n    },\n    {\n      \"booking_service_id\": 2,\n      \"service_id\": 2,\n      \"employee_id\": 1,\n      \"quantity\": 1,\n      \"price\": 30.00,\n      \"discount\": 0,\n      \"discount_type\": \"fixed\",\n      \"notes\": \"\",\n      \"addons\": [1]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices"
+              ]
+            },
+            "description": "إنشاء فاتورة من حجز موجود\n\nCreate invoice from existing booking"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Direct Invoice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.data && response.data.id) {",
+                  "        pm.collectionVariables.set('invoice_id', response.data.id);",
+                  "        console.log('Invoice ID saved:', response.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": 1,\n  \"date\": \"2024-03-15\",\n  \"time\": \"10:00\",\n  \"notes\": \"فاتورة مباشرة\",\n  \"discount\": 10,\n  \"discount_type\": \"fixed\",\n  \"tax_percentage\": 15,\n  \"payment_method\": \"cash\",\n  \"paid_amount\": 150.00,\n  \"services\": [\n    {\n      \"service_id\": 1,\n      \"employee_id\": 1,\n      \"quantity\": 2,\n      \"price\": 50.00,\n      \"discount\": 5,\n      \"discount_type\": \"percentage\",\n      \"notes\": \"خصم خاص\",\n      \"addons\": []\n    },\n    {\n      \"service_id\": 3,\n      \"employee_id\": 2,\n      \"quantity\": 1,\n      \"price\": 80.00,\n      \"discount\": 0,\n      \"discount_type\": \"fixed\",\n      \"notes\": \"\",\n      \"addons\": [1, 2]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices"
+              ]
+            },
+            "description": "إنشاء فاتورة مباشرة بدون حجز\n\nCreate direct invoice without booking"
+          },
+          "response": []
+        },
+        {
+          "name": "Show Invoice",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices/{{invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices",
+                "{{invoice_id}}"
+              ]
+            },
+            "description": "عرض تفاصيل فاتورة\n\nShow invoice details"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Invoice",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": 1,\n  \"date\": \"2024-03-15\",\n  \"time\": \"11:00\",\n  \"notes\": \"فاتورة محدثة\",\n  \"discount\": 15,\n  \"discount_type\": \"fixed\",\n  \"services\": [\n    {\n      \"id\": 1,\n      \"service_id\": 1,\n      \"employee_id\": 2,\n      \"quantity\": 1,\n      \"price\": 50.00,\n      \"discount\": 0,\n      \"discount_type\": \"fixed\",\n      \"notes\": \"تم تغيير الموظف\",\n      \"addons\": []\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices/{{invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices",
+                "{{invoice_id}}"
+              ]
+            },
+            "description": "تحديث فاتورة موجودة\n\nUpdate existing invoice"
+          },
+          "response": []
+        },
+        {
+          "name": "Calculate Invoice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"services\": [\n    {\n      \"service_id\": 1,\n      \"quantity\": 2,\n      \"price\": 50.00,\n      \"discount\": 5,\n      \"discount_type\": \"percentage\",\n      \"addons\": []\n    },\n    {\n      \"service_id\": 2,\n      \"quantity\": 1,\n      \"price\": 30.00,\n      \"discount\": 0,\n      \"discount_type\": \"fixed\",\n      \"addons\": [1, 2]\n    }\n  ],\n  \"discount\": 10,\n  \"discount_type\": \"fixed\",\n  \"tax_percentage\": 15\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculate/invoices",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculate",
+                "invoices"
+              ]
+            },
+            "description": "حساب إجمالي الفاتورة قبل الحفظ\n\nCalculate invoice total before saving"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Invoice Payment",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_method\": \"card\",\n  \"paid_amount\": 200.00,\n  \"notes\": \"دفع بالبطاقة\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/updatePays/invoices/{{invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "updatePays",
+                "invoices",
+                "{{invoice_id}}"
+              ]
+            },
+            "description": "تحديث طريقة الدفع والمبلغ المدفوع\n\nUpdate payment method and paid amount"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Invoice Date",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2024-03-16\",\n  \"time\": \"14:00\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices/{{invoice_id}}/update-date",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices",
+                "{{invoice_id}}",
+                "update-date"
+              ]
+            },
+            "description": "تحديث تاريخ ووقت الفاتورة\n\nUpdate invoice date and time"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Invoice PDF",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/pdf"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/invoices/{{invoice_id}}/pdf",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "invoices",
+                "{{invoice_id}}",
+                "pdf"
+              ]
+            },
+            "description": "تحميل الفاتورة بصيغة PDF\n\nDownload invoice as PDF"
+          },
+          "response": []
+        },
+        {
+          "name": "Send Invoice via WhatsApp",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoice_id\": 1,\n  \"message\": \"شكراً لزيارتكم، إليكم فاتورتكم\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/seller/invoices/send-whatsapp",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "invoices",
+                "send-whatsapp"
+              ]
+            },
+            "description": "إرسال الفاتورة عبر الواتساب\n\nSend invoice via WhatsApp"
+          },
+          "response": []
+        },
+        {
+          "name": "Invoice Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/statistics/invoices?date_from=2024-01-01&date_to=2024-12-31",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "statistics",
+                "invoices"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31"
+                }
+              ]
+            },
+            "description": "إحصائيات الفواتير\n\nInvoice statistics"
+          },
+          "response": []
+        }
+      ],
+      "description": "Sales invoice management endpoints"
+    },
+    {
+      "name": "Reports - التقارير",
+      "item": [
+        {
+          "name": "Sales Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculated/reports/salesPay?date_from=2024-01-01&date_to=2024-12-31",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculated",
+                "reports",
+                "salesPay"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31"
+                }
+              ]
+            },
+            "description": "تقرير المبيعات\n\nSales report"
+          },
+          "response": []
+        },
+        {
+          "name": "Sales Summary Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculated/reports/salesPaySummary?date_from=2024-01-01&date_to=2024-12-31",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculated",
+                "reports",
+                "salesPaySummary"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31"
+                }
+              ]
+            },
+            "description": "ملخص تقرير المبيعات\n\nSales summary report"
+          },
+          "response": []
+        },
+        {
+          "name": "Categories Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculated/reports/categoriesPay?date_from=2024-01-01&date_to=2024-12-31",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculated",
+                "reports",
+                "categoriesPay"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31"
+                }
+              ]
+            },
+            "description": "تقرير الفئات\n\nCategories report"
+          },
+          "response": []
+        },
+        {
+          "name": "Employees Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculated/reports/employeesPay?date_from=2024-01-01&date_to=2024-12-31",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculated",
+                "reports",
+                "employeesPay"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31"
+                },
+                {
+                  "key": "employee_id",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "تقرير الموظفين\n\nEmployees report"
+          },
+          "response": []
+        },
+        {
+          "name": "Employee Service Income Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/incomingServiceReport/branches/{{branch_id}}/employees/{{employee_id}}?date_from=2024-01-01&date_to=2024-12-31",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "incomingServiceReport",
+                "branches",
+                "{{branch_id}}",
+                "employees",
+                "{{employee_id}}"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31"
+                }
+              ]
+            },
+            "description": "تقرير دخل الموظف من الخدمات\n\nEmployee service income report"
+          },
+          "response": []
+        },
+        {
+          "name": "Monthly Income Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculated/reports/incomingMonthlyReport?year=2024",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculated",
+                "reports",
+                "incomingMonthlyReport"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "2024"
+                }
+              ]
+            },
+            "description": "تقرير الدخل الشهري\n\nMonthly income report"
+          },
+          "response": []
+        },
+        {
+          "name": "Tax Declaration Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/branches/{{branch_id}}/calculated/reports/taxDeclarationReport?date_from=2024-01-01&date_to=2024-12-31",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "branches",
+                "{{branch_id}}",
+                "calculated",
+                "reports",
+                "taxDeclarationReport"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2024-12-31"
+                }
+              ]
+            },
+            "description": "تقرير الإقرار الضريبي\n\nTax declaration report"
+          },
+          "response": []
+        }
+      ],
+      "description": "Reporting endpoints"
+    },
+    {
+      "name": "Filters & Utilities",
+      "item": [
+        {
+          "name": "Get Branches",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/filters/branches",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "filters",
+                "branches"
+              ]
+            },
+            "description": "الحصول على قائمة الفروع\n\nGet branches list"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Branch Tax Info",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/filters/branches/{{branch_id}}/getTax",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "filters",
+                "branches",
+                "{{branch_id}}",
+                "getTax"
+              ]
+            },
+            "description": "الحصول على معلومات الضريبة للفرع\n\nGet branch tax information"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Branch Payment Methods",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/filters/branches/{{branch_id}}/payMethods",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "filters",
+                "branches",
+                "{{branch_id}}",
+                "payMethods"
+              ]
+            },
+            "description": "الحصول على طرق الدفع المتاحة للفرع\n\nGet available payment methods for branch"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Categories",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "categories"
+              ]
+            },
+            "description": "الحصول على قائمة الفئات\n\nGet categories list"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Main Categories",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seller/main-categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seller",
+                "main-categories"
+              ]
+            },
+            "description": "الحصول على الفئات الرئيسية\n\nGet main categories"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Countries",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/countries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "countries"
+              ]
+            },
+            "description": "الحصول على قائمة الدول\n\nGet countries list"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Cities",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/countries/cities?country_id=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "countries",
+                "cities"
+              ],
+              "query": [
+                {
+                  "key": "country_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "الحصول على قائمة المدن لدولة معينة\n\nGet cities list for a country"
+          },
+          "response": []
+        }
+      ],
+      "description": "Filter and utility endpoints"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/api"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "branch_id",
+      "value": "1"
+    },
+    {
+      "key": "booking_id",
+      "value": ""
+    },
+    {
+      "key": "service_id",
+      "value": ""
+    },
+    {
+      "key": "employee_id",
+      "value": ""
+    },
+    {
+      "key": "customer_id",
+      "value": ""
+    },
+    {
+      "key": "seller_id",
+      "value": "1"
+    },
+    {
+      "key": "invoice_id",
+      "value": ""
+    },
+    {
+      "key": "booking_service_id",
+      "value": ""
+    }
+  ]
+}

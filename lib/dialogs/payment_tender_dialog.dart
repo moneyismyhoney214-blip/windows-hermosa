@@ -4,6 +4,7 @@ import '../models.dart';
 import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
 import 'split_payment_dialog.dart';
+import '../services/app_themes.dart';
 
 class PaymentTenderDialog extends StatefulWidget {
   final double total;
@@ -40,6 +41,7 @@ class PaymentTenderDialog extends StatefulWidget {
       'my_fatoorah': false,
       'jahez': false,
       'talabat': false,
+      'hunger_station': false,
     },
     this.onNoteChanged,
     this.promocodes = const [],
@@ -206,6 +208,13 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           'icon': LucideIcons.shoppingBag,
           'color': Colors.red,
           'bg': Colors.red[50]
+        },
+        {
+          'id': 'hunger_station',
+          'label': _tr('هنقر ستيشن', 'Hunger Station'),
+          'icon': LucideIcons.truck,
+          'color': Colors.deepOrange,
+          'bg': Colors.deepOrange[50]
         },
       ];
 
@@ -374,12 +383,14 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isSelected ? const Color(0xFFFFF7ED) : Colors.white,
+                    color: isSelected
+                        ? (context.isDark
+                            ? context.appPrimary.withValues(alpha: 0.15)
+                            : const Color(0xFFFFF7ED))
+                        : context.appCardBg,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: isSelected
-                          ? const Color(0xFFF58220)
-                          : const Color(0xFFE2E8F0),
+                      color: isSelected ? context.appPrimary : context.appBorder,
                       width: isSelected ? 2 : 1,
                     ),
                   ),
@@ -388,9 +399,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                     children: [
                       Icon(
                         method['icon'],
-                        color: isSelected
-                            ? const Color(0xFFF58220)
-                            : method['color'],
+                        color: isSelected ? context.appPrimary : method['color'],
                         size: isCompact ? 22 : 26,
                       ),
                       const SizedBox(height: 8),
@@ -405,8 +414,8 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                             fontSize: isCompact ? 12 : 14,
                             fontWeight: FontWeight.w700,
                             color: isSelected
-                                ? const Color(0xFFC2410C)
-                                : const Color(0xFF334155),
+                                ? context.appPrimary
+                                : (context.isDark ? Colors.white : context.appText),
                           ),
                         ),
                       ),
@@ -433,9 +442,9 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
               vertical: isCompact ? 10 : 12,
             ),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
+              color: context.appBg,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: context.appBorder),
             ),
             child: isCompact
                 ? Column(
@@ -529,13 +538,11 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         decoration: BoxDecoration(
           color: hasPromo
-              ? const Color(0xFFF58220).withValues(alpha: 0.1)
-              : Colors.white,
+              ? context.appPrimary.withValues(alpha: 0.1)
+              : context.appCardBg,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: hasPromo
-                ? const Color(0xFFF58220)
-                : const Color(0xFFE2E8F0),
+            color: hasPromo ? context.appPrimary : context.appBorder,
           ),
         ),
         child: Row(
@@ -543,9 +550,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
             Icon(
               hasPromo ? LucideIcons.badgePercent : LucideIcons.ticket,
               size: 18,
-              color: hasPromo
-                  ? const Color(0xFFF58220)
-                  : const Color(0xFF94A3B8),
+              color: hasPromo ? context.appPrimary : context.appTextMuted,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -632,9 +637,9 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
   }) {
     return Container(
       padding: EdgeInsets.all(isCompact ? (isUltraCompact ? 8 : 12) : 20),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+      decoration: BoxDecoration(
+        color: context.appCardBg,
+        border: Border(top: BorderSide(color: context.appBorder)),
       ),
       child: isCompact
           ? Column(
@@ -744,9 +749,9 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         width: dialogWidth,
         height: dialogHeight,
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
+          color: context.appBg,
           borderRadius: BorderRadius.circular(isCompact ? 18 : 24),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: context.appBorder),
         ),
         clipBehavior: Clip.antiAlias,
         child: Directionality(
@@ -856,9 +861,9 @@ class _SectionCard extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(compact ? 12 : 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appCardBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: context.appBorder),
       ),
       child: Column(
         mainAxisSize: expandChild ? MainAxisSize.max : MainAxisSize.min,
@@ -876,7 +881,7 @@ class _SectionCard extends StatelessWidget {
                   style: TextStyle(
                     fontSize: compact ? 20 : 26,
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFF334155),
+                    color: context.isDark ? Colors.white : const Color(0xFF334155),
                   ),
                 ),
               ),
@@ -884,7 +889,7 @@ class _SectionCard extends StatelessWidget {
           ),
           Divider(
             height: compact ? 16 : 22,
-            color: const Color(0xFFE2E8F0),
+            color: context.appBorder,
           ),
           if (expandChild) Expanded(child: child) else child,
         ],
@@ -925,7 +930,7 @@ class _SummaryLine extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: const Color(0xFF64748B),
+                  color: context.isDark ? Colors.white : context.appTextMuted,
                   fontSize: strong ? (compact ? 14 : 18) : (compact ? 13 : 16),
                   fontWeight: strong ? FontWeight.w700 : FontWeight.w500,
                 ),
@@ -943,7 +948,7 @@ class _SummaryLine extends StatelessWidget {
                     '$value ${ApiConstants.currency}',
                     textAlign: TextAlign.end,
                     style: TextStyle(
-                      color: valueColor ?? const Color(0xFF0F172A),
+                      color: valueColor ?? (context.isDark ? Colors.white : const Color(0xFF0F172A)),
                       fontSize: strong ? strongValueSize : normalValueSize,
                       fontWeight: FontWeight.w800,
                     ),
@@ -1109,12 +1114,16 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                             child: Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: isApplied ? const Color(0xFFFFF7ED) : Colors.white,
+                                color: isApplied
+                                    ? (context.isDark
+                                        ? context.appPrimary.withValues(alpha: 0.15)
+                                        : const Color(0xFFFFF7ED))
+                                    : context.appCardBg,
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: isApplied
-                                      ? const Color(0xFFF58220)
-                                      : const Color(0xFFE2E8F0),
+                                      ? context.appPrimary
+                                      : context.appBorder,
                                 ),
                               ),
                               child: Row(

@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../models.dart';
 import '../services/api/table_service.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 import '../locator.dart';
 
 class TableManagementScreen extends StatefulWidget {
@@ -196,7 +197,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     final filteredTables = _tables;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.appBg,
       body: Directionality(
         textDirection: TextDirection.rtl,
         child: Column(
@@ -208,7 +209,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                 vertical: 12,
               ),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.appCardBg,
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.05),
@@ -238,6 +239,8 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                             ),
                           ),
                         ),
+                        // Waiter-mode shortcut intentionally removed — the
+                        // module stays on disk but no UI exposes it.
                         IconButton(
                           onPressed: _loadTables,
                           icon: const Icon(LucideIcons.refreshCw),
@@ -265,6 +268,8 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                                 fontSize: 24,
                                 fontWeight: FontWeight.w900,
                                 color: Color(0xFF1E293B))),
+                        // Waiter-mode shortcut intentionally removed — the
+                        // module stays on disk but no UI exposes it.
                         _HeaderActionBtn(
                           icon: LucideIcons.refreshCw,
                           label: translationService.t('refresh'),
@@ -312,7 +317,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           ElevatedButton.icon(
             onPressed: _loadTables,
             icon: const Icon(LucideIcons.refreshCw),
-            label: const Text('إعادة المحاولة'),
+            label: Text(translationService.t('retry')),
           ),
         ],
       ),
@@ -354,6 +359,9 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           final table = tables[index];
           final isDeactivated = _deactivatedTables[table.id] ?? false;
 
+          // Waiter-specific callbacks are intentionally null: the module
+          // still exists but its UI is hidden everywhere. Seats count falls
+          // back to `table.seats` from the API.
           return _NormalTableCard(
             table: table,
             isDeactivated: isDeactivated,
@@ -395,12 +403,18 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           height: canvasHeight,
           child: Stack(
             children: [
-              ...tables.map((table) {
+              // PERF: stable ValueKey per table so Flutter can reuse the
+              // underlying Element/RenderObject across rebuilds (e.g. after
+              // drag or refresh) instead of tearing down and re-creating
+              // every card.
+              ...tables.map((rawTable) {
+                final table = rawTable;
                 final isDeactivated = _deactivatedTables[table.id] ?? false;
                 final position =
                     _tablePositions[table.id] ?? const Offset(100, 100);
 
                 return _DraggableTableCard(
+                  key: ValueKey('table_${table.id}'),
                   table: table,
                   isDeactivated: isDeactivated,
                   initialPosition: position,
@@ -451,6 +465,7 @@ class _DraggableTableCard extends StatefulWidget {
   final Function(Offset) onPositionChanged;
 
   const _DraggableTableCard({
+    super.key,
     required this.table,
     required this.isDeactivated,
     required this.initialPosition,
@@ -649,7 +664,7 @@ class _NormalTableCard extends StatelessWidget {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: context.appCardBg,
                     borderRadius: BorderRadius.circular(borderRadius),
                     border: Border.all(
                       color: isDeactivated
@@ -695,6 +710,10 @@ class _NormalTableCard extends StatelessWidget {
                                     color: Colors.grey[400],
                                   ),
                                   const SizedBox(width: 6),
+                                  // Seats come straight from the API so
+                                  // cards always show the table's capacity,
+                                  // independent of the (now-hidden) waiter
+                                  // registry.
                                   Text(
                                     translationService.t('persons_count',
                                         args: {'count': table.seats}),
@@ -724,6 +743,9 @@ class _NormalTableCard extends StatelessWidget {
                                   style: TextStyle(
                                     fontSize: tableNumberFontSize,
                                     fontWeight: FontWeight.w900,
+                                    // Match the reference palette: dark ink
+                                    // when available, status tint otherwise,
+                                    // grey when disabled.
                                     color: isDeactivated
                                         ? Colors.grey
                                         : table.status == TableStatus.available

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
+import '../widgets/amount_num_pad_sheet.dart';
 
 class SplitPaymentDialog extends StatefulWidget {
   final double total;
@@ -20,6 +22,13 @@ class SplitPaymentDialog extends StatefulWidget {
 class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
   final List<Map<String, dynamic>> _selectedPayments = [];
   double _remainingAmount = 0;
+
+  // Use the same 2-decimal rounding as every displayed amount. widget.total
+  // can carry sub-halala precision from raw tax math (e.g. 14.50 * 1.15 =
+  // 16.675). Each text field is rounded to 2 decimals, so comparing their
+  // sum against the raw total leaves a ±0.005 drift that keeps the "pay"
+  // button grayed even when the user has fully allocated the bill.
+  double get _total => double.parse(widget.total.toStringAsFixed(2));
 
   String _t(String key, {Map<String, dynamic>? args}) {
     return translationService.t(key, args: args);
@@ -157,7 +166,17 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
   @override
   void initState() {
     super.initState();
-    _remainingAmount = widget.total;
+    _remainingAmount = _total;
+  }
+
+  @override
+  void dispose() {
+    for (final p in _selectedPayments) {
+      final c = p['controller'];
+      if (c is TextEditingController) c.dispose();
+    }
+    _selectedPayments.clear();
+    super.dispose();
   }
 
   void _addPaymentMethod(Map<String, dynamic> method) {
@@ -180,7 +199,9 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
 
   void _removePaymentMethod(int index) {
     setState(() {
-      _selectedPayments.removeAt(index);
+      final removed = _selectedPayments.removeAt(index);
+      final c = removed['controller'];
+      if (c is TextEditingController) c.dispose();
       _calculateRemaining();
       // Auto-fill remaining into last method
       _autoFillLastMethod();
@@ -194,9 +215,11 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
       totalPaid += amount;
     }
     setState(() {
-      _remainingAmount = (widget.total - totalPaid);
-      // Fix floating point precision issues
-      if (_remainingAmount.abs() < 0.001) _remainingAmount = 0;
+      _remainingAmount = (_total - totalPaid);
+      // Tolerate up to 1 halala (0.01 SAR) of rounding drift so a fully
+      // allocated split enables the "pay" button even when the raw total
+      // carries sub-halala precision.
+      if (_remainingAmount.abs() < 0.01) _remainingAmount = 0;
     });
   }
 
@@ -221,7 +244,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     }
 
     // Max allowed for this field = total - sum of others
-    final maxAllowed = widget.total - sumOthers;
+    final maxAllowed = _total - sumOthers;
     if (entered > maxAllowed) {
       entered = maxAllowed < 0 ? 0 : maxAllowed;
       controller.text = entered.toStringAsFixed(2);
@@ -238,7 +261,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
           sumExceptLast +=
               double.tryParse(_selectedPayments[i]['controller'].text) ?? 0;
         }
-        final lastRemaining = (widget.total - sumExceptLast).clamp(0.0, widget.total);
+        final lastRemaining = (_total - sumExceptLast).clamp(0.0, _total);
         _selectedPayments[lastIndex]['controller'].text =
             lastRemaining.toStringAsFixed(2);
         _selectedPayments[lastIndex]['amount'] = lastRemaining;
@@ -259,22 +282,77 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     _calculateRemaining();
   }
 
+  // Maximum this row is allowed to hold: the total minus whatever the other
+  // rows already sum to. Prevents the keypad confirm from over-allocating.
+  double _maxForRow(int index) {
+    double sumOthers = 0;
+    for (var i = 0; i < _selectedPayments.length; i++) {
+      if (i == index) continue;
+      sumOthers +=
+          double.tryParse(_selectedPayments[i]['controller'].text) ?? 0;
+    }
+    final max = _total - sumOthers;
+    return max < 0 ? 0 : max;
+  }
+
+  Future<void> _editAmount(int index) async {
+    final payment = _selectedPayments[index];
+    final controller = payment['controller'] as TextEditingController;
+    final current = double.tryParse(controller.text) ?? 0;
+    final result = await AmountNumPadSheet.show(
+      context,
+      initial: current,
+      max: _maxForRow(index),
+      title: payment['name']?.toString(),
+    );
+    if (!mounted || result == null) return;
+    controller.text = result.toStringAsFixed(2);
+    payment['amount'] = result;
+    _onAmountChanged(index);
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
+    final viewInsets = MediaQuery.viewInsetsOf(context);
     final isCompact = size.width < 900;
+    final isPhone = isCompact && size.width < 600;
+    // Very short viewports (e.g. landscape phones, or portrait phones while
+    // the numeric keypad is open) need tighter spacing — otherwise the
+    // summary banner alone eats the space that should belong to the methods.
+    final isShortViewport =
+        (size.height - viewInsets.bottom) < 560;
     final dialogDirection =
         translationService.isRTL ? TextDirection.rtl : TextDirection.ltr;
-    final insetPadding = EdgeInsets.symmetric(
-      horizontal: isCompact ? 10 : 24,
-      vertical: isCompact ? 12 : 24,
+    // When the keyboard is open, shrink the dialog's bottom inset so the
+    // dialog doesn't try to reserve space beneath the keyboard. This lets
+    // the scrollable body actually fit the visible viewport.
+    final insetPadding = EdgeInsets.fromLTRB(
+      isCompact ? (isPhone ? 8 : 10) : 24,
+      isCompact ? (isShortViewport ? 8 : 12) : 24,
+      isCompact ? (isPhone ? 8 : 10) : 24,
+      (isCompact ? (isShortViewport ? 8 : 12) : 24) + viewInsets.bottom,
     );
     final dialogWidth = isCompact
         ? (size.width - insetPadding.horizontal).clamp(280.0, 560.0).toDouble()
         : 1000.0;
-    final dialogHeight = isCompact
-        ? (size.height - insetPadding.vertical).clamp(520.0, 900.0).toDouble()
-        : 700.0;
+    // Available height = viewport – inset – keyboard. Clamp to a small-enough
+    // minimum so we never pick a height larger than what's actually visible.
+    final availableHeight =
+        (size.height - insetPadding.vertical).clamp(320.0, 900.0).toDouble();
+    final dialogHeight = isCompact ? availableHeight : 700.0;
+
+    // Phone-tuned sizes for the method tiles and summary banner.
+    final methodTileWidth = isPhone ? 84.0 : 100.0;
+    final methodTileHeight = isShortViewport
+        ? 68.0
+        : (isPhone ? 78.0 : 90.0);
+    final methodIconSize = isPhone ? 22.0 : 24.0;
+    final methodFontSize = isPhone ? 11.5 : 12.0;
+    final summaryGap = isShortViewport ? 4.0 : 8.0;
+    final summaryHPad = isPhone ? 12.0 : 14.0;
+    final summaryVPad = isShortViewport ? 8.0 : 12.0;
+    final bodyPad = isPhone ? 12.0 : 14.0;
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -283,7 +361,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
         width: dialogWidth,
         height: dialogHeight,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appCardBg,
           borderRadius: BorderRadius.circular(isCompact ? 18 : 24),
         ),
         clipBehavior: Clip.antiAlias,
@@ -295,22 +373,27 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                   children: [
                     Container(
                       color: const Color(0xFFF59E0B),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 12),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: summaryHPad,
+                          vertical: isShortViewport ? 8 : 12),
                       child: Row(
                         children: [
                           Expanded(
                             child: Text(
                               _t('split_payment'),
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 24,
+                                fontSize: isShortViewport ? 18 : 22,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
                           IconButton(
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints:
+                                const BoxConstraints(minWidth: 36, minHeight: 36),
                             onPressed: () => Navigator.pop(context),
                             icon:
                                 const Icon(LucideIcons.x, color: Colors.white),
@@ -320,65 +403,72 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                     ),
                     Container(
                       color: const Color(0xFFF59E0B),
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                      padding: EdgeInsets.fromLTRB(
+                          summaryHPad, 0, summaryHPad, summaryVPad),
                       child: Column(
                         children: [
                           _SummaryItem(
                             label: _t('grand_total'),
                             value: widget.total.toStringAsFixed(2),
+                            compact: isShortViewport,
                           ),
-                          const SizedBox(height: 8),
+                          SizedBox(height: summaryGap),
                           _SummaryItem(
                             label: _t('paid_amount'),
                             value: (widget.total - _remainingAmount)
                                 .toStringAsFixed(2),
+                            compact: isShortViewport,
                           ),
-                          const SizedBox(height: 8),
+                          SizedBox(height: summaryGap),
                           _SummaryItem(
                             label: _t('remaining_amount'),
                             value: _remainingAmount.toStringAsFixed(2),
                             valueColor: _remainingAmount > 0
                                 ? Colors.yellow
                                 : Colors.white,
+                            compact: isShortViewport,
                           ),
                         ],
                       ),
                     ),
                     Expanded(
                       child: Container(
-                        color: const Color(0xFFF8FAFC),
-                        padding: const EdgeInsets.all(14),
+                        color: context.appBg,
+                        padding: EdgeInsets.fromLTRB(
+                            bodyPad, bodyPad, bodyPad, 0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               _t('select_payment_methods'),
-                              style: const TextStyle(
-                                fontSize: 18,
+                              style: TextStyle(
+                                fontSize: isPhone ? 15 : 18,
                                 fontWeight: FontWeight.bold,
-                                color: Color(0xFF334155),
+                                color: const Color(0xFF334155),
                               ),
                             ),
-                            const SizedBox(height: 12),
+                            SizedBox(height: isPhone ? 8 : 12),
                             SizedBox(
-                              height: 90,
+                              height: methodTileHeight,
                               child: ListView.builder(
                                 scrollDirection: Axis.horizontal,
                                 itemCount: _availableMethods.length,
                                 itemBuilder: (context, index) {
                                   final method = _availableMethods[index];
                                   return Padding(
-                                    padding: const EdgeInsets.only(right: 8),
+                                    padding: EdgeInsetsDirectional.only(
+                                        end: isPhone ? 6 : 8),
                                     child: InkWell(
                                       onTap: () => _addPaymentMethod(method),
+                                      borderRadius: BorderRadius.circular(12),
                                       child: Container(
-                                        width: 100,
+                                        width: methodTileWidth,
                                         decoration: BoxDecoration(
-                                          color: Colors.white,
+                                          color: context.appCardBg,
                                           borderRadius:
                                               BorderRadius.circular(12),
                                           border: Border.all(
-                                              color: const Color(0xFFE2E8F0)),
+                                              color: context.appBorder),
                                         ),
                                         child: Column(
                                           mainAxisAlignment:
@@ -386,19 +476,20 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                           children: [
                                             Icon(method['icon'],
                                                 color: method['color'],
-                                                size: 24),
-                                            const SizedBox(height: 6),
+                                                size: methodIconSize),
+                                            SizedBox(
+                                                height: isShortViewport ? 2 : 6),
                                             Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 6),
+                                              padding: EdgeInsets.symmetric(
+                                                  horizontal:
+                                                      isPhone ? 4 : 6),
                                               child: Text(
                                                 method['label'],
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
+                                                style: TextStyle(
                                                   fontWeight: FontWeight.bold,
-                                                  fontSize: 12,
+                                                  fontSize: methodFontSize,
                                                 ),
                                               ),
                                             ),
@@ -410,147 +501,177 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                 },
                               ),
                             ),
-                            const SizedBox(height: 14),
+                            SizedBox(height: isPhone ? 10 : 14),
                             Text(
                               _t('distributed_amounts'),
-                              style: const TextStyle(
-                                fontSize: 16,
+                              style: TextStyle(
+                                fontSize: isPhone ? 14 : 16,
                                 fontWeight: FontWeight.bold,
-                                color: Color(0xFF334155),
+                                color: const Color(0xFF334155),
                               ),
                             ),
-                            const SizedBox(height: 10),
+                            SizedBox(height: isPhone ? 6 : 10),
                             Expanded(
-                              child: ListView.builder(
-                                itemCount: _selectedPayments.length,
-                                itemBuilder: (context, index) {
-                                  final payment = _selectedPayments[index];
-                                  return Container(
-                                    margin: const EdgeInsets.only(bottom: 10),
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: const Color(0xFFE2E8F0),
+                              child: _selectedPayments.isEmpty
+                                  ? Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 24),
+                                        child: Text(
+                                          _t('select_payment_methods'),
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: const Color(0xFF94A3B8),
+                                            fontSize: isPhone ? 12 : 13,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              payment['icon'],
-                                              color: payment['color'],
-                                            ),
-                                            const SizedBox(width: 10),
-                                            Expanded(
-                                              child: Text(
-                                                payment['name'],
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                            ),
-                                            IconButton(
-                                              onPressed: () =>
-                                                  _removePaymentMethod(index),
-                                              icon: const Icon(
-                                                LucideIcons.trash2,
-                                                color: Colors.red,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        TextField(
-                                          controller: payment['controller'],
-                                          keyboardType:
-                                              const TextInputType.numberWithOptions(
-                                            decimal: true,
-                                          ),
-                                          decoration: InputDecoration(
-                                            suffixText: ApiConstants.currency,
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                            ),
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 10,
+                                    )
+                                  : ListView.builder(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      itemCount: _selectedPayments.length,
+                                      itemBuilder: (context, index) {
+                                        final payment =
+                                            _selectedPayments[index];
+                                        return Container(
+                                          margin: EdgeInsets.only(
+                                              bottom: isPhone ? 8 : 10),
+                                          padding: EdgeInsets.all(
+                                              isPhone ? 10 : 12),
+                                          decoration: BoxDecoration(
+                                            color: context.appCardBg,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: context.appBorder,
                                             ),
                                           ),
-                                          onChanged: (value) =>
-                                              _onAmountChanged(index),
-                                        ),
-                                      ],
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    payment['icon'],
+                                                    color: payment['color'],
+                                                    size: isPhone ? 20 : 24,
+                                                  ),
+                                                  SizedBox(
+                                                      width: isPhone ? 8 : 10),
+                                                  Expanded(
+                                                    child: Text(
+                                                      payment['name'],
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow
+                                                          .ellipsis,
+                                                      style: TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize:
+                                                            isPhone ? 13 : 14,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  IconButton(
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    padding: EdgeInsets.zero,
+                                                    constraints:
+                                                        const BoxConstraints(
+                                                            minWidth: 32,
+                                                            minHeight: 32),
+                                                    onPressed: () =>
+                                                        _removePaymentMethod(
+                                                            index),
+                                                    icon: const Icon(
+                                                      LucideIcons.trash2,
+                                                      color: Colors.red,
+                                                      size: 20,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              _AmountField(
+                                                controller:
+                                                    payment['controller'],
+                                                onTap: () =>
+                                                    _editAmount(index),
+                                                compact: isPhone,
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
                                     ),
-                                  );
-                                },
-                              ),
                             ),
                           ],
                         ),
                       ),
                     ),
-                    Container(
-                      color: Colors.white,
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          ElevatedButton(
-                            onPressed: _remainingAmount == 0 &&
-                                    _selectedPayments.isNotEmpty
-                                ? () {
-                                    final pays = _selectedPayments
-                                        .asMap()
-                                        .entries
-                                        .map((entry) {
-                                      final index = entry.key;
-                                      final val = entry.value;
-                                      return {
-                                        'name': val['name'],
-                                        'pay_method': val['pay_method'],
-                                        'amount': double.tryParse(
-                                                val['controller'].text) ??
-                                            0,
-                                        'index': index,
-                                      };
-                                    }).toList();
-                                    Navigator.pop(context, pays);
-                                  }
-                                : null,
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(48),
-                              backgroundColor: const Color(0xFFF59E0B),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                    SafeArea(
+                      top: false,
+                      child: Container(
+                        color: Colors.white,
+                        padding: EdgeInsets.fromLTRB(
+                          bodyPad,
+                          isShortViewport ? 6 : 10,
+                          bodyPad,
+                          isShortViewport ? 6 : 10,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ElevatedButton(
+                              onPressed: _remainingAmount == 0 &&
+                                      _selectedPayments.isNotEmpty
+                                  ? () {
+                                      final pays = _selectedPayments
+                                          .asMap()
+                                          .entries
+                                          .map((entry) {
+                                        final index = entry.key;
+                                        final val = entry.value;
+                                        return {
+                                          'name': val['name'],
+                                          'pay_method': val['pay_method'],
+                                          'amount': double.tryParse(
+                                                  val['controller'].text) ??
+                                              0,
+                                          'index': index,
+                                        };
+                                      }).toList();
+                                      Navigator.pop(context, pays);
+                                    }
+                                  : null,
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: Size.fromHeight(
+                                    isShortViewport ? 42 : 48),
+                                backgroundColor: const Color(0xFFF59E0B),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text(
+                                _t('confirm_payment'),
+                                style: TextStyle(
+                                  fontSize: isShortViewport ? 14 : 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                            child: Text(
-                              _t('confirm_payment'),
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                            SizedBox(height: isShortViewport ? 4 : 8),
+                            OutlinedButton(
+                              onPressed: () => Navigator.pop(context),
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: Size.fromHeight(
+                                    isShortViewport ? 38 : 44),
                               ),
+                              child: Text(translationService.t('cancel')),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          OutlinedButton(
-                            onPressed: () => Navigator.pop(context),
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(44),
-                            ),
-                            child: Text(translationService.t('cancel')),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -619,7 +740,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                     }
                                   : null,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white,
+                                backgroundColor: context.appCardBg,
                                 disabledBackgroundColor: Colors.grey[300],
                                 foregroundColor: const Color(0xFFC2410C),
                                 disabledForegroundColor: Colors.grey[600],
@@ -646,7 +767,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                     // Right Side: Selection and Inputs
                     Expanded(
                       child: Container(
-                        color: const Color(0xFFF8FAFC),
+                        color: context.appBg,
                         padding: const EdgeInsets.all(32),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -685,11 +806,11 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                       child: Container(
                                         width: 120,
                                         decoration: BoxDecoration(
-                                          color: Colors.white,
+                                          color: context.appCardBg,
                                           borderRadius:
                                               BorderRadius.circular(12),
                                           border: Border.all(
-                                              color: const Color(0xFFE2E8F0)),
+                                              color: context.appBorder),
                                           boxShadow: [
                                             BoxShadow(
                                                 color: Colors.black
@@ -738,10 +859,10 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                     margin: const EdgeInsets.only(bottom: 12),
                                     padding: const EdgeInsets.all(16),
                                     decoration: BoxDecoration(
-                                      color: Colors.white,
+                                      color: context.appCardBg,
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
-                                          color: const Color(0xFFE2E8F0)),
+                                          color: context.appBorder),
                                     ),
                                     child: Row(
                                       children: [
@@ -760,21 +881,10 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                         const SizedBox(width: 16),
                                         Expanded(
                                           flex: 3,
-                                          child: TextField(
+                                          child: _AmountField(
                                             controller: payment['controller'],
-                                            keyboardType: TextInputType.number,
-                                            decoration: InputDecoration(
-                                              suffixText: ApiConstants.currency,
-                                              border: OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8)),
-                                              contentPadding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 12,
-                                                      vertical: 8),
-                                            ),
-                                            onChanged: (value) =>
-                                                _calculateRemaining(),
+                                            onTap: () => _editAmount(index),
+                                            compact: false,
                                           ),
                                         ),
                                         const SizedBox(width: 16),
@@ -802,27 +912,148 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
   }
 }
 
+// Read-only field that mirrors the look of a bordered TextField but opens
+// the in-app numeric keypad on tap instead of the system keyboard. Listens
+// to the controller so typed values remain visible after the keypad closes.
+class _AmountField extends StatefulWidget {
+  final TextEditingController controller;
+  final VoidCallback onTap;
+  final bool compact;
+
+  const _AmountField({
+    required this.controller,
+    required this.onTap,
+    required this.compact,
+  });
+
+  @override
+  State<_AmountField> createState() => _AmountFieldState();
+}
+
+class _AmountFieldState extends State<_AmountField> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AmountField old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.controller, widget.controller)) {
+      old.controller.removeListener(_onChanged);
+      widget.controller.addListener(_onChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text =
+        widget.controller.text.trim().isEmpty ? '0.00' : widget.controller.text;
+    final isPlaceholder = widget.controller.text.trim().isEmpty;
+    final vPad = widget.compact ? 8.0 : 12.0;
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding:
+              EdgeInsets.symmetric(horizontal: 12, vertical: vPad),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFCBD5E1)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                LucideIcons.keyboard,
+                size: widget.compact ? 16 : 18,
+                color: const Color(0xFF94A3B8),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textDirection: TextDirection.ltr,
+                  style: TextStyle(
+                    fontSize: widget.compact ? 15 : 16,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                    color: isPlaceholder
+                        ? const Color(0xFF94A3B8)
+                        : const Color(0xFF0F172A),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                ApiConstants.currency,
+                style: TextStyle(
+                  fontSize: widget.compact ? 12 : 13,
+                  color: const Color(0xFF64748B),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SummaryItem extends StatelessWidget {
   final String label;
   final String value;
   final Color valueColor;
+  final bool compact;
   const _SummaryItem(
       {required this.label,
       required this.value,
-      this.valueColor = Colors.white});
+      this.valueColor = Colors.white,
+      this.compact = false});
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label,
-            style: const TextStyle(color: Colors.white70, fontSize: 16)),
-        Text('$value ${ApiConstants.currency}',
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
-                color: valueColor,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                fontFamily: 'monospace')),
+              color: Colors.white70,
+              fontSize: compact ? 13 : 16,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '$value ${ApiConstants.currency}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: valueColor,
+            fontSize: compact ? 15 : 18,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'monospace',
+          ),
+        ),
       ],
     );
   }

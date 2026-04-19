@@ -7,6 +7,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../locator.dart';
 import '../../models.dart';
+import '../../services/app_themes.dart';
 import '../../services/api/device_service.dart';
 import '../../services/api/filter_service.dart';
 import '../../services/category_printer_route_registry.dart';
@@ -855,7 +856,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: compact ? 16 : 18,
-                    color: const Color(0xFF1E293B),
+                    color: context.appText,
                   ),
                 ),
               ),
@@ -974,7 +975,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appCardBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
@@ -1066,7 +1067,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
           ),
 
           // ═══ Divider ═══
-          const Divider(height: 0, thickness: 1, color: Color(0xFFF3F4F6)),
+          Divider(height: 0, thickness: 1, color: context.appBorder),
 
           // ═══ Actions Row ═══
           SizedBox(
@@ -1153,7 +1154,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
   }
 
   Widget _vDivider() {
-    return Container(width: 1, height: 20, color: const Color(0xFFF3F4F6));
+    return Container(width: 1, height: 20, color: context.appBorder);
   }
 
   // Keep old reference for code that reads first icon button
@@ -1203,7 +1204,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
         final compact = constraints.maxWidth < 900;
 
         return Container(
-          color: const Color(0xFFF8F8F8),
+          color: context.appBg,
           child: Column(
             children: [
               _buildHeaderSection(printers),
@@ -1212,9 +1213,9 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                 margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: context.appCardBg,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  border: Border.all(color: context.appBorder),
                 ),
                 child: Wrap(
                   spacing: 8,
@@ -1252,7 +1253,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                                 width: 120,
                                 height: 120,
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
+                                  color: context.appCardBg,
                                   borderRadius: BorderRadius.circular(24),
                                   boxShadow: [
                                     BoxShadow(
@@ -1506,11 +1507,17 @@ class _AddPrinterDialogState extends State<_AddPrinterDialog> {
                           });
                         },
                         selectedColor: const Color(0xFFF58220),
-                        backgroundColor: const Color(0xFFFDF2E9),
+                        backgroundColor: Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          side: const BorderSide(
+                              color: Color(0xFFF58220), width: 1.5),
+                        ),
+                        showCheckmark: false,
                         labelStyle: TextStyle(
                           color: _connectionType == PrinterConnectionType.wifi
                               ? Colors.white
-                              : const Color(0xFF9A3412),
+                              : const Color(0xFFF58220),
                           fontWeight: FontWeight.w600,
                         ),
                         padding: const EdgeInsets.symmetric(
@@ -1527,12 +1534,18 @@ class _AddPrinterDialogState extends State<_AddPrinterDialog> {
                           });
                         },
                         selectedColor: const Color(0xFFF58220),
-                        backgroundColor: const Color(0xFFFDF2E9),
+                        backgroundColor: Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          side: const BorderSide(
+                              color: Color(0xFFF58220), width: 1.5),
+                        ),
+                        showCheckmark: false,
                         labelStyle: TextStyle(
                           color:
                               _connectionType == PrinterConnectionType.bluetooth
                                   ? Colors.white
-                                  : const Color(0xFF9A3412),
+                                  : const Color(0xFFF58220),
                           fontWeight: FontWeight.w600,
                         ),
                         padding: const EdgeInsets.symmetric(

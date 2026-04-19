@@ -16,6 +16,7 @@ import '../models/receipt_data.dart';
 import '../models.dart';
 import 'invoice_print_widget.dart';
 import '../locator.dart';
+import '../services/printer_language_settings_service.dart';
 import '../services/printer_service.dart';
 
 /// Cross-platform invoice preview and print screen.
@@ -616,6 +617,11 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
 
   /// Builds the invoice preview using InvoicePrintWidget for better display.
   Widget _buildWidgetPreview() {
+    // Read local printer language settings (device-scoped, user-configurable).
+    final String pri = printerLanguageSettings.primary;
+    final String sec = printerLanguageSettings.secondary;
+    final bool allow = printerLanguageSettings.allowSecondary;
+
     return Container(
       color: const Color(0xFFF0F0F0),
       child: Center(
@@ -640,7 +646,7 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
                 controller: _screenshotController,
                 child: InvoicePrintWidget(
                   data: widget.receiptData!,
-                  paperWidthMm: widget.printer?.paperWidthMm ?? 58,
+                  paperWidthMm: widget.printer?.paperWidthMm ?? 80,
                   orderType: widget.orderType,
                   tableNumber: widget.tableNumber,
                   carNumber: widget.carNumber,
@@ -654,6 +660,9 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
                   clientTaxNumber: widget.clientTaxNumber,
                   commercialRegisterNumber: widget.commercialRegisterNumber,
                   returnPolicy: widget.returnPolicy,
+                  primaryLang: pri,
+                  secondaryLang: sec,
+                  allowSecondary: allow,
                 ),
               ),
             ),

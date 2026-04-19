@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/api/branch_service.dart';
+import 'package:hermosa_pos/locator.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 
 class BookingDetailsDialog extends StatelessWidget {
   final Map<String, dynamic> bookingData;
@@ -151,6 +154,14 @@ class BookingDetailsDialog extends StatelessWidget {
         ? refundedTotal
         : mergedRefundTotal;
 
+    // Resolve the active branch's tax configuration once — the old code
+    // baked in 15% VAT even when the branch was tax-free, so a 6 SAR order
+    // appeared as 6.90 in the orders list.
+    final branchService = getIt<BranchService>();
+    final resolvedTaxRate =
+        branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
+    final taxMultiplier = 1.0 + resolvedTaxRate;
+
     // Recalculate from items when totals are missing or tax is 0.
     // API 'price' field is the PRE-TAX line total (confirmed from HAR:
     // app sends price=26 with tax, API returns price=22.61 without tax).
@@ -158,7 +169,7 @@ class BookingDetailsDialog extends StatelessWidget {
       final originalPreTax = activeMealsTotal + effectiveRefundTotal;
       if (originalPreTax > 0) {
         total = originalPreTax;
-        tax = originalPreTax * 0.15;
+        tax = originalPreTax * resolvedTaxRate;
         grandTotal = originalPreTax + tax;
       }
     }
@@ -166,9 +177,9 @@ class BookingDetailsDialog extends StatelessWidget {
     // Subtract refunded amount from totals to show actual remaining amount.
     // effectiveRefundTotal is also pre-tax (from same API price field).
     if (effectiveRefundTotal > 0 && grandTotal > 0) {
-      final refundWithTax = effectiveRefundTotal * 1.15;
+      final refundWithTax = effectiveRefundTotal * taxMultiplier;
       grandTotal = (grandTotal - refundWithTax).clamp(0.0, double.infinity);
-      total = grandTotal / 1.15;
+      total = taxMultiplier > 0 ? grandTotal / taxMultiplier : grandTotal;
       tax = grandTotal - total;
     }
 
@@ -295,7 +306,7 @@ class BookingDetailsDialog extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: context.appBg,
                 border: Border(top: BorderSide(color: Colors.grey[200]!)),
               ),
               child: Column(
@@ -434,7 +445,7 @@ class BookingDetailsDialog extends StatelessWidget {
   }
 
   Widget _buildMealItem(Map<String, dynamic> meal) {
-    final rawName = meal['meal_name'] ?? meal['name'] ?? meal['item_name'];
+    final rawName = meal['service_name'] ?? meal['meal_name'] ?? meal['name'] ?? meal['item_name'];
     final name = _resolveLocalizedName(rawName).isNotEmpty
         ? _resolveLocalizedName(rawName)
         : translationService.t('unknown_item');
@@ -578,23 +589,36 @@ class BookingDetailsDialog extends StatelessWidget {
               child: Wrap(
                 spacing: 4,
                 runSpacing: 4,
-                children: extras.map((extra) {
-                  return Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '+ ${extra['name']}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFFD97706),
+                children: () {
+                  // Group duplicate extras and show count
+                  final grouped = <String, int>{};
+                  for (final extra in extras) {
+                    final name = extra['name']?.toString() ?? '';
+                    if (name.isNotEmpty) {
+                      grouped[name] = (grouped[name] ?? 0) + 1;
+                    }
+                  }
+                  return grouped.entries.map((entry) {
+                    final label = entry.value > 1
+                        ? '+ ${entry.key} x${entry.value}'
+                        : '+ ${entry.key}';
+                    return Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(4),
                       ),
-                    ),
-                  );
-                }).toList(),
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFFD97706),
+                        ),
+                      ),
+                    );
+                  }).toList();
+                }(),
               ),
             ),
           ],
@@ -883,18 +907,29 @@ class BookingDetailsDialog extends StatelessWidget {
   }
 
   String _extractCustomerName(Map<String, dynamic> data) {
-    final directName = data['customer_name']?.toString().trim();
-    if (directName != null && directName.isNotEmpty) return directName;
+    // Try all possible locations for customer name
+    final candidates = <dynamic>[
+      data['customer_name'],
+      data['client_name'],
+      _asMap(data['customer'])?['name'],
+      _asMap(data['customer'])?['fullname'],
+      _asMap(data['client'])?['name'],
+      _asMap(data['user'])?['name'],
+      _asMap(data['user'])?['fullname'],
+      // Nested booking structure
+      _asMap(data['booking'])?['customer_name'],
+      _asMap(_asMap(data['booking'])?['customer'])?['name'],
+      _asMap(_asMap(data['booking'])?['user'])?['name'],
+      // Direct string fields
+      data['client'],
+    ];
 
-    final customerMap = _asMap(data['customer']);
-    final customerName = customerMap?['name']?.toString().trim();
-    if (customerName != null && customerName.isNotEmpty) return customerName;
-
-    final client = data['client'];
-    if (client is String && client.trim().isNotEmpty) return client.trim();
-    final clientMap = _asMap(client);
-    final clientName = clientMap?['name']?.toString().trim();
-    if (clientName != null && clientName.isNotEmpty) return clientName;
+    for (final c in candidates) {
+      if (c is String) {
+        final trimmed = c.trim();
+        if (trimmed.isNotEmpty && trimmed != 'null') return trimmed;
+      }
+    }
 
     return translationService.t('general_customer');
   }
@@ -1051,26 +1086,41 @@ class BookingDetailsDialog extends StatelessWidget {
               child: Wrap(
                 spacing: 4,
                 runSpacing: 4,
-                children: addons.map((addon) {
-                  final addonText = addon is Map
-                      ? '${addon['attribute'] ?? addon['option'] ?? ''} - ${addon['option'] ?? ''}'
-                      : addon.toString();
-                  return Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '+ $addonText',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Color(0xFFD97706),
+                children: () {
+                  // Group duplicate addons and show count
+                  final grouped = <String, int>{};
+                  for (final addon in addons) {
+                    final addonText = addon is Map
+                        ? (addon['name']?.toString() ??
+                            addon['attribute']?.toString() ??
+                            addon['option']?.toString() ??
+                            '')
+                        : addon.toString();
+                    if (addonText.isNotEmpty) {
+                      grouped[addonText] = (grouped[addonText] ?? 0) + 1;
+                    }
+                  }
+                  return grouped.entries.map((entry) {
+                    final label = entry.value > 1
+                        ? '+ ${entry.key} x${entry.value}'
+                        : '+ ${entry.key}';
+                    return Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(4),
                       ),
-                    ),
-                  );
-                }).toList(),
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFFD97706),
+                        ),
+                      ),
+                    );
+                  }).toList();
+                }(),
               ),
             ),
           ],
@@ -1147,7 +1197,8 @@ class BookingDetailsDialog extends StatelessWidget {
             return s.isNotEmpty ? s : null;
           }
 
-          final mealName = resolveName(row['meal_name']) ??
+          final mealName = resolveName(row['service_name']) ??
+              resolveName(row['meal_name']) ??
               resolveName(mealMap['name']) ??
               resolveName(row['name']) ??
               resolveName(row['item_name']);

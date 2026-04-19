@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
+  bonsoir_windows
   charset_converter
   connectivity_plus
   geolocator_windows

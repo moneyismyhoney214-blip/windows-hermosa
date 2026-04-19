@@ -60,20 +60,20 @@ class Branch {
     }
 
     return Branch(
-      id: json['id'] ?? 0,
-      name: json['name'] ?? '',
-      district: json['district'] ?? '',
+      id: json['id'] is num ? (json['id'] as num).toInt() : int.tryParse(json['id']?.toString() ?? '') ?? 0,
+      name: json['name']?.toString() ?? '',
+      district: json['district']?.toString() ?? '',
       whatsappStatus: toBool(json['whatsapp_status']),
-      countDays: json['count_days'] ?? 0,
-      countryId: json['country_id'] ?? 0,
-      module: json['module'] ?? '',
-      cityId: json['city_id'] ?? 0,
+      countDays: json['count_days'] is num ? (json['count_days'] as num).toInt() : 0,
+      countryId: json['country_id'] is num ? (json['country_id'] as num).toInt() : 0,
+      module: json['module']?.toString() ?? '',
+      cityId: json['city_id'] is num ? (json['city_id'] as num).toInt() : 0,
       isValid: toBool(json['is_valid']),
       isBio: toBool(json['is_bio']),
-      sn: json['sn'],
-      deviceId: json['device_id'],
-      evaluationLink: json['evaluation_link'],
-      taxNumber: json['tax_number'],
+      sn: json['sn']?.toString(),
+      deviceId: json['device_id']?.toString(),
+      evaluationLink: json['evaluation_link']?.toString(),
+      taxNumber: json['tax_number']?.toString(),
       taxObject: TaxObject.fromJson(json['taxObject'] ?? {}),
       printersSettings: toBool(json['printers_settings']),
       subscription: (json['subscription'] as List?)
@@ -114,10 +114,10 @@ class TaxObject {
 
     return TaxObject(
       hasTax: toBool(json['has_tax']),
-      taxPercentage: json['tax_percentage'] ?? 0,
-      digitsNumber: json['digits_number'] ?? 2,
-      currency: json['currency'] ?? 'SAR',
-      today: json['today'] ?? '',
+      taxPercentage: json['tax_percentage'] is num ? (json['tax_percentage'] as num).toInt() : 0,
+      digitsNumber: json['digits_number'] is num ? (json['digits_number'] as num).toInt() : 2,
+      currency: json['currency']?.toString() ?? 'SAR',
+      today: json['today']?.toString() ?? '',
     );
   }
 }
@@ -141,11 +141,11 @@ class SubscriptionFeature {
 
   factory SubscriptionFeature.fromJson(Map<String, dynamic> json) {
     return SubscriptionFeature(
-      id: json['id'] ?? 0,
-      name: json['name'] ?? '',
-      type: json['type'] ?? '',
-      createdAt: json['created_at'] ?? '',
-      updatedAt: json['updated_at'] ?? '',
+      id: json['id'] is num ? (json['id'] as num).toInt() : 0,
+      name: json['name']?.toString() ?? '',
+      type: json['type']?.toString() ?? '',
+      createdAt: json['created_at']?.toString() ?? '',
+      updatedAt: json['updated_at']?.toString() ?? '',
       pivot: Pivot.fromJson(json['pivot'] ?? {}),
     );
   }
@@ -191,10 +191,10 @@ class BranchesResponse {
     return BranchesResponse(
       data: (json['data'] as List?)?.map((e) => Branch.fromJson(e)).toList() ??
           [],
-      status: json['status'] ?? 200,
-      maintenance: json['maintenance'],
-      today: json['today'],
-      message: json['message'],
+      status: json['status'] is num ? (json['status'] as num).toInt() : 200,
+      maintenance: json['maintenance']?.toString(),
+      today: json['today']?.toString(),
+      message: json['message']?.toString(),
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../screens/qr_scanner_screen.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 
 /// نموذج جهاز العرض المحفوظ
 class SavedDisplayDevice {
@@ -450,10 +451,15 @@ class _ImprovedDisplayConnectionDialogState
 
     return Dialog(
       insetPadding: insetPadding,
+      backgroundColor: context.appSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Container(
         width: dialogWidth,
         constraints: BoxConstraints(maxHeight: maxHeight),
+        decoration: BoxDecoration(
+          color: context.appSurface,
+          borderRadius: BorderRadius.circular(24),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -531,7 +537,7 @@ class _ImprovedDisplayConnectionDialogState
             Container(
               padding: EdgeInsets.all(isCompact ? 12 : 16),
               decoration: BoxDecoration(
-                color: Colors.grey[50],
+                color: context.appSurfaceAlt,
                 borderRadius:
                     const BorderRadius.vertical(bottom: Radius.circular(24)),
               ),

@@ -27,6 +27,7 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
       // Update global constants
       ApiConstants.branchId = branch.id;
       ApiConstants.currency = branch.taxObject.currency;
+      ApiConstants.branchModule = branch.module;
 
       // Persist the choice
       final token = authService.getToken();

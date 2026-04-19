@@ -48,9 +48,9 @@ double invoiceWidgetWidthForPaper(int paperWidthMm) {
     case 58:
       return 302.0;
     case 80:
-      return 500.0;
+      return 400.0;
     case 88:
-      return 462.0;
+      return 380.0;
     default:
       return 302.0;
   }

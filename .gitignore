@@ -54,6 +54,11 @@ app-upload-keystore.jks
 
 # Codemagic
 codemagic.keystore
+
+# Secrets
+assets/sounds/backend.env.txt
+*.env
+.env
 # macOS metadata
 .DS_Store
 .AppleDouble

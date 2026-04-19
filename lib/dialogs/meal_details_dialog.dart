@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models.dart';
@@ -5,6 +6,7 @@ import '../services/api/api_constants.dart';
 import '../services/api/product_service.dart';
 import '../services/language_service.dart';
 import '../locator.dart';
+import '../services/app_themes.dart';
 
 class MealDetailsDialog extends StatefulWidget {
   final Product product;
@@ -189,17 +191,28 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
                                 Center(
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(16),
-                                    child: Image.network(
-                                      widget.product.image!,
+                                    child: CachedNetworkImage(
+                                      imageUrl: widget.product.image!,
                                       height: isCompact ? 170 : 200,
                                       width: double.infinity,
                                       fit: BoxFit.cover,
-                                      errorBuilder:
+                                      memCacheWidth: 500,
+                                      fadeInDuration:
+                                          const Duration(milliseconds: 120),
+                                      placeholder: (context, url) => Container(
+                                        height: isCompact ? 170 : 200,
+                                        decoration: BoxDecoration(
+                                          color: context.appBg,
+                                          borderRadius:
+                                              BorderRadius.circular(16),
+                                        ),
+                                      ),
+                                      errorWidget:
                                           (context, error, stackTrace) =>
                                               Container(
                                         height: isCompact ? 170 : 200,
                                         decoration: BoxDecoration(
-                                          color: const Color(0xFFF8FAFC),
+                                          color: context.appBg,
                                           borderRadius:
                                               BorderRadius.circular(16),
                                         ),
@@ -268,10 +281,10 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
                                 const SizedBox(height: 12),
                                 Container(
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFF8FAFC),
+                                    color: context.appBg,
                                     borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
-                                      color: const Color(0xFFE2E8F0),
+                                      color: context.appBorder,
                                     ),
                                   ),
                                   child: ListView.separated(
@@ -334,7 +347,7 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
                                 Container(
                                   padding: const EdgeInsets.all(16),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFF8FAFC),
+                                    color: context.appBg,
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Row(
@@ -363,7 +376,7 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
             Container(
               padding: EdgeInsets.all(isCompact ? 14 : 20),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: context.appBg,
                 border: Border(top: BorderSide(color: Colors.grey[200]!)),
               ),
               child: SizedBox(

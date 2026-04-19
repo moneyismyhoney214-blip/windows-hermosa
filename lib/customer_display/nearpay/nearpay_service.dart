@@ -23,6 +23,8 @@ import 'package:flutter_terminal_sdk/models/terminal_response.dart';
 import 'package:flutter_terminal_sdk/models/terminal_sdk_initialization_listener.dart';
 import 'package:flutter_terminal_sdk/models/data/ui_dock_position.dart';
 
+import '../../services/presentation_service.dart';
+
 import 'app_logger.dart';
 import 'nearpay_backend_service.dart';
 import 'nearpay_config_service.dart';
@@ -444,7 +446,7 @@ class NearPayService {
   ///   'type': 'nearpay_init',
   ///   'data': {
   ///     'branch_id': 60,
-  ///     'backend_url': 'https://api.hermosaapp.com',
+  ///     'backend_url': 'https://portal.hermosaapp.com',
   ///     'auth_token': 'bearer_token_here'
   ///   }
   /// }
@@ -652,6 +654,24 @@ class NearPayService {
       },
     );
 
+    // Mirror the NearPay reader UI onto the customer-facing secondary
+    // screen when one is attached (e.g. Sunmi D2s / D3 mini). When no
+    // secondary display is present we keep the SDK single-display so the
+    // customer dock doesn't sit on the wrong screen.
+    final hasSecondDisplay = PresentationService().hasSecondaryDisplay;
+    final supportSecond = hasSecondDisplay
+        ? SupportSecondDisplay.enable
+        : SupportSecondDisplay.disable;
+    final secondDock =
+        hasSecondDisplay ? UiDockPosition.BOTTOM_CENTER : null;
+
+    _npLogDetail('SDK Display Configuration', {
+      'hasSecondaryDisplay': hasSecondDisplay.toString(),
+      'supportSecondDisplay': supportSecond.name,
+      'uiDockPosition': 'BOTTOM_CENTER',
+      'secondDisplayDockPosition': secondDock?.name ?? 'NONE',
+    });
+
     try {
       final initStartTime = DateTime.now();
       _npLog('⏳ Calling SDK.initialize() - this may take 5-30 seconds...');
@@ -664,7 +684,8 @@ class NearPayService {
         initializationListener: initListener,
         // UI Dock Position - NearPay Reader UI will appear at bottom center
         uiDockPosition: UiDockPosition.BOTTOM_CENTER,
-        supportSecondDisplay: SupportSecondDisplay.disable,
+        secondDisplayDockPosition: secondDock,
+        supportSecondDisplay: supportSecond,
       );
 
       final initEndTime = DateTime.now();
@@ -1246,7 +1267,7 @@ class NearPayService {
           'issue': 'Cannot reach NearPay servers',
           'check_1': 'Device has WiFi/Mobile data enabled',
           'check_2': 'No firewall blocking port 443',
-          'check_3': 'DNS is resolving api.hermosaapp.com',
+          'check_3': 'DNS is resolving portal.hermosaapp.com',
           'check_4': 'Try connecting to a different network',
           'contact': 'Reach out to NearPay support if issue persists',
         });
@@ -1505,12 +1526,35 @@ class NearPayService {
     }
 
     bool anyCallback = false;
+    bool terminalOutcomeFired = false;
+    bool purchaseResolved = false;
     Timer? noCallbackTimer;
+    // Watchdog that runs after the user dismisses the NearPay reader UI. When
+    // the user presses Cancel the native SDK fires onReaderDismissed /
+    // onReaderClosed but NEVER fires onTransactionPurchaseCompleted or
+    // onSendTransactionFailure. Without this watchdog the outer Completer
+    // would sit idle until its 120s timeout, keeping _paymentInFlight=true
+    // and blocking every new payment attempt with "عملية دفع أخرى قيد التنفيذ".
+    Timer? cancelWatchdog;
     void flagCallback() {
       if (!anyCallback) {
         anyCallback = true;
         noCallbackTimer?.cancel();
       }
+    }
+
+    void resolveWithFailure(String message) {
+      if (purchaseResolved) return;
+      purchaseResolved = true;
+      cancelWatchdog?.cancel();
+      onFailure(message);
+    }
+
+    void resolveWithSuccess(String transactionId) {
+      if (purchaseResolved) return;
+      purchaseResolved = true;
+      cancelWatchdog?.cancel();
+      onSuccess(transactionId);
     }
 
     noCallbackTimer = Timer(const Duration(seconds: 20), () {
@@ -1573,11 +1617,37 @@ class NearPayService {
               flagCallback();
               _npLog('callback.onReaderDismissed');
               onStatusUpdate('تم إغلاق شاشة الدفع');
+              // Start a short watchdog. If no terminal outcome callback
+              // arrives within 2s, treat the dismissal as a user cancel and
+              // fail the purchase so the _paymentInFlight flag can reset.
+              if (!terminalOutcomeFired && !purchaseResolved) {
+                cancelWatchdog?.cancel();
+                cancelWatchdog = Timer(const Duration(seconds: 2), () {
+                  if (!terminalOutcomeFired && !purchaseResolved) {
+                    _npLog(
+                      '⏱ Reader dismissed without a terminal outcome — '
+                      'treating as user cancel',
+                    );
+                    resolveWithFailure('تم إلغاء عملية الدفع');
+                  }
+                });
+              }
             },
             onReaderClosed: () {
               flagCallback();
               _npLog('callback.onReaderClosed');
               onStatusUpdate('تم إغلاق شاشة القارئ');
+              if (!terminalOutcomeFired && !purchaseResolved) {
+                cancelWatchdog ??= Timer(const Duration(seconds: 2), () {
+                  if (!terminalOutcomeFired && !purchaseResolved) {
+                    _npLog(
+                      '⏱ Reader closed without a terminal outcome — '
+                      'treating as user cancel',
+                    );
+                    resolveWithFailure('تم إلغاء عملية الدفع');
+                  }
+                });
+              }
             },
             onReadingStarted: () {
               flagCallback();
@@ -1628,6 +1698,8 @@ class NearPayService {
           // Transaction callbacks
           onTransactionPurchaseCompleted: (response) {
             flagCallback();
+            terminalOutcomeFired = true;
+            cancelWatchdog?.cancel();
             // Extract transaction ID from response
             // Structure: PurchaseResponse -> details -> transactions -> last -> id
             String transactionId = transactionUuid; // Fallback
@@ -1654,18 +1726,21 @@ class NearPayService {
               );
             }
 
-            onSuccess(transactionId);
+            resolveWithSuccess(transactionId);
           },
           onSendTransactionFailure: (msg) {
             flagCallback();
+            terminalOutcomeFired = true;
+            cancelWatchdog?.cancel();
             _npLog('callback.onSendTransactionFailure: $msg');
-            onFailure(msg);
+            resolveWithFailure(msg);
           },
         ),
       );
     } catch (e, stackTrace) {
       _npLog('❌ Payment error: $e', error: e, stackTrace: stackTrace);
-      onFailure('فشل الدفع: ${e.toString()}');
+      cancelWatchdog?.cancel();
+      resolveWithFailure('فشل الدفع: ${e.toString()}');
     }
   }
 

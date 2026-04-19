@@ -59,6 +59,9 @@ class _QueuedKitchenJob {
   final String? cashierName;
   final String? printerName;
   final bool isRtl;
+  final String? primaryLang;
+  final String? secondaryLang;
+  final bool? allowSecondary;
 
   int attempt;
   DateTime nextAttemptAt;
@@ -81,6 +84,9 @@ class _QueuedKitchenJob {
     this.cashierName,
     this.printerName,
     this.isRtl = true,
+    this.primaryLang,
+    this.secondaryLang,
+    this.allowSecondary,
     DateTime? nextAttemptAt,
   })  : attempt = 0,
         nextAttemptAt = nextAttemptAt ?? DateTime.now();
@@ -159,6 +165,9 @@ class PrintOrchestratorService {
     String? cashierName,
     String? printerName,
     bool isRtl = true,
+    String? primaryLang,
+    String? secondaryLang,
+    bool? allowSecondary,
   }) {
     if (printers.isEmpty) {
       return Future.value(const PrintDispatchResult(success: false, userMessage: 'No printers assigned'));
@@ -183,6 +192,9 @@ class PrintOrchestratorService {
       cashierName: cashierName,
       printerName: printerName,
       isRtl: isRtl,
+      primaryLang: primaryLang,
+      secondaryLang: secondaryLang,
+      allowSecondary: allowSecondary,
     );
     _queue.add(job);
     _queue.sort((a, b) => b.priority.index.compareTo(a.priority.index));
@@ -271,6 +283,9 @@ class PrintOrchestratorService {
           cashierName: job.cashierName,
           printerName: job.printerName,
           isRtl: job.isRtl,
+          primaryLang: job.primaryLang,
+          secondaryLang: job.secondaryLang,
+          allowSecondary: job.allowSecondary,
         );
 
         if (!success) {
@@ -332,6 +347,9 @@ class PrintOrchestratorService {
     String? cashierName,
     String? printerName,
     bool isRtl = true,
+    String? primaryLang,
+    String? secondaryLang,
+    bool? allowSecondary,
   }) async {
     for (var attempt = 1; attempt <= _maxPrinterRetriesPerCopy; attempt++) {
       try {
@@ -351,6 +369,9 @@ class PrintOrchestratorService {
           cashierName: cashierName,
           printerName: printerName,
           isRtl: isRtl,
+          primaryLang: primaryLang,
+          secondaryLang: secondaryLang,
+          allowSecondary: allowSecondary,
         );
         return true;
       } catch (e) {

@@ -3,11 +3,13 @@ import '../../models/location.dart';
 import 'api_constants.dart';
 import 'base_client.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 
 class CustomerService {
   final BaseClient _client = BaseClient();
   final OfflineDatabaseService _offlineDb = OfflineDatabaseService();
+  final OfflinePosDatabase _posDb = OfflinePosDatabase();
   final ConnectivityService _connectivity = ConnectivityService();
 
   /// The base URL for customer API (test server)
@@ -74,6 +76,19 @@ class CustomerService {
       );
       final customers = <Customer>[];
       for (final raw in localData) {
+        final customer = _parseCustomer(raw);
+        if (customer != null) customers.add(customer);
+      }
+      if (customers.isNotEmpty) return customers;
+    } catch (_) {}
+    // Try bundled POS database (synced via sync API)
+    try {
+      final posData = await _posDb.getCustomers(
+        ApiConstants.sellerId,
+        search: search,
+      );
+      final customers = <Customer>[];
+      for (final raw in posData) {
         final customer = _parseCustomer(raw);
         if (customer != null) customers.add(customer);
       }

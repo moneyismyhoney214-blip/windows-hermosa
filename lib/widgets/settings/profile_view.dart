@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/api/profile_service.dart';
 import '../../locator.dart';
 import '../../services/language_service.dart';
+import '../../services/app_themes.dart';
 
 class ProfileView extends StatefulWidget {
   final bool showPageHeader;
@@ -162,9 +163,9 @@ class _ProfileViewState extends State<ProfileView> {
           Container(
             padding: EdgeInsets.all(cardPadding),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: context.appCardBg,
               borderRadius: BorderRadius.circular(compactLayout ? 16 : 24),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: context.appBorder),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.05),
@@ -197,10 +198,12 @@ class _ProfileViewState extends State<ProfileView> {
                       width: avatarSize,
                       height: avatarSize,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF7ED),
+                        color: context.isDark
+                            ? context.appPrimary.withValues(alpha: 0.18)
+                            : const Color(0xFFFFF7ED),
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: const Color(0xFFF58220),
+                          color: context.appPrimary,
                           width: 4,
                         ),
                       ),
@@ -574,7 +577,7 @@ class _ProfileViewState extends State<ProfileView> {
                   label,
                   style: TextStyle(
                     fontSize: compact ? 13 : 14,
-                    color: Colors.grey.shade600,
+                    color: context.appTextMuted,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -585,7 +588,7 @@ class _ProfileViewState extends State<ProfileView> {
                   style: TextStyle(
                     fontSize: compact ? 15 : 16,
                     fontWeight: FontWeight.w600,
-                    color: valueColor ?? Colors.black87,
+                    color: valueColor ?? context.appText,
                   ),
                 ),
               ],

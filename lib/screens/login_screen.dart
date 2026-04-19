@@ -3,9 +3,11 @@ import 'package:google_fonts/google_fonts.dart';
 import '../services/api/auth_service.dart';
 import '../services/api/base_client.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 import '../locator.dart';
 import '../models/branch.dart';
 import 'branch_selection_screen.dart';
+import 'forgot_password_screen.dart';
 import 'main_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -22,6 +24,11 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
+
+  /// Toggles the "Forgot password?" link under the password field. Kept as
+  /// a named flag (instead of deleting the code) so we can re-enable the
+  /// flow in one line once the backend side is fully ready.
+  static const bool _showForgotPassword = false;
 
   @override
   void initState() {
@@ -104,6 +111,11 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (mounted) {
+        // Waiter-shortcut login path intentionally removed — every account
+        // now follows the standard branch-selection flow regardless of
+        // email. The waiter module source stays on disk but no UI path
+        // opens it.
+
         if (branches.isNotEmpty) {
           // Navigate to branch selection
           Navigator.of(context).pushReplacement(
@@ -137,9 +149,10 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallScreen = screenHeight < 600;
+    final isDark = context.isDark;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.appBg,
       resizeToAvoidBottomInset: true,
       body: Directionality(
         textDirection:
@@ -177,12 +190,16 @@ class _LoginScreenState extends State<LoginScreen> {
                                   padding:
                                       EdgeInsets.all(isSmallScreen ? 20 : 32),
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
+                                    color: context.appCardBg,
                                     borderRadius: BorderRadius.circular(24),
+                                    border: Border.all(
+                                      color: context.appBorder,
+                                      width: 1,
+                                    ),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black
-                                            .withValues(alpha: 0.05),
+                                        color: Colors.black.withValues(
+                                            alpha: isDark ? 0.4 : 0.05),
                                         blurRadius: 20,
                                         offset: const Offset(0, 10),
                                       ),
@@ -200,7 +217,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                           style: GoogleFonts.tajawal(
                                             fontSize: isSmallScreen ? 24 : 28,
                                             fontWeight: FontWeight.bold,
-                                            color: const Color(0xFF1E293B),
+                                            color: context.appText,
                                           ),
                                           textAlign: TextAlign.center,
                                         ),
@@ -210,7 +227,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                               .t('welcome_subtitle'),
                                           style: GoogleFonts.tajawal(
                                             fontSize: isSmallScreen ? 14 : 16,
-                                            color: const Color(0xFF64748B),
+                                            color: context.appTextMuted,
                                           ),
                                           textAlign: TextAlign.center,
                                         ),
@@ -222,25 +239,30 @@ class _LoginScreenState extends State<LoginScreen> {
                                                 bottom: 16),
                                             padding: const EdgeInsets.all(12),
                                             decoration: BoxDecoration(
-                                              color: const Color(0xFFFEE2E2),
+                                              color: isDark
+                                                  ? const Color(0xFF3B1717)
+                                                  : const Color(0xFFFEE2E2),
                                               borderRadius:
                                                   BorderRadius.circular(8),
                                               border: Border.all(
-                                                  color: const Color(0xFFEF4444)
+                                                  color: context.appDanger
                                                       .withValues(alpha: 0.3)),
                                             ),
                                             child: Row(
                                               children: [
-                                                const Icon(Icons.error_outline,
-                                                    color: Color(0xFFEF4444),
+                                                Icon(Icons.error_outline,
+                                                    color: context.appDanger,
                                                     size: 20),
                                                 const SizedBox(width: 8),
                                                 Expanded(
                                                   child: Text(
                                                     _errorMessage!,
                                                     style: GoogleFonts.tajawal(
-                                                      color: const Color(
-                                                          0xFF7F1D1D),
+                                                      color: isDark
+                                                          ? const Color(
+                                                              0xFFFCA5A5)
+                                                          : const Color(
+                                                              0xFF7F1D1D),
                                                       fontSize: 13,
                                                     ),
                                                   ),
@@ -253,21 +275,35 @@ class _LoginScreenState extends State<LoginScreen> {
                                           keyboardType:
                                               TextInputType.emailAddress,
                                           textDirection: TextDirection.ltr,
+                                          style: TextStyle(
+                                              color: context.appText),
                                           decoration: InputDecoration(
                                             labelText:
                                                 translationService.t('email'),
                                             hintText: 'example@email.com',
-                                            prefixIcon: const Icon(
-                                                Icons.email_outlined),
+                                            filled: true,
+                                            fillColor: context.appSurfaceAlt,
+                                            prefixIcon: Icon(
+                                                Icons.email_outlined,
+                                                color: context.appTextMuted),
                                             border: OutlineInputBorder(
                                               borderRadius:
                                                   BorderRadius.circular(12),
+                                              borderSide: BorderSide(
+                                                  color: context.appBorder),
                                             ),
                                             enabledBorder: OutlineInputBorder(
                                               borderRadius:
                                                   BorderRadius.circular(12),
-                                              borderSide: const BorderSide(
-                                                  color: Color(0xFFE2E8F0)),
+                                              borderSide: BorderSide(
+                                                  color: context.appBorder),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              borderSide: BorderSide(
+                                                  color: context.appPrimary,
+                                                  width: 1.5),
                                             ),
                                             contentPadding:
                                                 const EdgeInsets.symmetric(
@@ -291,16 +327,22 @@ class _LoginScreenState extends State<LoginScreen> {
                                         TextFormField(
                                           controller: _passwordController,
                                           obscureText: _obscurePassword,
+                                          style: TextStyle(
+                                              color: context.appText),
                                           decoration: InputDecoration(
                                             labelText: translationService
                                                 .t('password'),
-                                            prefixIcon:
-                                                const Icon(Icons.lock_outline),
+                                            filled: true,
+                                            fillColor: context.appSurfaceAlt,
+                                            prefixIcon: Icon(Icons.lock_outline,
+                                                color: context.appTextMuted),
                                             suffixIcon: IconButton(
-                                              icon: Icon(_obscurePassword
-                                                  ? Icons.visibility_outlined
-                                                  : Icons
-                                                      .visibility_off_outlined),
+                                              icon: Icon(
+                                                  _obscurePassword
+                                                      ? Icons.visibility_outlined
+                                                      : Icons
+                                                          .visibility_off_outlined,
+                                                  color: context.appTextMuted),
                                               onPressed: () => setState(() =>
                                                   _obscurePassword =
                                                       !_obscurePassword),
@@ -308,12 +350,21 @@ class _LoginScreenState extends State<LoginScreen> {
                                             border: OutlineInputBorder(
                                               borderRadius:
                                                   BorderRadius.circular(12),
+                                              borderSide: BorderSide(
+                                                  color: context.appBorder),
                                             ),
                                             enabledBorder: OutlineInputBorder(
                                               borderRadius:
                                                   BorderRadius.circular(12),
-                                              borderSide: const BorderSide(
-                                                  color: Color(0xFFE2E8F0)),
+                                              borderSide: BorderSide(
+                                                  color: context.appBorder),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              borderSide: BorderSide(
+                                                  color: context.appPrimary,
+                                                  width: 1.5),
                                             ),
                                             contentPadding:
                                                 const EdgeInsets.symmetric(
@@ -326,6 +377,47 @@ class _LoginScreenState extends State<LoginScreen> {
                                               : null,
                                           onFieldSubmitted: (_) => _login(),
                                         ),
+                                        // "Forgot password?" link is hidden
+                                        // temporarily while the backend
+                                        // wires up the full flow. Flip
+                                        // `_showForgotPassword` to true (or
+                                        // delete this guard) to restore the
+                                        // button — the navigation target and
+                                        // screen are still in place.
+                                        if (_showForgotPassword)
+                                          Align(
+                                            alignment: AlignmentDirectional
+                                                .centerStart,
+                                            child: TextButton(
+                                              onPressed: _isLoading
+                                                  ? null
+                                                  : () {
+                                                      Navigator.of(context).push(
+                                                        MaterialPageRoute(
+                                                          builder: (_) =>
+                                                              const ForgotPasswordScreen(),
+                                                        ),
+                                                      );
+                                                    },
+                                              style: TextButton.styleFrom(
+                                                padding: EdgeInsets.zero,
+                                                minimumSize: const Size(0, 32),
+                                                tapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                                foregroundColor:
+                                                    context.appPrimary,
+                                              ),
+                                              child: Text(
+                                                translationService
+                                                    .t('forgot_password'),
+                                                style: GoogleFonts.tajawal(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
                                         SizedBox(
                                             height: isSmallScreen ? 16 : 24),
                                         SizedBox(
@@ -335,7 +427,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                                 _isLoading ? null : _login,
                                             style: ElevatedButton.styleFrom(
                                               backgroundColor:
-                                                  const Color(0xFFF58220),
+                                                  context.appPrimary,
                                               foregroundColor: Colors.white,
                                               shape: RoundedRectangleBorder(
                                                 borderRadius:
@@ -388,20 +480,22 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildLanguageDropdown() {
     final currentLang = SupportedLanguages.getByCode(
         translationService.currentLocale.languageCode);
+    final isDark = context.isDark;
 
     return PopupMenuButton<String>(
       onSelected: (code) => translationService.setLanguage(code),
       offset: const Offset(0, 40),
+      color: context.appCardBg,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appCardBg,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: context.appBorder),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),
@@ -410,19 +504,19 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.language, size: 18, color: Color(0xFFF58220)),
+            Icon(Icons.language, size: 18, color: context.appPrimary),
             const SizedBox(width: 8),
             Text(
               currentLang.nativeName,
               style: GoogleFonts.tajawal(
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
-                color: const Color(0xFF1E293B),
+                color: context.appText,
               ),
             ),
             const SizedBox(width: 4),
-            const Icon(Icons.keyboard_arrow_down,
-                size: 18, color: Color(0xFF64748B)),
+            Icon(Icons.keyboard_arrow_down,
+                size: 18, color: context.appTextMuted),
           ],
         ),
       ),
@@ -437,14 +531,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 lang.nativeName,
                 style: GoogleFonts.tajawal(
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  color: isSelected
-                      ? const Color(0xFFF58220)
-                      : const Color(0xFF1E293B),
+                  color: isSelected ? context.appPrimary : context.appText,
                 ),
               ),
               if (isSelected) ...[
                 const Spacer(),
-                const Icon(Icons.check, size: 16, color: Color(0xFFF58220)),
+                Icon(Icons.check, size: 16, color: context.appPrimary),
               ],
             ],
           ),

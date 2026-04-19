@@ -36,10 +36,29 @@ class ApiConstants {
   // Currency - will be set from login response (taxObject.currency)
   static String currency = 'ر.س';
 
+  // Branch module - "restaurants" or "salons", set from branch selection
+  static String branchModule = '';
+
   // Auth - JWT login uses different domain
   static const String jwtLoginEndpoint = '/seller/login';
   static const String logoutEndpoint = '/seller/logout';
   static const String profileEndpoint = '/seller/profile';
+
+  // Forgot-password flow — 3 steps:
+  // 1. `forgotEndpoint` sends the reset code to the user's email.
+  // 2. `forgotCheckEndpoint(...)` verifies the code with the signed email link.
+  // 3. `forgotResetEndpoint` sets the new password (session-bound to step 2).
+  static const String forgotEndpoint = '/seller/forgot';
+  static String forgotCheckEndpoint({
+    required String email,
+    required String expires,
+    required String signature,
+  }) =>
+      '/seller/forgot/check'
+      '?email=${Uri.encodeQueryComponent(email)}'
+      '&expires=${Uri.encodeQueryComponent(expires)}'
+      '&signature=${Uri.encodeQueryComponent(signature)}';
+  static const String forgotResetEndpoint = '/seller/forgot/reset';
   static String get branchesEndpoint => '/seller/branches';
   static String get profileBranchesEndpoint => '/seller/profile/branches';
   static String get branchSettingEndpoint => '/seller/branch-setting/$branchId';
@@ -228,8 +247,43 @@ class ApiConstants {
   static String customerDetailsEndpoint(int sellerId, int customerId) =>
       '/seller/sellers/$sellerId/customers/$customerId';
 
+  // Salon - Categories & Services
+  static String get serviceCategoriesEndpoint =>
+      '/seller/filters/resource/branches/$branchId/categories?scope=types&type=services&all=false';
+
+  // Salon - Employees & Appointments
+  static String get salonEmployeeOptionsEndpoint =>
+      '/seller/filters/branches/$branchId/allEmployees';
+  static String salonEmployeeAvailableTimesEndpoint(int employeeId) =>
+      '/seller/bookings/branches/$branchId/employees/$employeeId';
+  static String salonServiceEmployeesEndpoint(int serviceId) =>
+      '/seller/bookings/branches/$branchId/services/$serviceId';
+  static String get salonAppointmentsCalendarEndpoint =>
+      '/seller/branches/$branchId/appointments';
+  static String salonEmployeeServiceIncomeReportEndpoint(int employeeId) =>
+      '/seller/incomingServiceReport/branches/$branchId/employees/$employeeId';
+
+  // Deposits (عرابين)
+  static String depositDetailsEndpoint(int depositId) =>
+      '/seller/branches/$branchId/deposits/$depositId';
+  static String get allServicesFilterEndpoint =>
+      '/seller/filters/resource/branches/$branchId/allServices';
+  static String get allDepositsFilterEndpoint =>
+      '/seller/filters/branches/$branchId/allDeposits';
+
   // Locations
   static const String countriesEndpoint = '/countries';
   static String citiesEndpoint(int countryId) =>
       '/countries/cities?country_id=$countryId';
+
+  // ── Offline Sync API ──
+  static const String syncManifestEndpoint = '/sync/manifest';
+  static String syncResourceEndpoint(String resource, {String? cursor}) {
+    final base = '/sync/resources/$resource';
+    if (cursor != null && cursor.isNotEmpty) return '$base?cursor=$cursor';
+    return '$base?cursor=';
+  }
+  static const String syncPosEndpoint = '/sync/pos';
+  static const String syncLoginEndpoint = '/login';
+  static const String syncLogoutEndpoint = '/logout';
 }

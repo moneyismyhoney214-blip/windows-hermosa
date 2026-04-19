@@ -138,7 +138,7 @@ class NearPayBackendService {
                 '[NearPay-API]   jwt_data.client_uuid: ${jwtData['client_uuid']}',
               );
               jwtClientUuid = _toNonEmptyString(
-                jwtData['client_uuid'] ?? jwtData['clientUUID'],
+                jwtData['client_uuid'] ?? jwtData['clientUUID'] ?? jwtData['merchant_uuid'],
               );
               jwtTerminalIdInToken = _toNonEmptyString(
                 jwtData['terminal_id'] ?? jwtData['terminal_tid'],
@@ -304,17 +304,29 @@ class NearPayBackendService {
         if (!idMatches && !tidMatches) continue;
 
         final terminalUserUuid = _toNonEmptyString(
-          item['user_uuid'] ?? item['client_uuid'],
+          item['user_uuid'] ?? item['client_uuid'] ?? item['merchant_uuid'],
         );
         if (terminalUserUuid != null) {
           debugPrint('[NearPay-API]   terminal_user_uuid: $terminalUserUuid');
           return terminalUserUuid;
         }
 
+        // Check merchant.id as the UUID (NearPay merchant UUID)
+        final merchant = item['merchant'];
+        if (merchant is Map) {
+          final merchantUuid = _toNonEmptyString(
+            merchant['uuid'] ?? merchant['merchant_uuid'] ?? merchant['id'],
+          );
+          if (merchantUuid != null) {
+            debugPrint('[NearPay-API]   merchant_uuid: $merchantUuid');
+            return merchantUuid;
+          }
+        }
+
         final user = item['user'];
         if (user is Map) {
           final nestedSdkUserUuid = _toNonEmptyString(
-            user['user_uuid'] ?? user['client_uuid'],
+            user['user_uuid'] ?? user['client_uuid'] ?? user['merchant_uuid'],
           );
           if (nestedSdkUserUuid != null) {
             debugPrint(
@@ -323,11 +335,13 @@ class NearPayBackendService {
             return nestedSdkUserUuid;
           }
 
+          // Use user.id as last resort
           final nestedUserId = _toNonEmptyString(user['id']);
           if (nestedUserId != null) {
             debugPrint(
-              '[NearPay-API]   ignoring nested user.id because it is not the SDK UUID: $nestedUserId',
+              '[NearPay-API]   using user.id as fallback uuid: $nestedUserId',
             );
+            return nestedUserId;
           }
         }
       }
@@ -859,7 +873,7 @@ class NearPayTerminalDetails {
       name: json['name'] as String?,
       nameAr: json['name_ar'] as String?,
       isAssignedToUser: json['is_assigned'] as bool? ?? false,
-      userUuid: json['user_uuid'] as String?,
+      userUuid: (json['user_uuid'] ?? json['client_uuid'] ?? json['merchant_uuid']) as String?,
       merchantId: merchant?['id'] as String?,
       merchantName: merchant?['name'] as String?,
       merchantNameAr: merchant?['name_ar'] as String?,

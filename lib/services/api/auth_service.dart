@@ -148,7 +148,15 @@ class AuthService {
       for (final branch in source) {
         final id = _toInt(branch['id'] ?? branch['branch_id']);
         if (id == null || id <= 0) continue;
-        byId.putIfAbsent(id, () => branch);
+        final existing = byId[id];
+        if (existing == null) {
+          byId[id] = branch;
+        } else {
+          // Prefer the version that has more data (e.g. module field from profile/branches)
+          if (!existing.containsKey('module') && branch.containsKey('module')) {
+            byId[id] = branch;
+          }
+        }
       }
     }
     return byId.values.toList();
@@ -242,6 +250,12 @@ class AuthService {
       ApiConstants.currency = savedCurrency;
       print('💰 Currency loaded from storage: $savedCurrency');
     }
+    // Load Branch Module
+    final savedModule = prefs.getString('branch_module');
+    if (savedModule != null) {
+      ApiConstants.branchModule = savedModule;
+      print('🏷️ Branch module loaded from storage: $savedModule');
+    }
     if (_cachedToken != null) {
       BaseClient().setToken(_cachedToken!);
       print('📦 Token loaded from storage');
@@ -258,11 +272,14 @@ class AuthService {
     if (user != null) {
       await prefs.setString(_userKey, jsonEncode(user));
     }
-    // Save branch ID, Seller ID & Currency
+    // Save branch ID, Seller ID, Currency & Module
     await prefs.setInt(_branchIdKey, ApiConstants.branchId);
     await prefs.setInt(_sellerIdKey, ApiConstants.sellerId);
     await prefs.setString(_currencyKey, ApiConstants.currency);
-    print('💾 Branch, Seller ID & Currency saved to storage');
+    if (ApiConstants.branchModule.isNotEmpty) {
+      await prefs.setString('branch_module', ApiConstants.branchModule);
+    }
+    print('💾 Branch, Seller ID, Currency & Module saved to storage');
   }
 
   /// Clear token from SharedPreferences
@@ -273,10 +290,12 @@ class AuthService {
     await prefs.remove(_branchIdKey);
     await prefs.remove(_sellerIdKey);
     await prefs.remove(_currencyKey);
+    await prefs.remove('branch_module');
     // Reset defaults
     ApiConstants.branchId = 0;
     ApiConstants.sellerId = 1;
     ApiConstants.currency = 'ر.س';
+    ApiConstants.branchModule = '';
     print('🗑️ Session data cleared from storage');
   }
 
@@ -419,6 +438,138 @@ class AuthService {
   }) async {
     return login(
         email: email, password: password, rememberMe: rememberMe.toString());
+  }
+
+  // ──────────────────────────── Forgot password ────────────────────────────
+
+  /// Cookies captured from the forgot-password session so step 3 can reuse
+  /// the same browser-style session the server hands out after step 2.
+  /// Flutter's `http` package doesn't persist cookies on its own, so we
+  /// thread them manually between the three calls.
+  String? _forgotSessionCookie;
+
+  Map<String, String> _forgotHeaders({bool withCookie = false}) {
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      'Accept-Language': ApiConstants.acceptLanguage,
+      'Accept-Platform': 'dashboard',
+      'Accept-ISO': 'SAU',
+    };
+    if (withCookie && _forgotSessionCookie != null) {
+      headers['Cookie'] = _forgotSessionCookie!;
+    }
+    return headers;
+  }
+
+  void _captureSessionCookie(http.Response response) {
+    final raw = response.headers['set-cookie'];
+    if (raw == null || raw.trim().isEmpty) return;
+    // Keep just the `name=value` pairs; drop Path/Expires/HttpOnly attrs that
+    // shouldn't be echoed back in a `Cookie:` request header.
+    final cookiePairs = raw.split(',').map((chunk) {
+      final primary = chunk.split(';').first.trim();
+      return primary;
+    }).where((c) => c.isNotEmpty && c.contains('=')).toList();
+    if (cookiePairs.isEmpty) return;
+    _forgotSessionCookie = cookiePairs.join('; ');
+  }
+
+  /// Step 1 — request a reset code for [email]. The server emails a code
+  /// and responds with the `expires` + `signature` pair needed to verify
+  /// the code in step 2 (both are bundled in the signed URL the server
+  /// sends by email; the app also gets them in the JSON response so the
+  /// cashier can type the code in-app without clicking the email link).
+  Future<Map<String, dynamic>> sendForgotPasswordCode(String email) async {
+    final uri = Uri.parse(
+        '${ApiConstants.authBaseUrl}${ApiConstants.forgotEndpoint}');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_forgotHeaders())
+      ..fields['email'] = email.trim();
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    _captureSessionCookie(response);
+    final body = response.body.trim();
+    Map<String, dynamic> parsed = const {};
+    if (body.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map) {
+          parsed = decoded.map((k, v) => MapEntry(k.toString(), v));
+        }
+      } catch (_) {}
+    }
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return parsed;
+    }
+    throw Exception(parsed['message']?.toString() ??
+        'Forgot password failed: ${response.statusCode}');
+  }
+
+  /// Step 2 — validate the [code] the cashier typed against the signed
+  /// `expires` + `signature` the server issued in step 1. Preserves the
+  /// session cookie so step 3 can reset the password without re-proving
+  /// identity.
+  Future<Map<String, dynamic>> checkResetCode({
+    required String email,
+    required String expires,
+    required String signature,
+    required String code,
+  }) async {
+    final uri = Uri.parse('${ApiConstants.authBaseUrl}'
+        '${ApiConstants.forgotCheckEndpoint(email: email, expires: expires, signature: signature)}');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_forgotHeaders(withCookie: true))
+      ..fields['code'] = code.trim();
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    _captureSessionCookie(response);
+    final body = response.body.trim();
+    Map<String, dynamic> parsed = const {};
+    if (body.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map) {
+          parsed = decoded.map((k, v) => MapEntry(k.toString(), v));
+        }
+      } catch (_) {}
+    }
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return parsed;
+    }
+    throw Exception(parsed['message']?.toString() ??
+        'Invalid reset code: ${response.statusCode}');
+  }
+
+  /// Step 3 — commit the new [password]. Relies on the forgot-flow session
+  /// cookie captured in step 2 so the server knows which account is being
+  /// reset. Clears the local cookie after success.
+  Future<Map<String, dynamic>> resetForgottenPassword(String password) async {
+    final uri = Uri.parse(
+        '${ApiConstants.authBaseUrl}${ApiConstants.forgotResetEndpoint}');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_forgotHeaders(withCookie: true))
+      ..fields['password'] = password
+      ..fields['password_confirmation'] = password;
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    final body = response.body.trim();
+    Map<String, dynamic> parsed = const {};
+    if (body.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map) {
+          parsed = decoded.map((k, v) => MapEntry(k.toString(), v));
+        }
+      } catch (_) {}
+    }
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      // Reset successful — flush the temporary session so the next forgot
+      // run starts clean.
+      _forgotSessionCookie = null;
+      return parsed;
+    }
+    throw Exception(parsed['message']?.toString() ??
+        'Password reset failed: ${response.statusCode}');
   }
 
   /// Check if user is authenticated
@@ -593,11 +744,13 @@ class AuthService {
   Future<void> updateActiveBranch(Branch branch) async {
     ApiConstants.branchId = branch.id;
     ApiConstants.currency = branch.taxObject.currency;
+    ApiConstants.branchModule = branch.module;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_branchIdKey, ApiConstants.branchId);
     await prefs.setString(_currencyKey, ApiConstants.currency);
+    await prefs.setString('branch_module', branch.module);
 
-    print('🔄 Active Branch updated to: ${branch.name} (ID: ${branch.id})');
+    print('🔄 Active Branch updated to: ${branch.name} (ID: ${branch.id}, module: ${branch.module})');
   }
 }

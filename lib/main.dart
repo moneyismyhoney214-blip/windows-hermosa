@@ -1,15 +1,21 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'Splash/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/api/auth_service.dart';
 import 'services/api/base_client.dart';
 import 'services/language_service.dart';
+import 'services/theme_service.dart';
+import 'services/printer_language_settings_service.dart';
+import 'services/app_themes.dart';
 import 'services/cashier_sound_service.dart';
 import 'services/presentation_service.dart';
 import 'services/offline/offline_database_service.dart';
+import 'services/offline/offline_pos_database.dart';
 import 'services/offline/connectivity_service.dart';
 import 'services/offline/sync_service.dart';
 import 'widgets/print_listener.dart';
@@ -32,6 +38,16 @@ void main() async {
     return;
   }
 
+  // Initialize sqflite FFI for desktop platforms (Linux, Windows, macOS)
+  if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+    try {
+      final sqfliteFfi = await _initSqfliteFfi();
+      if (sqfliteFfi) debugPrint('✅ sqflite FFI initialized for desktop');
+    } catch (e) {
+      debugPrint('⚠️ sqflite FFI init failed (non-fatal): $e');
+    }
+  }
+
   // Primary display — run the full cashier app.
   var isAuthenticated = false;
   var locatorReady = false;
@@ -39,47 +55,97 @@ void main() async {
   try {
     setupLocator();
     locatorReady = true;
+  } catch (e, stackTrace) {
+    debugPrint('❌ Locator setup failed: $e');
+    debugPrintStack(stackTrace: stackTrace);
+  }
 
-    // Initialize offline database FIRST (before any service needs it)
+  // Initialize offline services (non-critical — may fail on Linux)
+  try {
     await OfflineDatabaseService().initialize();
     debugPrint('Offline database initialized');
+  } catch (e) {
+    debugPrint('⚠️ Offline database init (non-fatal): $e');
+  }
 
-    // Initialize connectivity monitoring
+  // Initialize the bundled POS database (copies from assets on first run)
+  try {
+    await OfflinePosDatabase().initialize();
+    debugPrint('Offline POS database initialized');
+  } catch (e) {
+    debugPrint('⚠️ Offline POS database init (non-fatal): $e');
+  }
+
+  try {
     await ConnectivityService().initialize();
     debugPrint('Connectivity service initialized');
+  } catch (e) {
+    debugPrint('⚠️ Connectivity service init (non-fatal): $e');
+  }
 
-    // Initialize sync service
+  try {
     await SyncService().initialize();
     debugPrint('Sync service initialized');
+  } catch (e) {
+    debugPrint('⚠️ Sync service init (non-fatal): $e');
+  }
 
+  // Critical: language must always load
+  try {
     await translationService.initialize();
+  } catch (e) {
+    debugPrint('⚠️ Translation init failed: $e');
+  }
 
-    if (!getIt.isRegistered<CashierSoundService>()) {
-      getIt.registerLazySingleton<CashierSoundService>(
-        () => CashierSoundService(),
-      );
-    }
-    await getIt<CashierSoundService>().initialize();
+  // Load persisted theme preference (non-critical — defaults to light)
+  try {
+    await themeService.initialize();
+  } catch (e) {
+    debugPrint('⚠️ Theme init (non-fatal): $e');
+  }
 
-    final authService = getIt<AuthService>();
-    await authService.initialize(force: true);
-    isAuthenticated = await authService.isAuthenticated();
+  // Load persisted printer language preference (non-critical — defaults to ar/en)
+  try {
+    await printerLanguageSettings.initialize();
+  } catch (e) {
+    debugPrint('⚠️ Printer language init (non-fatal): $e');
+  }
 
-    // Initialize Presentation API for dual-screen devices (e.g. Sunmi D2s).
-    try {
-      final presentationService = PresentationService();
-      await presentationService.initialize();
-      if (presentationService.hasSecondaryDisplay) {
-        debugPrint(
-            '🖥️ Dual-screen device detected — launching customer display');
-        await presentationService.showPresentation();
+  // Critical: auth must always load to restore login state
+  try {
+    if (locatorReady) {
+      if (!getIt.isRegistered<CashierSoundService>()) {
+        getIt.registerLazySingleton<CashierSoundService>(
+          () => CashierSoundService(),
+        );
       }
-    } catch (e) {
-      debugPrint('⚠️ Presentation init (non-fatal): $e');
+      await getIt<CashierSoundService>().initialize();
     }
-  } catch (e, stackTrace) {
-    debugPrint('❌ Startup initialization failed: $e');
-    debugPrintStack(stackTrace: stackTrace);
+  } catch (e) {
+    debugPrint('⚠️ Sound service init (non-fatal): $e');
+  }
+
+  try {
+    if (locatorReady) {
+      final authService = getIt<AuthService>();
+      await authService.initialize(force: true);
+      isAuthenticated = await authService.isAuthenticated();
+    }
+  } catch (e) {
+    debugPrint('⚠️ Auth service init failed: $e');
+  }
+
+  // Initialize Presentation API for dual-screen devices (e.g. Sunmi D2s).
+  try {
+    final presentationService = PresentationService();
+    await presentationService.initialize();
+    if (presentationService.hasSecondaryDisplay) {
+      debugPrint(
+          '🖥️ Dual-screen device detected — launching customer display');
+      await presentationService.showPresentation();
+    }
+  } catch (e) {
+    debugPrint('⚠️ Presentation init (non-fatal): $e');
   }
 
   BaseClient.onUnauthorized = () async {
@@ -104,6 +170,19 @@ void main() async {
 
 /// Ask the native side if we are running on a secondary display.
 /// The native side responds true for the secondary engine.
+Future<bool> _initSqfliteFfi() async {
+  try {
+    // ignore: depend_on_referenced_packages
+    // ignore: unused_import
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+    return true;
+  } catch (e) {
+    debugPrint('⚠️ sqflite FFI setup error: $e');
+    return false;
+  }
+}
+
 Future<bool> _checkIfSecondaryDisplay() async {
   try {
     const channel = MethodChannel('com.hermosaapp.presentation');
@@ -128,15 +207,21 @@ class _HermosaPosAppState extends State<HermosaPosApp> {
   void initState() {
     super.initState();
     translationService.addListener(_onLocaleChange);
+    themeService.addListener(_onThemeChange);
   }
 
   @override
   void dispose() {
     translationService.removeListener(_onLocaleChange);
+    themeService.removeListener(_onThemeChange);
     super.dispose();
   }
 
   void _onLocaleChange() {
+    setState(() {});
+  }
+
+  void _onThemeChange() {
     setState(() {});
   }
 
@@ -156,19 +241,9 @@ class _HermosaPosAppState extends State<HermosaPosApp> {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFF58220),
-          primary: const Color(0xFFF58220),
-          surface: const Color(0xFFF8FAFC),
-        ),
-        textTheme: isRTL
-            ? GoogleFonts.tajawalTextTheme()
-            : GoogleFonts.robotoTextTheme(),
-        iconTheme: const IconThemeData(size: 20),
-      ),
+      themeMode: themeService.themeMode,
+      theme: AppThemes.light(isRTL: isRTL),
+      darkTheme: AppThemes.dark(isRTL: isRTL),
       builder: (context, child) {
         return PrintListener(child: child!);
       },

@@ -6,6 +6,36 @@ import '../services/api/api_constants.dart';
 /// قالب HTML للفاتورة الضريبية
 /// يستخدم لطباعة الفاتورة عبر WebView أو الطابعة
 class InvoiceHtmlTemplate {
+  /// Resolve a label for the given language code.
+  static String _r(String code, {
+    required String ar, required String en,
+    String? hi, String? ur, String? tr, String? es,
+  }) {
+    switch (code) {
+      case 'hi': return hi ?? en;
+      case 'ur': return ur ?? en;
+      case 'tr': return tr ?? en;
+      case 'es': return es ?? en;
+      case 'en': return en;
+      case 'ar': default: return ar;
+    }
+  }
+
+  /// Primary label.
+  static String _m(String pri, {
+    required String ar, required String en,
+    String? hi, String? ur, String? tr, String? es,
+  }) => _r(pri, ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+
+  /// Secondary label (empty if not allowed or same as primary).
+  static String _s(String pri, String sec, bool allow, {
+    required String ar, required String en,
+    String? hi, String? ur, String? tr, String? es,
+  }) {
+    if (!allow || sec == pri) return '';
+    return _r(sec, ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
+  }
+
   /// إنشاء HTML للفاتورة مع البيانات الديناميكية
   static String generateInvoiceHtml({
     required OrderReceiptData data,
@@ -23,10 +53,16 @@ class InvoiceHtmlTemplate {
     String? commercialRegisterNumber,
     String? returnPolicy,
     int paperWidthMm = 80,
+    String primaryLang = 'ar',
+    String secondaryLang = 'en',
+    bool allowSecondary = true,
   }) {
     final widthCss = paperWidthCss(paperWidthMm);
-    // تحويل نوع الطلب للعربية
-    String orderTypeAr = _getOrderTypeArabic(orderType ?? '');
+    final p = primaryLang;
+    final s = secondaryLang;
+    final a = allowSecondary;
+    // تحويل نوع الطلب للغة المختارة
+    String orderTypeAr = _getOrderTypeLabel(orderType ?? '', p);
     final hasLogo = data.sellerLogo != null && data.sellerLogo!.isNotEmpty;
     final resolvedDailyOrderNumber =
         (dailyOrderNumber != null && dailyOrderNumber.trim().isNotEmpty)
@@ -215,31 +251,32 @@ class InvoiceHtmlTemplate {
             ${resolvedInvoiceNumber.isNotEmpty ? '<div class="flex justify-center my-2"><div class="border border-black px-3 py-1.5 text-center"><div class="text-base font-bold">$resolvedInvoiceNumber</div></div></div>' : ''}
             <div class="info-bottom-item">
               <div class="flex-row">
-                <span>الكاشير</span>
+                <span>${_m(p, ar: 'الكاشير', en: 'Cashier', hi: 'कैशियर', ur: 'کیشیئر', es: 'Cajero', tr: 'Kasiyer')}</span>
                 <span class="value">${data.sellerNameAr}</span>
               </div>
-              <span class="label-en">Cashier</span>
+              <span class="label-en">${_s(p, s, a, ar: 'الكاشير', en: 'Cashier', hi: 'कैशियर', ur: 'کیشیئر', es: 'Cajero', tr: 'Kasiyer')}</span>
             </div>
             <div class="info-bottom-item">
               <div class="flex-row">
-                <span>الرقم الضريبي</span>
+                <span>${_m(p, ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası')}</span>
                 <span class="value">${data.vatNumber}</span>
               </div>
-              <span class="label-en">Tax Number</span>
+              <span class="label-en">${_s(p, s, a, ar: 'الرقم الضريبي', en: 'Tax Number', hi: 'कर संख्या', ur: 'ٹیکس نمبر', es: 'Número de Impuesto', tr: 'Vergi Numarası')}</span>
             </div>
-            ${commercialRegisterNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>رقم السجل التجاري</span><span class="value">$commercialRegisterNumber</span></div><span class="label-en">Commercial Register Number</span></div>' : ''}
-            ${data.issueDate != null ? '<div class="info-bottom-item"><div class="flex-row"><span>التاريخ</span><span class="value">${data.issueDate}</span></div><span class="label-en">Date</span></div>' : ''}
-            ${data.issueTime != null ? '<div class="info-bottom-item"><div class="flex-row"><span>الوقت</span><span class="value force-ltr">${data.issueTime}</span></div><span class="label-en">Time</span></div>' : ''}
-            ${resolvedDailyOrderNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>رقم الطلب</span><span class="value force-ltr">$resolvedDailyOrderNumber</span></div><span class="label-en">Order Number</span></div>' : ''}
-            ${orderType != null ? '<div class="info-bottom-item"><div class="flex-row"><span>نوع الطلب</span><span class="value">$orderTypeAr</span></div><span class="label-en">Order Type</span></div>' : ''}
-            ${tableNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>رقم الطاوله</span><span class="value">$tableNumber</span></div><span class="label-en">Table number</span></div>' : ''}
-            ${carNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>رقم السياره</span><span class="value">$carNumber</span></div><span class="label-en">Car number</span></div>' : ''}
+            ${commercialRegisterNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>${_m(p, ar: 'رقم السجل التجاري', en: 'Commercial Register Number', hi: 'व्यावसायिक रजिस्टर संख्या', ur: 'تجارتی رجسٹر نمبر', es: 'Número de Registro Comercial', tr: 'Ticari Sicil Numarası')}</span><span class="value">$commercialRegisterNumber</span></div><span class="label-en">${_s(p, s, a, ar: 'رقم السجل التجاري', en: 'Commercial Register Number', hi: 'व्यावसायिक रजिस्टर संख्या', ur: 'تجارتی رجسٹر نمبر', es: 'Número de Registro Comercial', tr: 'Ticari Sicil Numarası')}</span></div>' : ''}
+            ${data.issueDate != null ? '<div class="info-bottom-item"><div class="flex-row"><span>${_m(p, ar: 'التاريخ', en: 'Date', hi: 'दिनांक', ur: 'تاریخ', es: 'Fecha', tr: 'Tarih')}</span><span class="value">${data.issueDate}</span></div><span class="label-en">${_s(p, s, a, ar: 'التاريخ', en: 'Date', hi: 'दिनांक', ur: 'تاریخ', es: 'Fecha', tr: 'Tarih')}</span></div>' : ''}
+            ${data.issueTime != null ? '<div class="info-bottom-item"><div class="flex-row"><span>${_m(p, ar: 'الوقت', en: 'Time', hi: 'समय', ur: 'وقت', es: 'Hora', tr: 'Saat')}</span><span class="value force-ltr">${data.issueTime}</span></div><span class="label-en">${_s(p, s, a, ar: 'الوقت', en: 'Time', hi: 'समय', ur: 'وقت', es: 'Hora', tr: 'Saat')}</span></div>' : ''}
+            ${resolvedDailyOrderNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>${_m(p, ar: 'رقم الطلب', en: 'Order Number', hi: 'ऑर्डर संख्या', ur: 'آرڈر نمبر', es: 'Número de Pedido', tr: 'Sipariş Numarası')}</span><span class="value force-ltr">$resolvedDailyOrderNumber</span></div><span class="label-en">${_s(p, s, a, ar: 'رقم الطلب', en: 'Order Number', hi: 'ऑर्डर संख्या', ur: 'آرڈر نمبر', es: 'Número de Pedido', tr: 'Sipariş Numarası')}</span></div>' : ''}
+            ${orderType != null ? '<div class="info-bottom-item"><div class="flex-row"><span>${_m(p, ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü')}</span><span class="value">$orderTypeAr</span></div><span class="label-en">${_s(p, s, a, ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü')}</span></div>' : ''}
+            ${tableNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>${_m(p, ar: 'رقم الطاوله', en: 'Table Number', hi: 'टेबल संख्या', ur: 'ٹیبل نمبر', es: 'Número de Mesa', tr: 'Masa Numarası')}</span><span class="value">$tableNumber</span></div><span class="label-en">${_s(p, s, a, ar: 'رقم الطاوله', en: 'Table Number', hi: 'टेबल संख्या', ur: 'ٹیبل نمبر', es: 'Número de Mesa', tr: 'Masa Numarası')}</span></div>' : ''}
+            ${carNumber != null ? '<div class="info-bottom-item"><div class="flex-row"><span>${_m(p, ar: 'رقم السياره', en: 'Car Number', hi: 'कार संख्या', ur: 'کار نمبر', es: 'Número de Auto', tr: 'Araç Numarası')}</span><span class="value">$carNumber</span></div><span class="label-en">${_s(p, s, a, ar: 'رقم السياره', en: 'Car Number', hi: 'कार संख्या', ur: 'کار نمبر', es: 'Número de Auto', tr: 'Araç Numarası')}</span></div>' : ''}
           </div>
         </div>
       </header>
       <section>
         <div class="invoice-title" style="padding: 4px 0; font-size: 13px;">
-          <p style="margin: 0;">فاتورة ضريبية مبسطة - Simplified Tax Invoice</p>
+          <p style="margin: 0;">${_m(p, ar: 'فاتورة ضريبية مبسطة', en: 'Simplified Tax Invoice', hi: 'सरलीकृत कर चालान', ur: 'آسان ٹیکس انوائس', es: 'Factura Fiscal Simplificada', tr: 'Basitleştirilmiş Vergi Faturası')}</p>
+          <p style="margin: 0; font-size: 10px;">${_s(p, s, a, ar: 'فاتورة ضريبية مبسطة', en: 'Simplified Tax Invoice', hi: 'सरलीकृत कर चालान', ur: 'آسان ٹیکس انوائس', es: 'Factura Fiscal Simplificada', tr: 'Basitleştirilmiş Vergi Faturası')}</p>
         </div>
         $clientInfoHtml
         $carInfoHtml
@@ -247,9 +284,9 @@ class InvoiceHtmlTemplate {
           <table>
             <thead>
               <tr>
-                <th class="text-right font-bold">الصنف<br><span style="font-size: 10px; font-weight: bold;">Item</span></th>
-                <th class="text-center font-bold">الكمية<br><span style="font-size: 10px; font-weight: bold;">Qty</span></th>
-                <th class="text-left font-bold">الاجمالي<br><span style="font-size: 10px; font-weight: bold;">Total</span></th>
+                <th class="text-right font-bold">${_m(p, ar: 'الصنف', en: 'Item', hi: 'वस्तु', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün')}<br><span style="font-size: 10px; font-weight: bold;">${_s(p, s, a, ar: 'الصنف', en: 'Item', hi: 'वस्तु', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün')}</span></th>
+                <th class="text-center font-bold">${_m(p, ar: 'الكمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet')}<br><span style="font-size: 10px; font-weight: bold;">${_s(p, s, a, ar: 'الكمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet')}</span></th>
+                <th class="text-left font-bold">${_m(p, ar: 'الاجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam')}<br><span style="font-size: 10px; font-weight: bold;">${_s(p, s, a, ar: 'الاجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam')}</span></th>
               </tr>
             </thead>
             <tbody>
@@ -260,8 +297,8 @@ class InvoiceHtmlTemplate {
         <div class="invoice-details">
           <div class="invoice-details-item">
             <div class="invoice-item-title">
-              <p>الاجمالي قبل الضريبة</p>
-              <p class="label-en">Total Before Tax</p>
+              <p>${_m(p, ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total antes de Impuesto', tr: 'Vergi Öncesi Toplam')}</p>
+              <p class="label-en">${_s(p, s, a, ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total antes de Impuesto', tr: 'Vergi Öncesi Toplam')}</p>
             </div>
             <div class="flex items-center text-left">
               <p class="price">${data.totalExclVat.toStringAsFixed(2)}</p>
@@ -270,12 +307,12 @@ class InvoiceHtmlTemplate {
               </div>
             </div>
           </div>
-          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>قيمة الخصم</p><p class="label-en">Discount Amount</p></div><div class="flex items-center text-left"><p class="price">${discountAmount.toStringAsFixed(2)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
-          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>الاجمالي بعد الخصم</p><p class="label-en">Total After Discount</p></div><div class="flex items-center text-left"><p class="price">${totalAfterDiscount.toStringAsFixed(2)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
+          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>${_m(p, ar: 'قيمة الخصم', en: 'Discount Amount', hi: 'छूट राशि', ur: 'ڈسکاؤنٹ رقم', es: 'Monto de Descuento', tr: 'İndirim Tutarı')}</p><p class="label-en">${_s(p, s, a, ar: 'قيمة الخصم', en: 'Discount Amount', hi: 'छूट राशि', ur: 'ڈسکاؤنٹ رقم', es: 'Monto de Descuento', tr: 'İndirim Tutarı')}</p></div><div class="flex items-center text-left"><p class="price">${discountAmount.toStringAsFixed(2)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
+          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>${_m(p, ar: 'الاجمالي بعد الخصم', en: 'Total After Discount', hi: 'छूट के बाद कुल', ur: 'ڈسکاؤنٹ کے بعد کل', es: 'Total después del Descuento', tr: 'İndirim Sonrası Toplam')}</p><p class="label-en">${_s(p, s, a, ar: 'الاجمالي بعد الخصم', en: 'Total After Discount', hi: 'छूट के बाद कुल', ur: 'ڈسکاؤنٹ کے بعد کل', es: 'Total después del Descuento', tr: 'İndirim Sonrası Toplam')}</p></div><div class="flex items-center text-left"><p class="price">${totalAfterDiscount.toStringAsFixed(2)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
           <div class="invoice-details-item">
             <div class="invoice-item-title">
-              <p>قيمة الضريبة</p>
-              <p class="label-en">Tax Amount</p>
+              <p>${_m(p, ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı')}</p>
+              <p class="label-en">${_s(p, s, a, ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı')}</p>
             </div>
             <div class="flex items-center text-left">
               <p class="price">${data.vatAmount.toStringAsFixed(2)}</p>
@@ -286,8 +323,8 @@ class InvoiceHtmlTemplate {
           </div>
           <div class="invoice-details-item" style="border-top: 1px solid #000; margin-top: 4px; padding-top: 8px;">
             <div class="invoice-item-title">
-              <p class="font-bold" style="font-size: 16px;">الاجمالي بعد الضريبة</p>
-              <p class="label-en">Total After Tax</p>
+              <p class="font-bold" style="font-size: 16px;">${_m(p, ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total con Impuesto', tr: 'Vergi Dahil Toplam')}</p>
+              <p class="label-en">${_s(p, s, a, ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total con Impuesto', tr: 'Vergi Dahil Toplam')}</p>
             </div>
             <div class="flex items-center text-left">
               <p class="price" style="font-size: 18px;">${data.totalInclVat.toStringAsFixed(2)}</p>
@@ -296,17 +333,17 @@ class InvoiceHtmlTemplate {
               </div>
             </div>
           </div>
-          ${data.paymentMethod.isNotEmpty ? '<div class="invoice-details-item" style="border-bottom: none;"><div class="invoice-item-title"><p>طرق الدفع</p><p class="label-en">Payment Methods</p></div><div class="text-left w-7/12"><p class="price" style="font-size: 12px;">${data.paymentMethod}</p></div></div>' : ''}
+          ${data.paymentMethod.isNotEmpty ? '<div class="invoice-details-item" style="border-bottom: none;"><div class="invoice-item-title"><p>${_m(p, ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान विधियां', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri')}</p><p class="label-en">${_s(p, s, a, ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान विधियां', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri')}</p></div><div class="text-left w-7/12"><p class="price" style="font-size: 12px;">${data.paymentMethod}</p></div></div>' : ''}
         </div>
       </section>
       <footer>
         ${data.qrCodeBase64.isNotEmpty ? '<div class="flex justify-center mb-4"><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${Uri.encodeComponent(data.qrCodeBase64)}" alt="QR Code"/></div>' : ''}
         ${returnPolicy != null && returnPolicy.isNotEmpty ? '<div style="font-size: 10px; border-bottom: 1px dashed #d1d5db; padding-bottom: 8px; margin-bottom: 8px;"><p class="font-bold" style="margin-bottom: 4px;">سياسة الاسترجاع والاستبدال</p><div style="white-space: pre-wrap;">$returnPolicy</div></div>' : ''}
         <div style="font-size: 10px; margin-top: 12px;">
-          <p class="font-bold">شكرا لثقتكم بنا</p>
-          <p style="font-size: 10px; color: #000000;">Thank you for trusting us</p>
-          <p class="font-bold mt-2">برنامج هيرموسا المحاسبي المتكامل</p>
-          <p style="font-size: 10px; color: #000000;">Integrated Accounting Program Hermosa</p>
+          <p class="font-bold">${_m(p, ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर विश्वास करने के लिए धन्यवाद', ur: 'ہم پر اعتماد کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güveniniz için teşekkür ederiz')}</p>
+          <p style="font-size: 10px; color: #000000;">${_s(p, s, a, ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर विश्वास करने के लिए धन्यवाद', ur: 'ہم پر اعتماد کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güveniniz için teşekkür ederiz')}</p>
+          <p class="font-bold mt-2">${_m(p, ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Hermosa Integrated Accounting Software', hi: 'हर्मोसा एकीकृत लेखांकन सॉफ्टवेयर', ur: 'ہرموسا انٹیگریٹڈ اکاؤنٹنگ سوفٹ ویئر', es: 'Programa de Contabilidad Integrada Hermosa', tr: 'Hermosa Entegre Muhasebe Yazılımı')}</p>
+          <p style="font-size: 10px; color: #000000;">${_s(p, s, a, ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Hermosa Integrated Accounting Software', hi: 'हर्मोसा एकीकृत लेखांकन सॉफ्टवेयर', ur: 'ہرموسا انٹیگریٹڈ اکاؤنٹنگ سوفٹ ویئر', es: 'Programa de Contabilidad Integrada Hermosa', tr: 'Hermosa Entegre Muhasebe Yazılımı')}</p>
         </div>
       </footer>
     </div>
@@ -316,18 +353,40 @@ class InvoiceHtmlTemplate {
     ''';
   }
 
-  /// تحويل نوع الطلب للعربية
-  static String _getOrderTypeArabic(String type) {
-    switch (type) {
+  /// تحويل نوع الطلب للغة المختارة
+  static String _getOrderTypeLabel(String type, String pri) {
+    final normalized = type.toLowerCase().trim();
+    switch (normalized) {
       case 'restaurant_internal':
-        return 'طلب داخلي';
+        return _m(pri, ar: 'طلب داخلي', en: 'Dine In', hi: 'डाइन इन', ur: 'اندرونی', es: 'Comer Aquí', tr: 'İçeride');
       case 'restaurant_pickup':
       case 'restaurant_takeaway':
-        return 'طلب خارجي';
+        return _m(pri, ar: 'طلب خارجي', en: 'Takeaway', hi: 'टेकअवे', ur: 'ٹیک اوے', es: 'Para Llevar', tr: 'Paket');
       case 'restaurant_delivery':
-        return 'توصيل';
+        return _m(pri, ar: 'توصيل', en: 'Delivery', hi: 'डिलीवरी', ur: 'ڈیلیوری', es: 'Entrega', tr: 'Teslimat');
       case 'restaurant_parking':
-        return 'سيارات';
+      case 'cars':
+      case 'car':
+        return _m(pri, ar: 'سيارات', en: 'Drive-through', hi: 'ड्राइव-थ्रू', ur: 'ڈرائیو تھرو', es: 'Auto-servicio', tr: 'Araç Servisi');
+      case 'services':
+      case 'service':
+        return _m(pri, ar: 'محلي', en: 'Local', hi: 'स्थानीय', ur: 'مقامی', es: 'Local', tr: 'Yerel');
+      case 'hungerstation_delivery':
+      case 'hunger_station_delivery':
+        return _m(pri, ar: 'هنقر ستيشن (توصيل)', en: 'HungerStation (Delivery)', hi: 'हंगरस्टेशन (डिलीवरी)', ur: 'ہنگر سٹیشن (ڈیلیوری)', es: 'HungerStation (Entrega)', tr: 'HungerStation (Teslimat)');
+      case 'hungerstation_pickup':
+      case 'hunger_station_pickup':
+        return _m(pri, ar: 'هنقر ستيشن (استلام)', en: 'HungerStation (Pickup)', hi: 'हंगरस्टेशन (पिकअप)', ur: 'ہنگر سٹیشن (پک اپ)', es: 'HungerStation (Recogida)', tr: 'HungerStation (Teslim Alma)');
+      case 'talabat_delivery':
+        return _m(pri, ar: 'طلبات (توصيل)', en: 'Talabat (Delivery)', hi: 'तलबात (डिलीवरी)', ur: 'طلبات (ڈیلیوری)', es: 'Talabat (Entrega)', tr: 'Talabat (Teslimat)');
+      case 'talabat_pickup':
+        return _m(pri, ar: 'طلبات (استلام)', en: 'Talabat (Pickup)', hi: 'तलबात (पिकअप)', ur: 'طلبات (پک اپ)', es: 'Talabat (Recogida)', tr: 'Talabat (Teslim Alma)');
+      case 'jahez_delivery':
+      case 'gahez_delivery':
+        return _m(pri, ar: 'جاهز (توصيل)', en: 'Jahez (Delivery)', hi: 'जाहेज़ (डिलीवरी)', ur: 'جاہز (ڈیلیوری)', es: 'Jahez (Entrega)', tr: 'Jahez (Teslimat)');
+      case 'jahez_pickup':
+      case 'gahez_pickup':
+        return _m(pri, ar: 'جاهز (استلام)', en: 'Jahez (Pickup)', hi: 'जाहेज़ (पिकअप)', ur: 'جاہز (پک اپ)', es: 'Jahez (Recogida)', tr: 'Jahez (Teslim Alma)');
       default:
         return type;
     }

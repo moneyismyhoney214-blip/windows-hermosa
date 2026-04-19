@@ -3,6 +3,7 @@ import '../../services/display_app_service.dart';
 import '../../locator.dart';
 import '../../services/language_service.dart';
 import '../../dialogs/improved_display_connection_dialog.dart';
+import '../../services/app_themes.dart';
 
 class DisplaySettingsView extends StatefulWidget {
   const DisplaySettingsView({Key? key}) : super(key: key);
@@ -90,7 +91,7 @@ class _DisplaySettingsViewState extends State<DisplaySettingsView> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appCardBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey[200]!),
       ),
@@ -269,7 +270,7 @@ class _DisplaySettingsViewState extends State<DisplaySettingsView> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appCardBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey[200]!),
       ),
@@ -382,7 +383,7 @@ class _DisplaySettingsViewState extends State<DisplaySettingsView> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: context.appBg,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(

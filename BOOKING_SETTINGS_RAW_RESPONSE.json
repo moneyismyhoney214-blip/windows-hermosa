@@ -1,429 +1,710 @@
 {
-  "data": [
-    {
-      "id": 442752,
-      "booking_number": "#BOK-442752",
-      "daily_order_number": 1,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "restaurant_pickup",
-      "type_text": "استلام",
-      "notes": null,
-      "status": 2,
-      "status_display": "بدأ",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-04-03 17:41:30",
-      "updated_at": "17:41:32",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 20
-    },
-    {
-      "id": 442738,
-      "booking_number": "#BOK-442738",
-      "daily_order_number": 1,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "restaurant_pickup",
-      "type_text": "استلام",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-04-02 22:13:33",
-      "updated_at": "22:13:34",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 20
-    },
-    {
-      "id": 442696,
-      "booking_number": "#BOK-442696",
-      "daily_order_number": 26,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:56:43",
-      "updated_at": "16:56:53",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 18
-    },
-    {
-      "id": 442691,
-      "booking_number": "#BOK-442691",
-      "daily_order_number": 25,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:50:56",
-      "updated_at": "16:51:14",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 10
-    },
-    {
-      "id": 442689,
-      "booking_number": "#BOK-442689",
-      "daily_order_number": 24,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:43:55",
-      "updated_at": "16:44:14",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 1
-    },
-    {
-      "id": 442684,
-      "booking_number": "#BOK-442684",
-      "daily_order_number": 23,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:41:07",
-      "updated_at": "16:41:20",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 36
-    },
-    {
-      "id": 442682,
-      "booking_number": "#BOK-442682",
-      "daily_order_number": 22,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:36:16",
-      "updated_at": "16:36:35",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 5
-    },
-    {
-      "id": 442671,
-      "booking_number": "#BOK-442671",
-      "daily_order_number": 21,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:14:16",
-      "updated_at": "16:14:38",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 20
-    },
-    {
-      "id": 442669,
-      "booking_number": "#BOK-442669",
-      "daily_order_number": 20,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:05:47",
-      "updated_at": "16:05:58",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 2
-    },
-    {
-      "id": 442667,
-      "booking_number": "#BOK-442667",
-      "daily_order_number": 19,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:05:26",
-      "updated_at": "16:05:37",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 28
-    },
-    {
-      "id": 442666,
-      "booking_number": "#BOK-442666",
-      "daily_order_number": 18,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:05:02",
-      "updated_at": "16:05:17",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 8
-    },
-    {
-      "id": 442665,
-      "booking_number": "#BOK-442665",
-      "daily_order_number": 17,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:04:36",
-      "updated_at": "16:04:53",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 1
-    },
-    {
-      "id": 442664,
-      "booking_number": "#BOK-442664",
-      "daily_order_number": 16,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:04:05",
-      "updated_at": "16:04:18",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 10
-    },
-    {
-      "id": 442663,
-      "booking_number": "#BOK-442663",
-      "daily_order_number": 15,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:03:39",
-      "updated_at": "16:03:50",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 13
-    },
-    {
-      "id": 442662,
-      "booking_number": "#BOK-442662",
-      "daily_order_number": 14,
-      "customer": null,
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-03-30 16:03:11",
-      "updated_at": "16:03:28",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 8
-    }
-  ],
-  "links": {
-    "first": "https://api.hermosaapp.com/seller/branches/87/bookings?page=1",
-    "last": "https://api.hermosaapp.com/seller/branches/87/bookings?page=336",
-    "prev": null,
-    "next": "https://api.hermosaapp.com/seller/branches/87/bookings?page=2"
-  },
-  "meta": {
-    "current_page": 1,
-    "from": 1,
-    "last_page": 336,
-    "links": [
-      {
-        "url": null,
-        "label": "&laquo; Previous",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=1",
-        "label": "1",
-        "active": true
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=2",
-        "label": "2",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=3",
-        "label": "3",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=4",
-        "label": "4",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=5",
-        "label": "5",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=6",
-        "label": "6",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=7",
-        "label": "7",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=8",
-        "label": "8",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=9",
-        "label": "9",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=10",
-        "label": "10",
-        "active": false
-      },
-      {
-        "url": null,
-        "label": "...",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=335",
-        "label": "335",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=336",
-        "label": "336",
-        "active": false
-      },
-      {
-        "url": "https://api.hermosaapp.com/seller/branches/87/bookings?page=2",
-        "label": "Next &raquo;",
-        "active": false
-      }
-    ],
-    "path": "https://api.hermosaapp.com/seller/branches/87/bookings",
-    "per_page": 15,
-    "to": 15,
-    "total": 5036
-  },
+  "maintenance": "stopped",
+  "today": "2026-04-19",
   "status": 200,
-  "maintenance": null,
-  "today": "2026-04-12"
+  "message": "",
+  "errors": [],
+  "data": {
+    "today": "2026-04-19",
+    "collection": {
+      "current_page": 1,
+      "data": [
+        {
+          "id": 531,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/e03iokIF1Va55Hb29OTZG911GHC8Ss70DKLXNMl0.jpg",
+          "name": "تكة ليمون لحم",
+          "description": "ستة أسياخ من تكة الليمون الأسود المجفف",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "29.00 ر.س",
+          "price_without_tax": 25.22,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "أسياخ اللحم الإضافية": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 832,
+                  "option_name": "سيخ تكة ليمون لحم",
+                  "price": "5.00 ر.س"
+                },
+                {
+                  "id": 833,
+                  "option_name": "سيخ تكة حارة لحم",
+                  "price": "5.00 ر.س"
+                },
+                {
+                  "id": 834,
+                  "option_name": "سيخ تكة روب لحم",
+                  "price": "5.00 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 832,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة ليمون لحم",
+              "price": 5
+            },
+            {
+              "id": 833,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة حارة لحم",
+              "price": 5
+            },
+            {
+              "id": 834,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة روب لحم",
+              "price": 5
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 532,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/Rg55t0aItOwaX73nr3X84TLxt87bhX5dSkuACH3d.jpg",
+          "name": "تكة روب لحم",
+          "description": "ستة أسياخ من تكة الزبادي الخاصة",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "29.00 ر.س",
+          "price_without_tax": 25.22,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "أسياخ اللحم الإضافية": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 838,
+                  "option_name": "سيخ تكة ليمون لحم",
+                  "price": "5.00 ر.س"
+                },
+                {
+                  "id": 839,
+                  "option_name": "سيخ تكة روب لحم",
+                  "price": "5.00 ر.س"
+                },
+                {
+                  "id": 840,
+                  "option_name": "سيخ تكة حارة لحم",
+                  "price": "5.00 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 838,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة ليمون لحم",
+              "price": 5
+            },
+            {
+              "id": 839,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة روب لحم",
+              "price": 5
+            },
+            {
+              "id": 840,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة حارة لحم",
+              "price": 5
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 533,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/RN6WCb6BZE0rujA7FWDw7fomkEe0QTr6tpidJTvn.jpg",
+          "name": "تكة حارة لحم",
+          "description": "ستة أسياخ من التكة بخلطتنا الحارة والمميزة",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "29.00 ر.س",
+          "price_without_tax": 25.22,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "أسياخ اللحم الإضافية": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 841,
+                  "option_name": "سيخ تكة ليمون لحم",
+                  "price": "5.00 ر.س"
+                },
+                {
+                  "id": 842,
+                  "option_name": "سيخ تكة روب لحم",
+                  "price": "5.00 ر.س"
+                },
+                {
+                  "id": 843,
+                  "option_name": "سيخ تكة حارة لحم",
+                  "price": "5.00 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 841,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة ليمون لحم",
+              "price": 5
+            },
+            {
+              "id": 842,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة روب لحم",
+              "price": 5
+            },
+            {
+              "id": 843,
+              "attribute_name": "أسياخ اللحم الإضافية",
+              "option_name": "سيخ تكة حارة لحم",
+              "price": 5
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 534,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/t4ziMH23XbsyhWixRob8JadcIy2vo79qVPk4YdNU.jpg",
+          "name": "تكة ليمون دجاج",
+          "description": "خمس أسياخ من تكة الليمون الأسود المجفف",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "26.00 ر.س",
+          "price_without_tax": 22.61,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "أسياخ الدجاج الإضافية": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 844,
+                  "option_name": "سيخ تكة ليمون دجاج",
+                  "price": "4.50 ر.س"
+                },
+                {
+                  "id": 845,
+                  "option_name": "سيخ تكة روب دجاج",
+                  "price": "4.50 ر.س"
+                },
+                {
+                  "id": 846,
+                  "option_name": "سيخ تكة حارة دجاج",
+                  "price": "4.50 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 844,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة ليمون دجاج",
+              "price": 4.5
+            },
+            {
+              "id": 845,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة روب دجاج",
+              "price": 4.5
+            },
+            {
+              "id": 846,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة حارة دجاج",
+              "price": 4.5
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 535,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/XOrN3NVZXomwO4y523k1Fan1Dpv0fN8OtS9P75Ui.jpg",
+          "name": "تكة روب دجاج",
+          "description": "خمس أسياخ من تكة الدجاج بالزبادي الخاصة",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "26.00 ر.س",
+          "price_without_tax": 22.61,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "أسياخ الدجاج الإضافية": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 847,
+                  "option_name": "سيخ تكة ليمون دجاج",
+                  "price": "4.50 ر.س"
+                },
+                {
+                  "id": 848,
+                  "option_name": "سيخ تكة روب دجاج",
+                  "price": "4.50 ر.س"
+                },
+                {
+                  "id": 849,
+                  "option_name": "سيخ تكة حارة دجاج",
+                  "price": "4.50 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 847,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة ليمون دجاج",
+              "price": 4.5
+            },
+            {
+              "id": 848,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة روب دجاج",
+              "price": 4.5
+            },
+            {
+              "id": 849,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة حارة دجاج",
+              "price": 4.5
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 536,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/mpW3180bl3TVIZPAcWolY7Dmrdw38OVCbJTtRLwY.jpg",
+          "name": "تكة دجاج حارة",
+          "description": "خمس أسياخ من تكة الدجاج بخلطتنا الحارة والمميزة",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "26.00 ر.س",
+          "price_without_tax": 22.61,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "أسياخ الدجاج الإضافية": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 850,
+                  "option_name": "سيخ تكة ليمون دجاج",
+                  "price": "4.50 ر.س"
+                },
+                {
+                  "id": 851,
+                  "option_name": "سيخ تكة روب دجاج",
+                  "price": "4.50 ر.س"
+                },
+                {
+                  "id": 852,
+                  "option_name": "سيخ تكة حارة دجاج",
+                  "price": "4.50 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 850,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة ليمون دجاج",
+              "price": 4.5
+            },
+            {
+              "id": 851,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة روب دجاج",
+              "price": 4.5
+            },
+            {
+              "id": 852,
+              "attribute_name": "أسياخ الدجاج الإضافية",
+              "option_name": "سيخ تكة حارة دجاج",
+              "price": 4.5
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 537,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/eUPypijamp6gkON0kf1zJIAxOGC3P73Ric20sCwW.jpg",
+          "name": "فخارة حميس",
+          "description": "لحم مفروم بخلطينا الخاصة",
+          "calories": 0,
+          "preparation_time": 22,
+          "price_before_offer": null,
+          "price": "24.00 ر.س",
+          "price_without_tax": 20.87,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "الصوصات الإضافية": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 853,
+                  "option_name": "طحينية",
+                  "price": "3.00 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 853,
+              "attribute_name": "الصوصات الإضافية",
+              "option_name": "طحينية",
+              "price": 3
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 538,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/91OcLMnQExcAotMwmlWO9l8OAWuQg7oR0OVKI9Si.jpg",
+          "name": "فخارة تكة بالخضار",
+          "description": "تكة مع خليط من الخضار و صلصتنا المميزة",
+          "calories": 0,
+          "preparation_time": 22,
+          "price_before_offer": null,
+          "price": "32.00 ر.س",
+          "price_without_tax": 27.83,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 539,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/27a6ehWdLH9GpMRa3pEcD7tpKXYg79uDLop5VIJC.jpg",
+          "name": "فخارة أم علي",
+          "description": "طبق حلا فاخر من خبر الفيلو وكريمة الحليب المحلاة بالمكسرات",
+          "calories": 0,
+          "preparation_time": 17,
+          "price_before_offer": null,
+          "price": "14.00 ر.س",
+          "price_without_tax": 12.17,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 540,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/bMXCoQWRYyIX4uJ1iW2g45KseqbdWqqKv7QyqNy5.jpg",
+          "name": "طحينية",
+          "description": "",
+          "calories": 160,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "2.00 ر.س",
+          "price_without_tax": 1.74,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 541,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/lzJDLtdif73oF2RboZlSYrUDBLqkwrSnirOloO0O.jpg",
+          "name": "شاي مخدر",
+          "description": "شاي الورقة الكاملة بتخديره تقند الراس",
+          "calories": 120,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "4.00 ر.س",
+          "price_without_tax": 3.48,
+          "is_favourite": false,
+          "has_addons": true,
+          "addons_groups": {
+            "إضافات الشاي": {
+              "is_required": false,
+              "selection": "multiple",
+              "items": [
+                {
+                  "id": 854,
+                  "option_name": "نعناع",
+                  "price": "0.00 ر.س"
+                },
+                {
+                  "id": 855,
+                  "option_name": "سكر",
+                  "price": "0.00 ر.س"
+                }
+              ]
+            }
+          },
+          "addons": [
+            {
+              "id": 854,
+              "attribute_name": "إضافات الشاي",
+              "option_name": "نعناع",
+              "price": 0
+            },
+            {
+              "id": 855,
+              "attribute_name": "إضافات الشاي",
+              "option_name": "سكر",
+              "price": 0
+            }
+          ],
+          "combos": []
+        },
+        {
+          "id": 542,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/TqRcNIxPI2AlcmfekfPp5SHgkm1mp5a7R6E1AYLN.jpg",
+          "name": "شاي مثلج",
+          "description": "شاي فوار بارد ومنعش بنكهة الخوخ",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "14.00 ر.س",
+          "price_without_tax": 12.17,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 543,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/G9tItaTmzY4HUw3S89sdxcVBpR8h7BqHesmWsLMy.jpg",
+          "name": "شاي الليمون",
+          "description": "شاي ليمون أسود مجفف مخدر",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "4.00 ر.س",
+          "price_without_tax": 3.48,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 544,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/4cA3Dqx3nl86434qzmnkzIWPH4FCJWFFwePMaEPr.jpg",
+          "name": "شاي ليمون بارد",
+          "description": "شاي الليمون المبرد المنعش",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "16.00 ر.س",
+          "price_without_tax": 13.91,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 545,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/I2nXjI2MDykmHNYTW8loj7etyuL0DV6jfIsLWBRi.jpg",
+          "name": "صوص الليمون",
+          "description": "",
+          "calories": 160,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "3.00 ر.س",
+          "price_without_tax": 2.61,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 546,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/oBatSOIvqhZNQWtV5a7oABGOQp3b5TOzYYbV45d0.jpg",
+          "name": "حمص",
+          "description": "",
+          "calories": 609,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "9.00 ر.س",
+          "price_without_tax": 7.83,
+          "is_favourite": true,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 547,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/mzCwMxTqXP71YrHaEq5mWUiHPAzF4YWp39XeU0ob.jpg",
+          "name": "سلطة جرجير",
+          "description": "سلطة جرجير بالجبنة البيضاء ممزوجة بالشمندر و الرمان و المكسرات",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "18.00 ر.س",
+          "price_without_tax": 15.65,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 548,
+          "image": "https://portal.hermosaapp.com/storage/seller/logo/ChqpiGFm9TZNHxsdRGh5u4NYc6CF3js7PwmNVxUn.jpg",
+          "name": "كولا",
+          "description": "",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "3.00 ر.س",
+          "price_without_tax": 2.61,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 549,
+          "image": "https://portal.hermosaapp.com/storage/seller/logo/ChqpiGFm9TZNHxsdRGh5u4NYc6CF3js7PwmNVxUn.jpg",
+          "name": "كولا دايت",
+          "description": "",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "3.00 ر.س",
+          "price_without_tax": 2.61,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 550,
+          "image": "https://portal.hermosaapp.com/storage/seller/logo/ChqpiGFm9TZNHxsdRGh5u4NYc6CF3js7PwmNVxUn.jpg",
+          "name": "قارورة ماء",
+          "description": "",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "1.00 ر.س",
+          "price_without_tax": 0.87,
+          "is_favourite": true,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 551,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/pWqZqNQ19vNJFKgxVOgt12Ejg1Fs75aHoQc83NHC.jpg",
+          "name": "أجنحة مشوية",
+          "description": "",
+          "calories": 690,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "16.00 ر.س",
+          "price_without_tax": 13.91,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 552,
+          "image": "https://portal.hermosaapp.com/storage/Meal/image/KGy5GDcfP3caD7UkpKdru4darEyHIffprlsEjvI7.jpg",
+          "name": "كباب لحم",
+          "description": "أربع أسياخ من كباب اللحم",
+          "calories": 830,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "24.00 ر.س",
+          "price_without_tax": 20.87,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        },
+        {
+          "id": 1806,
+          "image": "https://portal.hermosaapp.com/storage/seller/logo/ChqpiGFm9TZNHxsdRGh5u4NYc6CF3js7PwmNVxUn.jpg",
+          "name": "TEST",
+          "description": "",
+          "calories": 0,
+          "preparation_time": 0,
+          "price_before_offer": null,
+          "price": "0.01 ر.س",
+          "price_without_tax": 0.01,
+          "is_favourite": false,
+          "has_addons": false,
+          "addons_groups": [],
+          "addons": [],
+          "combos": []
+        }
+      ],
+      "first_page_url": "https://portal.hermosaapp.com/seller/branches/63/bookings/create?page=1",
+      "from": 1,
+      "last_page": 1,
+      "last_page_url": "https://portal.hermosaapp.com/seller/branches/63/bookings/create?page=1",
+      "links": [
+        {
+          "url": null,
+          "label": "&laquo; Previous",
+          "active": false
+        },
+        {
+          "url": "https://portal.hermosaapp.com/seller/branches/63/bookings/create?page=1",
+          "label": "1",
+          "active": true
+        },
+        {
+          "url": null,
+          "label": "Next &raquo;",
+          "active": false
+        }
+      ],
+      "next_page_url": null,
+      "path": "https://portal.hermosaapp.com/seller/branches/63/bookings/create",
+      "per_page": 100,
+      "prev_page_url": null,
+      "to": 23,
+      "total": 23
+    },
+    "has_favourite": false,
+    "pay_later": true,
+    "customer_required": false,
+    "pos_employee_selection": true,
+    "pos_time_selection": true
+  }
 }

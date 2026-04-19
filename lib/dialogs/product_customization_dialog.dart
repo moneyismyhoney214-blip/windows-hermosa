@@ -1,8 +1,11 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models.dart';
 import '../services/api/product_service.dart';
 import '../locator.dart';
+import '../services/language_service.dart';
+import '../services/app_themes.dart';
 
 class ProductCustomizationDialog extends StatefulWidget {
   final Product product;
@@ -49,6 +52,12 @@ class _ProductCustomizationDialogState
     } catch (_) {
       if (mounted) setState(() => _isLoadingAddons = false);
     }
+  }
+
+  @override
+  void dispose() {
+    _notesController.dispose();
+    super.dispose();
   }
 
   // ───────── selection helpers ─────────
@@ -285,7 +294,14 @@ class _ProductCustomizationDialogState
         decoration: BoxDecoration(color: _brandLight, borderRadius: BorderRadius.circular(10)),
         clipBehavior: Clip.antiAlias,
         child: hasImg
-            ? Image.network(widget.product.image!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _imgPlaceholder())
+            ? CachedNetworkImage(
+                imageUrl: widget.product.image!,
+                fit: BoxFit.cover,
+                memCacheWidth: 400,
+                fadeInDuration: const Duration(milliseconds: 120),
+                placeholder: (_, __) => _imgPlaceholder(),
+                errorWidget: (_, __, ___) => _imgPlaceholder(),
+              )
             : _imgPlaceholder(),
       ),
     );
@@ -361,7 +377,7 @@ class _ProductCustomizationDialogState
       maxLines: 3,
       style: const TextStyle(fontSize: 14),
       decoration: InputDecoration(
-        hintText: 'أضف ملاحظات...',
+        hintText: translationService.t('add_notes_hint'),
         hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
         filled: true,
         fillColor: Colors.white,
@@ -402,7 +418,7 @@ class _ProductCustomizationDialogState
       borderRadius: BorderRadius.circular(8),
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appCardBg,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: selected ? _brand : Colors.grey[300]!,
@@ -444,7 +460,7 @@ class _ProductCustomizationDialogState
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      extra.price.toStringAsFixed(2),
+                      (extra.price * (1 + widget.taxRate)).toStringAsFixed(2),
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: selected ? _brand : Colors.grey[600]),
                     ),
                     if (selected) ...[

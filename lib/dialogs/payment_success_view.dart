@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 
 class PaymentSuccessView extends StatelessWidget {
   final double amount;
@@ -32,7 +33,7 @@ class PaymentSuccessView extends StatelessWidget {
       backgroundColor:
           Colors.transparent, // Handled by dialog barrier, but safe here
       body: Container(
-        color: const Color(0xFFF8FAFC),
+        color: context.appBg,
         width: double.infinity,
         height: double.infinity,
         child: Center(
@@ -43,7 +44,7 @@ class PaymentSuccessView extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(40),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: context.appCardBg,
                   borderRadius: BorderRadius.circular(32),
                   boxShadow: [
                     BoxShadow(
@@ -88,9 +89,9 @@ class PaymentSuccessView extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
+                          color: context.appBg,
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFFE2E8F0))),
+                          border: Border.all(color: context.appBorder)),
                       child: Column(
                         children: [
                           Row(

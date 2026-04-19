@@ -3,11 +3,36 @@ class ReceiptAddon {
   final String nameEn;
   final double price;
 
+  /// Per-language translations for the addon option name, keyed by ISO code
+  /// (`ar`, `en`, `hi`, `ur`, `tr`, `es`). Populated when the source payload
+  /// carries an `addons_translations` entry or the cart's Extra had
+  /// `optionTranslations`. Empty means the renderer should fall back to
+  /// `nameAr` / `nameEn`.
+  final Map<String, String> localizedNames;
+
   ReceiptAddon({
     required this.nameAr,
     required this.nameEn,
     required this.price,
+    this.localizedNames = const {},
   });
+
+  /// Language-aware name lookup for the invoice renderer. Falls back through
+  /// `localizedNames[code]` → English → Arabic → `nameAr` / `nameEn` so the
+  /// caller always gets a non-empty string.
+  String nameFor(String code) {
+    final normalized = code.trim().toLowerCase();
+    final direct = localizedNames[normalized];
+    if (direct != null && direct.isNotEmpty) return direct;
+    if (normalized == 'en' && nameEn.isNotEmpty) return nameEn;
+    if (normalized == 'ar' && nameAr.isNotEmpty) return nameAr;
+    final en = localizedNames['en'];
+    if (en != null && en.isNotEmpty) return en;
+    if (nameEn.isNotEmpty) return nameEn;
+    final ar = localizedNames['ar'];
+    if (ar != null && ar.isNotEmpty) return ar;
+    return nameAr;
+  }
 
   factory ReceiptAddon.fromMap(Map<String, dynamic> map) {
     double parseNum(dynamic value) {
@@ -16,10 +41,21 @@ class ReceiptAddon {
       return 0.0;
     }
 
+    final rawLocalized = map['localizedNames'] ?? map['translations'];
+    final localized = <String, String>{};
+    if (rawLocalized is Map) {
+      for (final entry in rawLocalized.entries) {
+        final value = entry.value?.toString().trim() ?? '';
+        if (value.isEmpty) continue;
+        localized[entry.key.toString().trim().toLowerCase()] = value;
+      }
+    }
+
     return ReceiptAddon(
       nameAr: map['nameAr'] ?? map['name_ar'] ?? '',
       nameEn: map['nameEn'] ?? map['name_en'] ?? '',
       price: parseNum(map['price']),
+      localizedNames: localized,
     );
   }
 }
