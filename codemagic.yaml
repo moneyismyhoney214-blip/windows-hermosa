@@ -4,7 +4,7 @@ workflows:
     instance_type: windows_x2
     max_build_duration: 90
     environment:
-      flutter: 3.24.5
+      flutter: 3.32.8
       vars:
         BUILD_DIR: "build\\windows\\x64\\runner\\Release"
     scripts:
