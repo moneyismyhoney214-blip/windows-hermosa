@@ -2,25 +2,45 @@ workflows:
   windows-workflow:
     name: Hermosa Windows Build
     instance_type: windows_x2
-    max_build_duration: 60
+    max_build_duration: 90
     environment:
-      flutter: stable
+      flutter: 3.24.5
+      vars:
+        BUILD_DIR: "build\\windows\\x64\\runner\\Release"
     scripts:
-      - name: Flutter version
-        script: flutter --version
+      - name: System info
+        script: |
+          echo "=== Flutter version ==="
+          flutter --version
+          echo "=== Flutter doctor ==="
+          flutter doctor -v
       - name: Enable Windows desktop
         script: flutter config --enable-windows-desktop
-      - name: Get Flutter packages
-        script: flutter pub get
-      - name: Build Windows Release
-        script: flutter build windows --release
+      - name: Clean project
+        script: flutter clean
+      - name: Get Flutter packages (verbose)
+        script: flutter pub get --verbose
+      - name: Analyze dependencies for Windows
+        script: |
+          echo "=== Plugins that will register for Windows ==="
+          type windows\flutter\generated_plugin_registrant.cc
+        ignore_failure: true
+      - name: Build Windows Release (verbose)
+        script: flutter build windows --release --verbose
+      - name: List build output
+        script: |
+          echo "=== Build output ==="
+          dir build\windows\x64\runner\Release
+        ignore_failure: true
       - name: Package as ZIP
         script: |
           cd build\windows\x64\runner\Release
-          Compress-Archive -Path * -DestinationPath $env:CM_BUILD_DIR\hermosa-windows.zip
+          Compress-Archive -Path * -DestinationPath $env:CM_BUILD_DIR\hermosa-windows.zip -Force
     artifacts:
       - hermosa-windows.zip
       - build/windows/x64/runner/Release/**/*.exe
+      - build/windows/x64/runner/Release/**/*.dll
+      - flutter_drive.log
     publishing:
       email:
         recipients:
