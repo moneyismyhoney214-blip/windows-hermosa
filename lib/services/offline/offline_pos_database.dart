@@ -61,9 +61,17 @@ class OfflinePosDatabase {
     final db = await openDatabase(
       path,
       onOpen: (db) async {
-        // Enable WAL mode for better concurrent read/write
-        await db.execute('PRAGMA journal_mode=WAL');
-        // Create our custom overlay tables
+        // Enable WAL for concurrent reads/writes. PRAGMA journal_mode
+        // returns a result row, so on Android it must go through rawQuery —
+        // calling `execute` throws "Queries can be performed using ...
+        // rawQuery methods only" and aborts the whole DB open. Wrapped in
+        // try/catch so even an unexpected failure falls back to the default
+        // rollback journal instead of taking the app offline.
+        try {
+          await db.rawQuery('PRAGMA journal_mode=WAL');
+        } catch (e) {
+          debugPrint('⚠️ Could not enable WAL journal (non-fatal): $e');
+        }
         await _createOverlayTables(db);
       },
     );

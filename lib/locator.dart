@@ -31,14 +31,17 @@ import 'package:hermosa_pos/services/api/sync_api_service.dart';
 import 'package:hermosa_pos/customer_display/nearpay/nearpay_service.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_billing_service.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_cart_store.dart';
+import 'package:hermosa_pos/waiter_module/services/waiter_config_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_controller.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_kitchen_bridge.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_message_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_notification_service.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_order_outbox.dart';
+import 'package:hermosa_pos/waiter_module/services/waiter_pickup_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_roster_service.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_session_service.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_table_registry.dart';
+import 'package:hermosa_pos/services/cashier_mesh_bootstrap.dart';
 
 final getIt = GetIt.instance;
 
@@ -118,6 +121,8 @@ void setupLocator() {
   registerIfNeeded<WaiterNotificationService>(() => WaiterNotificationService());
   registerIfNeeded<WaiterCartStore>(() => WaiterCartStore());
   registerIfNeeded<WaiterTableRegistry>(() => WaiterTableRegistry());
+  registerIfNeeded<WaiterConfigStore>(() => WaiterConfigStore());
+  registerIfNeeded<WaiterPickupStore>(() => WaiterPickupStore());
   registerIfNeeded<WaiterKitchenBridge>(
       () => WaiterKitchenBridge(getIt<DisplayAppService>()));
   registerIfNeeded<WaiterOrderOutbox>(() => WaiterOrderOutbox(
@@ -130,6 +135,12 @@ void setupLocator() {
         messages: getIt<WaiterMessageStore>(),
         notifications: getIt<WaiterNotificationService>(),
         tableRegistry: getIt<WaiterTableRegistry>(),
+        configStore: getIt<WaiterConfigStore>(),
+        pickupStore: getIt<WaiterPickupStore>(),
       ));
   registerIfNeeded<WaiterBillingService>(() => WaiterBillingService());
+  registerIfNeeded<CashierMeshBootstrap>(() => CashierMeshBootstrap(
+        controller: getIt<WaiterController>(),
+        configStore: getIt<WaiterConfigStore>(),
+      ));
 }

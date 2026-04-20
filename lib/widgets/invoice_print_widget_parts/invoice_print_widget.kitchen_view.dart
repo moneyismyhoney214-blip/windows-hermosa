@@ -44,8 +44,6 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
     final deptSecondary = _sl(ar: 'القسم', en: 'Dept', hi: 'विभाग', ur: 'شعبہ', es: 'Sección', tr: 'Bölüm');
     final orderNumberPrimary = _ml(ar: 'رقم الطلب', en: 'Order #', hi: 'ऑर्डर #', ur: 'آرڈر #', es: 'N° Pedido', tr: 'Sipariş #');
     final orderNumberSecondary = _sl(ar: 'رقم الطلب', en: 'Order #', hi: 'ऑर्डर #', ur: 'آرڈر #', es: 'N° Pedido', tr: 'Sipariş #');
-    final tableLabelPrimary = _ml(ar: 'طاولة', en: 'Table', hi: 'मेज़', ur: 'میز', es: 'Mesa', tr: 'Masa');
-    final tableLabelSecondary = _sl(ar: 'طاولة', en: 'Table', hi: 'मेज़', ur: 'میز', es: 'Mesa', tr: 'Masa');
     final itemHeaderPrimary = _ml(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün');
     final itemHeaderSecondary = _sl(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün');
     final qtyHeaderPrimary = _ml(ar: 'الكمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet');
@@ -109,33 +107,6 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
                   ],
                 ),
               ),
-              if (tableNumberLocal != null)
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Column(
-                      children: [
-                        Text(
-                          tableLabelPrimary,
-                          style: GoogleFonts.tajawal(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
-                        ),
-                        Text(
-                          tableNumberLocal.toString(),
-                          style: GoogleFonts.tajawal(fontSize: 84, fontWeight: FontWeight.w900, color: Colors.white, height: 1.0),
-                        ),
-                        if (tableLabelSecondary.isNotEmpty && tableLabelSecondary != tableLabelPrimary)
-                          Text(
-                            tableLabelSecondary,
-                            style: GoogleFonts.tajawal(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
             ],
           ),
         ),

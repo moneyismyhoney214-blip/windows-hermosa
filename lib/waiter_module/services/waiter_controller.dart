@@ -2,14 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../locator.dart';
 import '../models/network_message.dart';
+import '../models/table_migrate_event.dart';
+import '../models/table_pickup_request.dart';
 import '../models/waiter.dart';
 import '../models/waiter_message.dart';
 import '../models/waiter_table_event.dart';
+import 'waiter_cart_store.dart';
+import 'waiter_config_store.dart';
 import 'waiter_discovery_service.dart';
 import 'waiter_message_store.dart';
 import 'waiter_network_service.dart';
 import 'waiter_notification_service.dart';
+import 'waiter_pickup_store.dart';
 import 'waiter_roster_service.dart';
 import 'waiter_session_service.dart';
 import 'waiter_table_registry.dart';
@@ -54,6 +60,8 @@ class WaiterController extends ChangeNotifier {
   final WaiterMessageStore messages;
   final WaiterNotificationService notifications;
   final WaiterTableRegistry tableRegistry;
+  final WaiterConfigStore configStore;
+  final WaiterPickupStore pickupStore;
 
   WaiterNetworkService? _net;
   WaiterDiscoveryService? _discovery;
@@ -80,6 +88,47 @@ class WaiterController extends ChangeNotifier {
   /// a different device (e.g. the cashier) originated for the same table.
   Stream<WaiterTableEventEnvelope> get onTableEvent => _tableEventStream.stream;
 
+  final StreamController<String> _peerHelloStream =
+      StreamController<String>.broadcast();
+
+  /// Emits a peer id every time we see its HELLO / WAITER_ANNOUNCE. The
+  /// cashier side subscribes to push its printer / KDS snapshot so late
+  /// joiners catch up without a separate request round-trip.
+  Stream<String> get onPeerHello => _peerHelloStream.stream;
+
+  final StreamController<String> _configSyncRequestStream =
+      StreamController<String>.broadcast();
+
+  /// Emits the sender id of a CONFIG_SYNC_REQUEST. Unused on the happy
+  /// path in Phase 1 (cashier pushes on HELLO), reserved for a future
+  /// "refresh config" button on the waiter side.
+  Stream<String> get onConfigSyncRequest => _configSyncRequestStream.stream;
+
+  final StreamController<TablePickupRequest> _pickupRequestStream =
+      StreamController<TablePickupRequest>.broadcast();
+
+  /// Fires when a TABLE_PICKUP_REQUEST is received. Waiter UI listens to
+  /// pop a notification banner + play the incoming-call sound.
+  Stream<TablePickupRequest> get onPickupRequest =>
+      _pickupRequestStream.stream;
+
+  final StreamController<TablePickupRequest> _pickupUpdateStream =
+      StreamController<TablePickupRequest>.broadcast();
+
+  /// Fires on every claim/cancel update for an existing pickup so the
+  /// cashier's tables screen can flip its card, and so waiters can
+  /// re-render "accepted by X" in their notifications.
+  Stream<TablePickupRequest> get onPickupUpdate =>
+      _pickupUpdateStream.stream;
+
+  final StreamController<TableMigrateEvent> _tableMigrateStream =
+      StreamController<TableMigrateEvent>.broadcast();
+
+  /// Fires on every table migration — every peer (cashier + waiters)
+  /// sees it. The owner of `oldTableId` also performs the cart+registry
+  /// shuffle; other peers just log it for UI/audit.
+  Stream<TableMigrateEvent> get onTableMigrate => _tableMigrateStream.stream;
+
   bool _running = false;
   bool get isRunning => _running;
 
@@ -94,6 +143,8 @@ class WaiterController extends ChangeNotifier {
     required this.messages,
     required this.notifications,
     required this.tableRegistry,
+    required this.configStore,
+    required this.pickupStore,
   });
 
   // ---------------------------------------------------------------------------
@@ -219,6 +270,11 @@ class WaiterController extends ChangeNotifier {
     _staleSweepTimer?.cancel();
     _callStream.close();
     _tableEventStream.close();
+    _peerHelloStream.close();
+    _configSyncRequestStream.close();
+    _pickupRequestStream.close();
+    _pickupUpdateStream.close();
+    _tableMigrateStream.close();
     super.dispose();
   }
 
@@ -324,6 +380,295 @@ class WaiterController extends ChangeNotifier {
     ));
   }
 
+  /// Fan out a fresh kitchen-printer snapshot to every connected waiter.
+  /// Only the cashier (viewer) should call this; waiters produce no
+  /// authoritative config. `payload` is the full JSON map from
+  /// [SyncedKitchenPrintersConfig.toJson].
+  void broadcastKitchenPrintersConfig(Map<String, dynamic> payload) {
+    final self = session.self;
+    if (self == null) return;
+    if (!self.isViewer) return;
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.configKitchenPrinters,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+      data: payload,
+    ));
+  }
+
+  /// Same as [broadcastKitchenPrintersConfig] but targets a single peer —
+  /// used for the push-on-HELLO catch-up so late joiners match state
+  /// without flooding the network.
+  void pushKitchenPrintersConfigTo(
+    String peerId,
+    Map<String, dynamic> payload,
+  ) {
+    final self = session.self;
+    if (self == null) return;
+    if (!self.isViewer) return;
+    _net?.sendTo(
+      peerId,
+      WireMessage(
+        type: WireMessageType.configKitchenPrinters,
+        senderId: self.id,
+        senderName: self.name,
+        branchId: self.branchId,
+        data: payload,
+      ),
+    );
+  }
+
+  /// Broadcast the KDS host/port the cashier is connected to.
+  void broadcastKdsEndpoint(Map<String, dynamic> payload) {
+    final self = session.self;
+    if (self == null) return;
+    if (!self.isViewer) return;
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.configKdsEndpoint,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+      data: payload,
+    ));
+  }
+
+  void pushKdsEndpointTo(String peerId, Map<String, dynamic> payload) {
+    final self = session.self;
+    if (self == null) return;
+    if (!self.isViewer) return;
+    _net?.sendTo(
+      peerId,
+      WireMessage(
+        type: WireMessageType.configKdsEndpoint,
+        senderId: self.id,
+        senderName: self.name,
+        branchId: self.branchId,
+        data: payload,
+      ),
+    );
+  }
+
+  /// Ask the nearest cashier (viewer) to replay its latest config
+  /// snapshots. Intended for a future waiter-side "refresh" action —
+  /// unused in the Phase 1 happy path because the cashier already pushes
+  /// on every HELLO.
+  void requestConfigSync() {
+    final self = session.self;
+    if (self == null) return;
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.configSyncRequest,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+    ));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Table pickup ("استلام") — Uber-style broadcast/claim.
+  // ---------------------------------------------------------------------------
+
+  /// Broadcast a pickup request for [tableId]. Cashier-only: waiters
+  /// must not call this (there's no UI for it, and it would bypass the
+  /// cashier as the source of truth for who's sitting down).
+  TablePickupRequest? requestTablePickup({
+    required String tableId,
+    required String tableNumber,
+    String? note,
+  }) {
+    final self = session.self;
+    if (self == null) return null;
+    if (!self.isViewer) {
+      throw StateError(
+        'Only the cashier (viewer) may initiate a table pickup request.',
+      );
+    }
+    final req = TablePickupRequest(
+      cashierId: self.id,
+      cashierName: self.name,
+      tableId: tableId,
+      tableNumber: tableNumber,
+      note: note,
+    );
+    pickupStore.recordRequest(req);
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.tablePickupRequest,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+      data: req.toJson(),
+    ));
+    return req;
+  }
+
+  /// Claim a pickup request. First waiter to broadcast wins — local
+  /// dedupe via [WaiterPickupStore.markClaimed] drops later claims so
+  /// the UI never flips back to an older waiter.
+  ///
+  /// Also broadcasts a [TableLifecycleEvent.assigned] so the cashier's
+  /// existing tables-screen plumbing flips the card to "occupied by X"
+  /// without needing a pickup-specific hook.
+  TablePickupRequest? claimTablePickup(String requestId) {
+    final self = session.self;
+    if (self == null) return null;
+    if (self.isViewer) {
+      // Cashiers can't claim their own broadcasts. Silent no-op: a
+      // cashier tapping the accept button by mistake shouldn't crash.
+      return null;
+    }
+    final stored = pickupStore.byId(requestId);
+    if (stored == null) return null;
+    if (stored.isClaimed) return stored;
+    if (stored.cancelled) return stored;
+    final claimed = pickupStore.markClaimed(
+      requestId: requestId,
+      waiterId: self.id,
+      waiterName: self.name,
+    );
+    if (claimed == null) return null;
+    _pickupUpdateStream.add(claimed);
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.tablePickupClaimed,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+      data: {
+        'request_id': claimed.requestId,
+        'table_id': claimed.tableId,
+        'table_number': claimed.tableNumber,
+        'waiter_id': self.id,
+        'waiter_name': self.name,
+        'claimed_at':
+            (claimed.claimedAt ?? DateTime.now()).toIso8601String(),
+      },
+    ));
+    // Fold the claim into the existing table-lifecycle plumbing so the
+    // cashier's tables screen reuses the standard "assigned" visual
+    // and the claimer's own tableRegistry reflects ownership.
+    broadcastTableEvent(TableLifecycleEvent(
+      kind: TableLifecycleKind.assigned,
+      tableId: claimed.tableId,
+      tableNumber: claimed.tableNumber,
+      waiterId: self.id,
+      waiterName: self.name,
+    ));
+    return claimed;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Table migration — cashier moves a seated party to a different table.
+  // ---------------------------------------------------------------------------
+
+  /// Broadcast a migration. Cashier-only. Every peer (including the
+  /// waiter that owned `oldTableId`) reacts in [_handleIncoming] — the
+  /// owner does the heavy lifting (cart move + broadcasting
+  /// release/assign for the cashier's tables screen to catch up), other
+  /// peers just log the event.
+  TableMigrateEvent? migrateTable({
+    required String oldTableId,
+    required String oldTableNumber,
+    required String newTableId,
+    required String newTableNumber,
+  }) {
+    final self = session.self;
+    if (self == null) return null;
+    if (!self.isViewer) {
+      throw StateError(
+        'Only the cashier (viewer) may migrate a table.',
+      );
+    }
+    if (oldTableId == newTableId) return null;
+    final event = TableMigrateEvent(
+      oldTableId: oldTableId,
+      oldTableNumber: oldTableNumber,
+      newTableId: newTableId,
+      newTableNumber: newTableNumber,
+      initiatedById: self.id,
+      initiatedByName: self.name,
+    );
+    _tableMigrateStream.add(event);
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.tableMigrate,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+      data: event.toJson(),
+    ));
+    return event;
+  }
+
+  /// Called internally (by [_handleIncoming]) when an incoming migrate
+  /// names a table *this* device owns. Moves cart state and broadcasts
+  /// a release + assign so every other peer's registry converges.
+  void _applyMigrateAsOwner(TableMigrateEvent event) {
+    final self = session.self;
+    if (self == null) return;
+
+    // Move the local cart (drafts + sent + guests) to the new table.
+    WaiterCartStore? cart;
+    try {
+      cart = getIt<WaiterCartStore>();
+    } catch (_) {}
+    cart?.moveTableCart(event.oldTableId, event.newTableId);
+
+    final snapshot = tableRegistry.lookup(event.oldTableId);
+    final guests = snapshot?.guestCount;
+    final total = snapshot?.total;
+    final itemCount = snapshot?.itemCount;
+    final items = snapshot?.items;
+
+    // Release the old table so the cashier's tables screen flips it to
+    // available + clears our own registry entry.
+    broadcastTableEvent(TableLifecycleEvent(
+      kind: TableLifecycleKind.released,
+      tableId: event.oldTableId,
+      tableNumber: event.oldTableNumber,
+      waiterId: self.id,
+      waiterName: self.name,
+    ));
+
+    // Re-assign the new table with the carried-over order state so the
+    // cashier sees exactly what the party already ordered, but under
+    // the new table number.
+    broadcastTableEvent(TableLifecycleEvent(
+      kind: TableLifecycleKind.assigned,
+      tableId: event.newTableId,
+      tableNumber: event.newTableNumber,
+      waiterId: self.id,
+      waiterName: self.name,
+      guestCount: guests,
+      total: total,
+      itemCount: itemCount,
+      items: items,
+    ));
+  }
+
+  /// Cashier-only. Dismisses a still-pending request (if a waiter
+  /// already claimed, cancel is a no-op — the table stays assigned).
+  TablePickupRequest? cancelTablePickup(String requestId) {
+    final self = session.self;
+    if (self == null) return null;
+    if (!self.isViewer) return null;
+    final stored = pickupStore.byId(requestId);
+    if (stored == null) return null;
+    if (stored.isClaimed) return stored;
+    final cancelled = pickupStore.markCancelled(requestId);
+    if (cancelled == null) return null;
+    _pickupUpdateStream.add(cancelled);
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.tablePickupCancelled,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+      data: {
+        'request_id': requestId,
+        'table_id': stored.tableId,
+        'table_number': stored.tableNumber,
+      },
+    ));
+    return cancelled;
+  }
+
   // ---------------------------------------------------------------------------
   // Inbound handling
   // ---------------------------------------------------------------------------
@@ -381,6 +726,11 @@ class WaiterController extends ChangeNotifier {
         // ours without them having to wait for an edit. Only on first
         // sight so duplicate HELLOs during reconnect don't re-flood.
         if (isNewPeer) _pushOwnedTablesSnapshotTo(msg.senderId);
+        // Emit on every HELLO (not just first sight). The cashier side
+        // listens on [onPeerHello] and pushes its current printer + KDS
+        // snapshots; the waiter's [WaiterConfigStore] version-gates the
+        // payload so repeated pushes are idempotent.
+        _peerHelloStream.add(msg.senderId);
         break;
 
       case WireMessageType.waiterStatus:
@@ -444,6 +794,87 @@ class WaiterController extends ChangeNotifier {
 
       case WireMessageType.heartbeat:
         // Keep-alive only — already refreshed lastSeen above.
+        break;
+
+      case WireMessageType.configKitchenPrinters:
+        // Cashier echoes its snapshot back to itself if a second cashier
+        // broadcasts; isViewer guard on the store would accept valid
+        // newer versions. On the waiter device this populates the store
+        // so future direct-print-from-waiter can resolve printers.
+        if (self.isViewer) break;
+        unawaited(configStore.applyKitchenPrinters(msg.data));
+        break;
+
+      case WireMessageType.configKdsEndpoint:
+        if (self.isViewer) break;
+        unawaited(configStore.applyKdsEndpoint(msg.data));
+        break;
+
+      case WireMessageType.configSyncRequest:
+        // Only viewers respond. Re-emit so the cashier bootstrap can
+        // decide whether to honor the request.
+        if (!self.isViewer) break;
+        _configSyncRequestStream.add(msg.senderId);
+        break;
+
+      case WireMessageType.tablePickupRequest:
+        // Cashier echoes its own broadcast (self-loop already filtered
+        // above). For a viewer the best action is to record — a second
+        // cashier on the LAN shouldn't silently diverge.
+        try {
+          final req = TablePickupRequest.fromJson(msg.data);
+          final recorded = pickupStore.recordRequest(req);
+          if (recorded && !self.isViewer) {
+            // Only a real waiter gets the audible alert — cashiers
+            // watching the tables screen already see the card change.
+            notifications.playCall();
+            _pickupRequestStream.add(req);
+          } else if (recorded && self.isViewer) {
+            _pickupRequestStream.add(req);
+          }
+        } catch (_) {}
+        break;
+
+      case WireMessageType.tablePickupClaimed:
+        try {
+          final rid = msg.data['request_id']?.toString() ?? '';
+          final wid = msg.data['waiter_id']?.toString() ?? '';
+          final wname = msg.data['waiter_name']?.toString() ?? '';
+          if (rid.isEmpty || wid.isEmpty) break;
+          final claimedAt = DateTime.tryParse(
+            msg.data['claimed_at']?.toString() ?? '',
+          );
+          final updated = pickupStore.markClaimed(
+            requestId: rid,
+            waiterId: wid,
+            waiterName: wname,
+            at: claimedAt,
+          );
+          if (updated != null) _pickupUpdateStream.add(updated);
+        } catch (_) {}
+        break;
+
+      case WireMessageType.tablePickupCancelled:
+        try {
+          final rid = msg.data['request_id']?.toString() ?? '';
+          if (rid.isEmpty) break;
+          final updated = pickupStore.markCancelled(rid);
+          if (updated != null) _pickupUpdateStream.add(updated);
+        } catch (_) {}
+        break;
+
+      case WireMessageType.tableMigrate:
+        try {
+          final event = TableMigrateEvent.fromJson(msg.data);
+          _tableMigrateStream.add(event);
+          // Only the waiter that currently owns the old table needs to
+          // do the cart shuffle + re-broadcast release/assign — every
+          // other peer picks up the state change from those echoes.
+          final ownerId = tableRegistry.ownerIdFor(event.oldTableId);
+          if (ownerId != null && ownerId == self.id) {
+            _applyMigrateAsOwner(event);
+          }
+        } catch (_) {}
         break;
 
       case WireMessageType.helloAck:

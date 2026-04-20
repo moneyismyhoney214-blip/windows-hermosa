@@ -4,6 +4,9 @@ import 'particles.dart';
 import 'butterfly_logo.dart';
 import '../screens/login_screen.dart';
 import '../screens/main_screen.dart';
+import '../services/api/auth_service.dart';
+import '../locator.dart';
+import '../waiter_module/waiter_module_entry.dart';
 
 class SplashScreen extends StatefulWidget {
   final bool isAuthenticated;
@@ -45,11 +48,18 @@ class _SplashScreenState extends State<SplashScreen>
 
     _navigationTimer = Timer(const Duration(milliseconds: 4200), () {
       if (!mounted) return;
+      // Route a resumed waiter session straight into the waiter module
+      // instead of the cashier POS.
+      Widget next;
+      if (!widget.isAuthenticated) {
+        next = const LoginScreen();
+      } else if (getIt<AuthService>().isWaiter()) {
+        next = const WaiterModuleEntry();
+      } else {
+        next = const MainScreen();
+      }
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) =>
-              widget.isAuthenticated ? const MainScreen() : const LoginScreen(),
-        ),
+        MaterialPageRoute(builder: (_) => next),
       );
     });
   }

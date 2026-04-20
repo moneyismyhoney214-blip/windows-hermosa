@@ -5,13 +5,16 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../models/table_pickup_request.dart';
 import '../models/waiter.dart';
 import '../models/waiter_message.dart';
 import '../services/waiter_controller.dart';
+import '../theme/waiter_design.dart';
 import 'waiter_messages_screen.dart';
 import 'waiter_profile_screen.dart';
 import 'waiter_tables_screen.dart';
 import '../dialogs/incoming_call_banner.dart';
+import '../dialogs/incoming_pickup_banner.dart';
 
 /// Shell for the waiter app — bottom nav plus the incoming-call banner.
 class WaiterHomeScreen extends StatefulWidget {
@@ -26,22 +29,27 @@ class WaiterHomeScreen extends StatefulWidget {
 class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
   int _tab = 0;
   StreamSubscription<WaiterMessage>? _callSub;
+  StreamSubscription<TablePickupRequest>? _pickupSub;
 
   @override
   void initState() {
     super.initState();
     _callSub = widget.controller.onIncomingCall.listen(_onIncomingCall);
+    _pickupSub = widget.controller.onPickupRequest.listen(_onPickupRequest);
     widget.controller.addListener(_onControllerChanged);
     widget.controller.messages.addListener(_onControllerChanged);
     widget.controller.roster.addListener(_onControllerChanged);
+    widget.controller.pickupStore.addListener(_onControllerChanged);
   }
 
   @override
   void dispose() {
     _callSub?.cancel();
+    _pickupSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     widget.controller.messages.removeListener(_onControllerChanged);
     widget.controller.roster.removeListener(_onControllerChanged);
+    widget.controller.pickupStore.removeListener(_onControllerChanged);
     super.dispose();
   }
 
@@ -52,6 +60,14 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
   void _onIncomingCall(WaiterMessage msg) {
     if (!mounted) return;
     showIncomingCallBanner(context, msg);
+  }
+
+  void _onPickupRequest(TablePickupRequest req) {
+    if (!mounted) return;
+    // Cashier device (viewer) doesn't need the accept banner — it
+    // already sees the pending card on its tables screen.
+    if (widget.controller.session.self?.isViewer ?? false) return;
+    showIncomingPickupBanner(context, req, widget.controller);
   }
 
   @override
@@ -112,7 +128,12 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
       body: IndexedStack(index: _tab, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
+        onDestinationSelected: (i) {
+          if (i != _tab) {
+            unawaited(WaiterHaptics.tick());
+          }
+          setState(() => _tab = i);
+        },
         destinations: [
           NavigationDestination(
             icon: const Icon(LucideIcons.layoutGrid),

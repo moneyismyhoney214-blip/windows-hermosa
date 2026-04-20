@@ -40,6 +40,27 @@ enum WireMessageType {
   orderEdit,
   orderCancel,
 
+  // Cashier → waiter config sync. The cashier owns the canonical printer
+  // list and KDS endpoint; waiters receive the snapshots on HELLO and on
+  // every cashier-side mutation so no manual setup is required.
+  configKitchenPrinters,
+  configKdsEndpoint,
+  /// Waiter-initiated re-pull request, for a future "refresh config"
+  /// button. Unused on the happy path — every cashier pushes on HELLO.
+  configSyncRequest,
+
+  // "استلام" pickup flow — Uber-style broadcast/claim for a cashier to
+  // assign a table to whichever waiter answers first.
+  tablePickupRequest,
+  tablePickupClaimed,
+  tablePickupCancelled,
+
+  /// Cashier-initiated table migration — the party that was seated at
+  /// `old_table` got moved to `new_table`. The owning waiter shuffles
+  /// its cart + registry, and a ticket prints at the kitchen so the
+  /// chef knows where the existing order now lives.
+  tableMigrate,
+
   // Generic ack
   ack,
   error,
@@ -82,6 +103,20 @@ extension WireMessageTypeX on WireMessageType {
         return 'ORDER_EDIT';
       case WireMessageType.orderCancel:
         return 'ORDER_CANCEL';
+      case WireMessageType.configKitchenPrinters:
+        return 'CONFIG_KITCHEN_PRINTERS';
+      case WireMessageType.configKdsEndpoint:
+        return 'CONFIG_KDS_ENDPOINT';
+      case WireMessageType.configSyncRequest:
+        return 'CONFIG_SYNC_REQUEST';
+      case WireMessageType.tablePickupRequest:
+        return 'TABLE_PICKUP_REQUEST';
+      case WireMessageType.tablePickupClaimed:
+        return 'TABLE_PICKUP_CLAIMED';
+      case WireMessageType.tablePickupCancelled:
+        return 'TABLE_PICKUP_CANCELLED';
+      case WireMessageType.tableMigrate:
+        return 'TABLE_MIGRATE';
       case WireMessageType.ack:
         return 'ACK';
       case WireMessageType.error:
@@ -125,6 +160,20 @@ extension WireMessageTypeX on WireMessageType {
         return WireMessageType.orderEdit;
       case 'ORDER_CANCEL':
         return WireMessageType.orderCancel;
+      case 'CONFIG_KITCHEN_PRINTERS':
+        return WireMessageType.configKitchenPrinters;
+      case 'CONFIG_KDS_ENDPOINT':
+        return WireMessageType.configKdsEndpoint;
+      case 'CONFIG_SYNC_REQUEST':
+        return WireMessageType.configSyncRequest;
+      case 'TABLE_PICKUP_REQUEST':
+        return WireMessageType.tablePickupRequest;
+      case 'TABLE_PICKUP_CLAIMED':
+        return WireMessageType.tablePickupClaimed;
+      case 'TABLE_PICKUP_CANCELLED':
+        return WireMessageType.tablePickupCancelled;
+      case 'TABLE_MIGRATE':
+        return WireMessageType.tableMigrate;
       case 'ACK':
         return WireMessageType.ack;
       case 'ERROR':

@@ -1,12 +1,21 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models.dart';
+import '../services/api/auth_service.dart';
+import '../services/api/device_service.dart';
 import '../services/api/table_service.dart';
 import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/print_orchestrator_service.dart';
+import '../services/printer_role_registry.dart';
 import '../locator.dart';
+import '../waiter_module/dialogs/send_cashier_message_dialog.dart';
+import '../waiter_module/models/table_pickup_request.dart';
+import '../waiter_module/models/waiter_table_event.dart';
+import '../waiter_module/services/waiter_controller.dart';
 
 class TableManagementScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -24,6 +33,7 @@ class TableManagementScreen extends StatefulWidget {
 
 class _TableManagementScreenState extends State<TableManagementScreen> {
   final TableService _tableService = getIt<TableService>();
+  final WaiterController _waiter = getIt<WaiterController>();
 
   bool _isLoading = true;
   String? _error;
@@ -33,6 +43,14 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   final Map<String, Offset> _tablePositions = {};
   final GlobalKey _gridCanvasKey = GlobalKey();
 
+  /// Latest pickup request per table id. A table with an entry here has
+  /// either an outstanding broadcast or a just-claimed/cancelled one
+  /// still visible to the cashier for a few seconds.
+  final Map<String, TablePickupRequest> _pickupByTable = {};
+
+  StreamSubscription<TablePickupRequest>? _pickupUpdateSub;
+  StreamSubscription<WaiterTableEventEnvelope>? _tableEventSub;
+
   static const double _tableCardWidth = 250;
   static const double _tableCardHeight = 200;
 
@@ -40,13 +58,311 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   void initState() {
     super.initState();
     translationService.addListener(_onLanguageChanged);
+    _pickupUpdateSub = _waiter.onPickupUpdate.listen(_onPickupUpdate);
+    _tableEventSub = _waiter.onTableEvent.listen(_onTableEvent);
+    _waiter.pickupStore.addListener(_onPickupStoreChanged);
     _loadTables();
   }
 
   @override
   void dispose() {
     translationService.removeListener(_onLanguageChanged);
+    _pickupUpdateSub?.cancel();
+    _tableEventSub?.cancel();
+    _waiter.pickupStore.removeListener(_onPickupStoreChanged);
     super.dispose();
+  }
+
+  void _onPickupStoreChanged() {
+    if (!mounted) return;
+    final next = <String, TablePickupRequest>{};
+    for (final req in _waiter.pickupStore.all) {
+      // Keep the newest per table (store already sorts newest first).
+      next.putIfAbsent(req.tableId, () => req);
+    }
+    setState(() {
+      _pickupByTable
+        ..clear()
+        ..addAll(next);
+    });
+  }
+
+  void _onPickupUpdate(TablePickupRequest req) {
+    if (!mounted) return;
+    // Claim → mutate the local table so the card flips to the familiar
+    // "occupied" look without waiting for the next API refresh. Cancel
+    // just clears the overlay — the table stays on whatever status it
+    // was before the request.
+    if (req.isClaimed) {
+      final idx = _tables.indexWhere((t) => t.id == req.tableId);
+      if (idx >= 0) {
+        final t = _tables[idx];
+        t.status = TableStatus.occupied;
+        t.waiterName = req.claimedByWaiterName;
+      }
+    }
+    setState(() {
+      _pickupByTable[req.tableId] = req;
+    });
+  }
+
+  void _onTableEvent(WaiterTableEventEnvelope envelope) {
+    if (!mounted) return;
+    if (envelope.fromSelf) return; // cashier shouldn't re-apply its own echoes
+    final event = envelope.event;
+    final idx = _tables.indexWhere((t) => t.id == event.tableId);
+    if (idx < 0) return;
+    final t = _tables[idx];
+    switch (event.kind) {
+      case TableLifecycleKind.assigned:
+      case TableLifecycleKind.updated:
+      case TableLifecycleKind.paymentPending:
+        t.status = TableStatus.occupied;
+        if (event.waiterName.isNotEmpty) {
+          t.waiterName = event.waiterName;
+        }
+        break;
+      case TableLifecycleKind.released:
+      case TableLifecycleKind.paid:
+        t.status = TableStatus.available;
+        t.waiterName = null;
+        _pickupByTable.remove(event.tableId);
+        break;
+    }
+    setState(() {});
+  }
+
+  void _requestPickup(TableItem table) {
+    final onlineWaiters = _waiter.roster.all
+        .where((w) => !w.isViewer)
+        .length;
+    if (onlineWaiters == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يوجد نادل متصل — لا يمكن إرسال طلب استلام.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    try {
+      final req = _waiter.requestTablePickup(
+        tableId: table.id,
+        tableNumber: table.number,
+      );
+      if (req == null) return;
+      setState(() {
+        _pickupByTable[table.id] = req;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تم إرسال طلب استلام الطاولة ${table.number}'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } on StateError catch (e) {
+      // Cashier hasn't joined the mesh yet (pre-branch state). Surface
+      // instead of silently dropping.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر إرسال الطلب: $e')),
+      );
+    }
+  }
+
+  void _cancelPickup(TableItem table) {
+    final existing = _pickupByTable[table.id];
+    if (existing == null) return;
+    _waiter.cancelTablePickup(existing.requestId);
+    setState(() {
+      _pickupByTable.remove(table.id);
+    });
+  }
+
+  Future<void> _openSendMessageDialog() async {
+    await showDialog<bool>(
+      context: context,
+      builder: (_) => SendCashierMessageDialog(controller: _waiter),
+    );
+  }
+
+  Future<void> _migrateTable(TableItem source) async {
+    // The group has to be actually seated somewhere before it can be
+    // migrated — an available table has no order to move.
+    if (source.status == TableStatus.available) return;
+
+    // Destinations: any ACTIVE + available table that isn't the source.
+    final destinations = _tables
+        .where((t) =>
+            t.id != source.id &&
+            t.status == TableStatus.available &&
+            (_deactivatedTables[t.id] ?? false) == false)
+        .toList();
+    if (destinations.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا توجد طاولة فاضية للنقل إليها.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    final picked = await showDialog<TableItem>(
+      context: context,
+      builder: (ctx) => _MigrateDestinationDialog(
+        source: source,
+        destinations: destinations,
+      ),
+    );
+    if (picked == null) return;
+    if (!mounted) return;
+
+    // Fire the broadcast — the owning waiter will shuffle its cart and
+    // re-broadcast release+assign, which our _onTableEvent listener
+    // then applies to the local _tables list.
+    try {
+      final event = _waiter.migrateTable(
+        oldTableId: source.id,
+        oldTableNumber: source.number,
+        newTableId: picked.id,
+        newTableNumber: picked.number,
+      );
+      if (event == null) return;
+    } on StateError catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر نقل الطاولة: $e')),
+      );
+      return;
+    }
+
+    // Optimistic local flip — the waiter's echo will reaffirm this.
+    setState(() {
+      final srcIdx = _tables.indexWhere((t) => t.id == source.id);
+      if (srcIdx >= 0) {
+        _tables[srcIdx].status = TableStatus.available;
+        _tables[srcIdx].waiterName = null;
+      }
+      final dstIdx = _tables.indexWhere((t) => t.id == picked.id);
+      if (dstIdx >= 0) {
+        _tables[dstIdx].status = TableStatus.occupied;
+        _tables[dstIdx].waiterName =
+            source.waiterName; // carries to new table
+      }
+      _pickupByTable.remove(source.id);
+    });
+
+    // Print the migration ticket at the kitchen so the chef knows the
+    // already-fired order at `source` is now under `picked`. Fire and
+    // forget — success/failure is surfaced via a snackbar either way.
+    unawaited(_printMigrationTicket(source: source, destination: picked));
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'تم نقل الطاولة ${source.number} إلى الطاولة ${picked.number}',
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<void> _printMigrationTicket({
+    required TableItem source,
+    required TableItem destination,
+  }) async {
+    try {
+      final deviceService = getIt<DeviceService>();
+      final roleRegistry = getIt<PrinterRoleRegistry>();
+      final orchestrator = getIt<PrintOrchestratorService>();
+      await roleRegistry.initialize();
+
+      final devices = await deviceService.getCachedDevices();
+      final kitchenPrinters = devices.where((d) {
+        final normalized = d.type.trim().toLowerCase();
+        if (normalized != 'printer') return false;
+        final role = roleRegistry.resolveRole(d);
+        return role == PrinterRole.kitchen ||
+            role == PrinterRole.kds ||
+            role == PrinterRole.bar;
+      }).toList(growable: false);
+
+      if (kitchenPrinters.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              '⚠️ تم نقل الطاولة ولكن لا توجد طابعة مطبخ متصلة لطباعة التذكرة',
+            ),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
+      final cashierName =
+          getIt<AuthService>().getUser()?['name']?.toString().trim() ?? '';
+      final migrationItems = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'name': 'من: طاولة ${source.number}',
+          'nameAr': 'من: طاولة ${source.number}',
+          'quantity': 1,
+          'tag': 'FROM',
+          'tagAr': 'من',
+          'tagPrimary': 'من',
+          'tagSecondary': 'FROM',
+          'tagColor': 'black',
+        },
+        <String, dynamic>{
+          'name': 'إلى: طاولة ${destination.number}',
+          'nameAr': 'إلى: طاولة ${destination.number}',
+          'quantity': 1,
+          'tag': 'TO',
+          'tagAr': 'إلى',
+          'tagPrimary': 'إلى',
+          'tagSecondary': 'TO',
+          'tagColor': 'green',
+        },
+      ];
+
+      final noteBuffer = StringBuffer()
+        ..writeln(
+          '⚠️ الطلب الذي كان على الطاولة ${source.number} منقول إلى الطاولة ${destination.number}',
+        );
+      if (cashierName.isNotEmpty) {
+        noteBuffer.writeln('بواسطة الكاشير: $cashierName');
+      }
+
+      final migrationId =
+          'MIG-${source.number}-${destination.number}-${DateTime.now().millisecondsSinceEpoch}';
+      await orchestrator.enqueueKitchenPrint(
+        printers: kitchenPrinters,
+        orderNumber: migrationId,
+        orderType: 'نقل طاولة',
+        items: migrationItems,
+        note: noteBuffer.toString().trim(),
+        tableNumber: destination.number,
+        cashierName: cashierName.isEmpty ? null : cashierName,
+        isRtl: true,
+        primaryLang: 'ar',
+      );
+    } catch (e) {
+      debugPrint('⚠️ migration ticket print failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('⚠️ تم النقل ولكن تعذر طباعة تذكرة المطبخ: $e'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   void _onLanguageChanged() {
@@ -239,8 +555,12 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                             ),
                           ),
                         ),
-                        // Waiter-mode shortcut intentionally removed — the
-                        // module stays on disk but no UI exposes it.
+                        IconButton(
+                          onPressed: _openSendMessageDialog,
+                          tooltip: 'إرسال رسالة للنوادل',
+                          icon: const Icon(LucideIcons.messageSquare),
+                          color: const Color(0xFFF58220),
+                        ),
                         IconButton(
                           onPressed: _loadTables,
                           icon: const Icon(LucideIcons.refreshCw),
@@ -268,12 +588,21 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                                 fontSize: 24,
                                 fontWeight: FontWeight.w900,
                                 color: Color(0xFF1E293B))),
-                        // Waiter-mode shortcut intentionally removed — the
-                        // module stays on disk but no UI exposes it.
-                        _HeaderActionBtn(
-                          icon: LucideIcons.refreshCw,
-                          label: translationService.t('refresh'),
-                          onTap: _loadTables,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _HeaderActionBtn(
+                              icon: LucideIcons.messageSquare,
+                              label: 'رسالة للنوادل',
+                              onTap: _openSendMessageDialog,
+                            ),
+                            const SizedBox(width: 8),
+                            _HeaderActionBtn(
+                              icon: LucideIcons.refreshCw,
+                              label: translationService.t('refresh'),
+                              onTap: _loadTables,
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -359,9 +688,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           final table = tables[index];
           final isDeactivated = _deactivatedTables[table.id] ?? false;
 
-          // Waiter-specific callbacks are intentionally null: the module
-          // still exists but its UI is hidden everywhere. Seats count falls
-          // back to `table.seats` from the API.
+          final pickup = _pickupByTable[table.id];
           return _NormalTableCard(
             table: table,
             isDeactivated: isDeactivated,
@@ -369,6 +696,11 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
             width: double.infinity,
             height: double.infinity,
             onTap: isDeactivated ? null : () => _checkTableStatus(table),
+            activePickup: pickup,
+            onRequestPickup: isDeactivated ? null : () => _requestPickup(table),
+            onCancelPickup:
+                isDeactivated ? null : () => _cancelPickup(table),
+            onMigrate: isDeactivated ? null : () => _migrateTable(table),
           );
         },
       );
@@ -413,6 +745,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                 final position =
                     _tablePositions[table.id] ?? const Offset(100, 100);
 
+                final pickup = _pickupByTable[table.id];
                 return _DraggableTableCard(
                   key: ValueKey('table_${table.id}'),
                   table: table,
@@ -423,6 +756,13 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                   onTap: isDeactivated ? null : () => _checkTableStatus(table),
                   onPositionChanged: (newPosition) =>
                       _updateTablePosition(table.id, newPosition),
+                  activePickup: pickup,
+                  onRequestPickup:
+                      isDeactivated ? null : () => _requestPickup(table),
+                  onCancelPickup:
+                      isDeactivated ? null : () => _cancelPickup(table),
+                  onMigrate:
+                      isDeactivated ? null : () => _migrateTable(table),
                 );
               }),
             ],
@@ -463,6 +803,10 @@ class _DraggableTableCard extends StatefulWidget {
   final Size canvasSize;
   final VoidCallback? onTap;
   final Function(Offset) onPositionChanged;
+  final TablePickupRequest? activePickup;
+  final VoidCallback? onRequestPickup;
+  final VoidCallback? onCancelPickup;
+  final VoidCallback? onMigrate;
 
   const _DraggableTableCard({
     super.key,
@@ -473,6 +817,10 @@ class _DraggableTableCard extends StatefulWidget {
     required this.canvasSize,
     required this.onTap,
     required this.onPositionChanged,
+    this.activePickup,
+    this.onRequestPickup,
+    this.onCancelPickup,
+    this.onMigrate,
   });
 
   @override
@@ -544,6 +892,10 @@ class _DraggableTableCardState extends State<_DraggableTableCard> {
                 table: widget.table,
                 isDeactivated: widget.isDeactivated,
                 onTap: widget.onTap,
+                activePickup: widget.activePickup,
+                onRequestPickup: widget.onRequestPickup,
+                onCancelPickup: widget.onCancelPickup,
+                onMigrate: widget.onMigrate,
               ),
               // Drag handle indicator
               Positioned(
@@ -585,6 +937,14 @@ class _NormalTableCard extends StatelessWidget {
   final double? width;
   final double? height;
 
+  /// Most recent pickup state for this table. When non-null we overlay a
+  /// status strip / cancel button; when null and the table is available
+  /// we expose the "استلام" action so the cashier can broadcast.
+  final TablePickupRequest? activePickup;
+  final VoidCallback? onRequestPickup;
+  final VoidCallback? onCancelPickup;
+  final VoidCallback? onMigrate;
+
   const _NormalTableCard({
     required this.table,
     required this.isDeactivated,
@@ -592,6 +952,10 @@ class _NormalTableCard extends StatelessWidget {
     this.compact = false,
     this.width,
     this.height,
+    this.activePickup,
+    this.onRequestPickup,
+    this.onCancelPickup,
+    this.onMigrate,
   });
 
   Color _getStatusColor(TableStatus status) {
@@ -897,6 +1261,18 @@ class _NormalTableCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                      if (!isDeactivated)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: _buildPickupStrip(
+                            context,
+                            compact: effectiveCompact,
+                            ultraCompact: ultraCompact,
+                            borderRadius: borderRadius,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -904,6 +1280,205 @@ class _NormalTableCard extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildPickupStrip(
+    BuildContext context, {
+    required bool compact,
+    required bool ultraCompact,
+    required double borderRadius,
+  }) {
+    final pickup = activePickup;
+    // Occupied table with no pending pickup → show the migration action
+    // so the cashier can move the party's existing order to a different
+    // table (e.g. the group moved to a larger table mid-meal).
+    if (pickup == null && table.status != TableStatus.available) {
+      if (onMigrate == null) return const SizedBox.shrink();
+      return _buildMigrateStrip(
+        context,
+        compact: compact,
+        ultraCompact: ultraCompact,
+        borderRadius: borderRadius,
+      );
+    }
+    if (pickup != null && pickup.cancelled) {
+      return const SizedBox.shrink();
+    }
+
+    final vPad = ultraCompact ? 4.0 : (compact ? 6.0 : 8.0);
+    final hPad = ultraCompact ? 6.0 : (compact ? 8.0 : 10.0);
+    final fontSize = ultraCompact ? 11.0 : (compact ? 12.0 : 13.0);
+
+    // Just-claimed: show a success pill with the waiter name.
+    if (pickup != null && pickup.isClaimed) {
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
+        decoration: BoxDecoration(
+          color: const Color(0xFF10B981).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.vertical(
+            bottom: Radius.circular(borderRadius),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(LucideIcons.checkCircle,
+                size: 14, color: Color(0xFF059669)),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                '${pickup.claimedByWaiterName ?? '—'} استلم الطاولة',
+                style: TextStyle(
+                  color: const Color(0xFF059669),
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w700,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Pending broadcast: show "waiting" + cancel.
+    if (pickup != null && pickup.isPending) {
+      if (onCancelPickup == null) return const SizedBox.shrink();
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF58220).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.vertical(
+            bottom: Radius.circular(borderRadius),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Color(0xFFF58220)),
+                  ),
+                ),
+                SizedBox(width: 6),
+                Text(
+                  'بانتظار نادل...',
+                  style: TextStyle(
+                    color: Color(0xFFF58220),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            InkWell(
+              onTap: onCancelPickup,
+              borderRadius: BorderRadius.circular(999),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 2,
+                ),
+                child: Text(
+                  'إلغاء',
+                  style: TextStyle(
+                    color: Colors.red.shade700,
+                    fontWeight: FontWeight.w700,
+                    fontSize: fontSize,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Table is available and no pickup yet — show the invitation button.
+    if (onRequestPickup == null) return const SizedBox.shrink();
+    return InkWell(
+      onTap: onRequestPickup,
+      borderRadius: BorderRadius.vertical(
+        bottom: Radius.circular(borderRadius),
+      ),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad + 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF58220),
+          borderRadius: BorderRadius.vertical(
+            bottom: Radius.circular(borderRadius),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.handMetal,
+                size: ultraCompact ? 13 : 15, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(
+              'استلام',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: fontSize + 1,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMigrateStrip(
+    BuildContext context, {
+    required bool compact,
+    required bool ultraCompact,
+    required double borderRadius,
+  }) {
+    final vPad = ultraCompact ? 4.0 : (compact ? 6.0 : 8.0);
+    final hPad = ultraCompact ? 6.0 : (compact ? 8.0 : 10.0);
+    final fontSize = ultraCompact ? 11.0 : (compact ? 12.0 : 13.0);
+    return InkWell(
+      onTap: onMigrate,
+      borderRadius: BorderRadius.vertical(
+        bottom: Radius.circular(borderRadius),
+      ),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad + 1),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2563EB).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.vertical(
+            bottom: Radius.circular(borderRadius),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(LucideIcons.moveRight,
+                size: 15, color: Color(0xFF2563EB)),
+            const SizedBox(width: 6),
+            Text(
+              'نقل إلى طاولة أخرى',
+              style: TextStyle(
+                color: const Color(0xFF2563EB),
+                fontSize: fontSize,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -947,3 +1522,97 @@ class _HeaderActionBtn extends StatelessWidget {
   }
 }
 
+
+class _MigrateDestinationDialog extends StatelessWidget {
+  final TableItem source;
+  final List<TableItem> destinations;
+
+  const _MigrateDestinationDialog({
+    required this.source,
+    required this.destinations,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final sorted = [...destinations]
+      ..sort((a, b) {
+        final an = int.tryParse(a.number) ?? 0;
+        final bn = int.tryParse(b.number) ?? 0;
+        return an.compareTo(bn);
+      });
+    return AlertDialog(
+      backgroundColor: context.appSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          const Icon(LucideIcons.moveRight, color: Color(0xFF2563EB)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "نقل الطاولة ${source.number} إلى...",
+              style: TextStyle(color: context.appText, fontSize: 17),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 420,
+        height: 360,
+        child: GridView.builder(
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 140,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.1,
+          ),
+          itemCount: sorted.length,
+          itemBuilder: (_, i) {
+            final t = sorted[i];
+            return InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => Navigator.of(context).pop(t),
+              child: Ink(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: context.appBorder),
+                  color: context.appSurfaceAlt,
+                ),
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(LucideIcons.armchair,
+                        color: context.appSuccess, size: 28),
+                    const SizedBox(height: 8),
+                    Text(
+                      t.number,
+                      style: TextStyle(
+                        color: context.appText,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "${t.seats} أشخاص",
+                      style: TextStyle(
+                        color: context.appTextMuted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text("إلغاء"),
+        ),
+      ],
+    );
+  }
+}

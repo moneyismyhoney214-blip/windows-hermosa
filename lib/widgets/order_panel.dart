@@ -14,6 +14,7 @@ import '../services/language_service.dart';
 import '../services/app_themes.dart';
 import '../locator.dart';
 import '../dialogs/improved_display_connection_dialog.dart';
+import 'connectivity_status_indicator.dart';
 import '../services/cashier_sound_service.dart';
 
 
@@ -198,6 +199,11 @@ class _OrderPanelState extends State<OrderPanel> {
                                     color: context.appText)),
                             Row(
                               children: [
+                                const ConnectivityStatusIndicator(
+                                  iconSize: 18,
+                                  padding:
+                                      EdgeInsets.symmetric(horizontal: 4),
+                                ),
                                 // Display Connection Button
                                 Material(
                                   color: Colors.transparent,
