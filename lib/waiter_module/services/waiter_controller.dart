@@ -690,6 +690,12 @@ class WaiterController extends ChangeNotifier {
   }
 
   void _handleIncoming(WireMessage msg) {
+    // If we're mid-shutdown, don't touch any streams — they may be
+    // closed already and .add() on a closed StreamController throws.
+    // Network callbacks can arrive after we cancel our own subscription
+    // so this guard isn't theoretical.
+    if (!_running) return;
+
     final self = session.self;
     if (self == null) return;
     if (msg.senderId == self.id) return; // ignore self-loop
@@ -725,7 +731,14 @@ class WaiterController extends ChangeNotifier {
         // TABLE_UPDATE events to just this peer so their registry matches
         // ours without them having to wait for an edit. Only on first
         // sight so duplicate HELLOs during reconnect don't re-flood.
-        if (isNewPeer) _pushOwnedTablesSnapshotTo(msg.senderId);
+        if (isNewPeer) {
+          _pushOwnedTablesSnapshotTo(msg.senderId);
+          // Waiter-side: re-announce my own claimed pickups to the new
+          // peer so a claim whose original broadcast dropped (cashier
+          // restart, Wi-Fi glitch) still converges once both ends see
+          // each other. Viewers never claim, so this is a no-op there.
+          if (!self.isViewer) _replayOwnClaimsTo(msg.senderId);
+        }
         // Emit on every HELLO (not just first sight). The cashier side
         // listens on [onPeerHello] and pushes its current printer + KDS
         // snapshots; the waiter's [WaiterConfigStore] version-gates the
@@ -766,11 +779,20 @@ class WaiterController extends ChangeNotifier {
         // A peer claimed a broadcast. Update our local copy so the
         // accept button turns into "تم الاستلام بواسطة X" on every
         // device that's still showing the notification.
+        //
+        // Anti-spoof: the payload's `waiter_id` must match the wire
+        // envelope's `sender_id` — otherwise a malicious peer could
+        // forge "X accepted" on X's behalf.
         final mid = msg.data['message_id']?.toString();
         final wid = msg.data['waiter_id']?.toString();
         final wname = msg.data['waiter_name']?.toString();
         final atRaw = msg.data['accepted_at']?.toString();
         if (mid != null && wid != null && wname != null) {
+          if (wid != msg.senderId) {
+            debugPrint(
+                '⚠️ dropping WAITER_CALL_ACCEPTED: waiter_id=$wid != sender_id=${msg.senderId}');
+            break;
+          }
           messages.markAccepted(
             messageId: mid,
             waiterId: wid,
@@ -802,12 +824,16 @@ class WaiterController extends ChangeNotifier {
         // newer versions. On the waiter device this populates the store
         // so future direct-print-from-waiter can resolve printers.
         if (self.isViewer) break;
-        unawaited(configStore.applyKitchenPrinters(msg.data));
+        unawaited(
+          configStore.applyKitchenPrinters(msg.data, sourceId: msg.senderId),
+        );
         break;
 
       case WireMessageType.configKdsEndpoint:
         if (self.isViewer) break;
-        unawaited(configStore.applyKdsEndpoint(msg.data));
+        unawaited(
+          configStore.applyKdsEndpoint(msg.data, sourceId: msg.senderId),
+        );
         break;
 
       case WireMessageType.configSyncRequest:
@@ -841,9 +867,40 @@ class WaiterController extends ChangeNotifier {
           final wid = msg.data['waiter_id']?.toString() ?? '';
           final wname = msg.data['waiter_name']?.toString() ?? '';
           if (rid.isEmpty || wid.isEmpty) break;
+
+          // Anti-spoof: the claimer in the payload must be the sender.
+          // Without this a peer can forge "Waiter X claimed" on X's
+          // behalf and every device would accept it.
+          if (wid != msg.senderId) {
+            debugPrint(
+                '⚠️ dropping TABLE_PICKUP_CLAIMED: waiter_id=$wid != sender_id=${msg.senderId}');
+            break;
+          }
+
           final claimedAt = DateTime.tryParse(
             msg.data['claimed_at']?.toString() ?? '',
           );
+
+          // Orphan claim recovery: if the cashier restarted while a
+          // pickup was in flight, it no longer has the original request
+          // in memory. Synthesize a minimal record from what the claim
+          // carries so the tables screen still flips the card and the
+          // claim is visible in the notifications feed.
+          if (self.isViewer && pickupStore.byId(rid) == null) {
+            final synthTableId = msg.data['table_id']?.toString() ?? '';
+            final synthTableNumber =
+                msg.data['table_number']?.toString() ?? '';
+            if (synthTableId.isNotEmpty) {
+              pickupStore.recordRequest(TablePickupRequest(
+                requestId: rid,
+                cashierId: self.id,
+                cashierName: self.name,
+                tableId: synthTableId,
+                tableNumber: synthTableNumber,
+              ));
+            }
+          }
+
           final updated = pickupStore.markClaimed(
             requestId: rid,
             waiterId: wid,
@@ -918,6 +975,36 @@ class WaiterController extends ChangeNotifier {
     // autonomously when they come back.
     for (final id in flipped) {
       _net?.closeConnectionTo(id);
+    }
+  }
+
+  /// Send every pickup I (a waiter) claimed to [peerId] as a fresh
+  /// TABLE_PICKUP_CLAIMED so a peer that missed the original broadcast
+  /// converges. Runs on first HELLO from a given peer.
+  void _replayOwnClaimsTo(String peerId) {
+    final self = session.self;
+    if (self == null) return;
+    for (final req in pickupStore.all) {
+      if (req.claimedByWaiterId != self.id) continue;
+      final claimedAt = req.claimedAt;
+      if (claimedAt == null) continue;
+      _net?.sendTo(
+        peerId,
+        WireMessage(
+          type: WireMessageType.tablePickupClaimed,
+          senderId: self.id,
+          senderName: self.name,
+          branchId: self.branchId,
+          data: {
+            'request_id': req.requestId,
+            'table_id': req.tableId,
+            'table_number': req.tableNumber,
+            'waiter_id': self.id,
+            'waiter_name': self.name,
+            'claimed_at': claimedAt.toIso8601String(),
+          },
+        ),
+      );
     }
   }
 

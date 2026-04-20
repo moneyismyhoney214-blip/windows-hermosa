@@ -11,6 +11,10 @@ import 'package:uuid/uuid.dart';
 enum WireMessageType {
   // Handshake
   hello,
+  /// Reserved. Current code acknowledges a HELLO with a generic [ack];
+  /// the dedicated [helloAck] slot is kept so a future protocol revision
+  /// can distinguish handshake completion from payload acks without a
+  /// wire-format bump. Peers should not rely on receiving it today.
   helloAck,
   heartbeat,
 

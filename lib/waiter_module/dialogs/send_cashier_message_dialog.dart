@@ -81,10 +81,26 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
   void _send() {
     if (_sending) return;
     final online = _onlineWaiters();
-    if (online.isEmpty && _recipient != _broadcastKey) {
-      // Race: waiter went offline between selection and submit.
-      _recipient = _broadcastKey;
+
+    // If a specific waiter was selected but they went offline between
+    // selection and submit, DON'T silently send a directed message
+    // into the void (sendTo() no-ops on unknown peers). Flip to
+    // broadcast, warn the user, and let them confirm or cancel.
+    if (_recipient != _broadcastKey &&
+        !online.any((w) => w.id == _recipient)) {
+      setState(() => _recipient = _broadcastKey);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'النادل المحدد غير متصل — تم التحويل إلى "جميع النوادل". اضغط إرسال مرة أخرى للتأكيد.',
+          ),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
     }
+
     final text = _textCtrl.text.trim();
     if (text.isEmpty && !_ring) {
       // Nothing to deliver — at least one of text or ring should land.

@@ -190,6 +190,13 @@ class WaiterConfigStore extends ChangeNotifier {
 
   SyncedKitchenPrintersConfig? _kitchenPrinters;
   SyncedKdsEndpoint? _kdsEndpoint;
+  // Last broadcaster for each snapshot — used to tiebreak when two
+  // cashiers emit the same version millisecond so all peers converge.
+  // Not persisted: on restart we treat the stored snapshot as having
+  // a null source, which effectively loses the tiebreak and accepts
+  // any same-version update. Acceptable — single-cashier is the norm.
+  String? _lastKitchenPrintersSource;
+  String? _lastKdsEndpointSource;
   bool _loaded = false;
 
   SyncedKitchenPrintersConfig? get kitchenPrinters => _kitchenPrinters;
@@ -234,18 +241,36 @@ class WaiterConfigStore extends ChangeNotifier {
     }
   }
 
-  /// Accept a snapshot from the cashier. Rejects older versions to keep
-  /// out-of-order deliveries from clobbering newer state.
-  Future<bool> applyKitchenPrinters(Map<String, dynamic> payload) async {
+  /// Accept a snapshot from the cashier. Rejects strictly older
+  /// versions; on an exact version tie (two cashiers broadcast in the
+  /// same millisecond), the alphabetically-smaller [sourceId] wins so
+  /// every waiter converges on the same snapshot independent of
+  /// delivery order.
+  Future<bool> applyKitchenPrinters(
+    Map<String, dynamic> payload, {
+    String? sourceId,
+  }) async {
     await initialize();
     final incoming = SyncedKitchenPrintersConfig.fromJson(payload);
     final existing = _kitchenPrinters;
-    if (existing != null && incoming.version <= existing.version) {
-      debugPrint(
-          '↩️ WaiterConfigStore: rejecting stale printers v=${incoming.version} (stored v=${existing.version})');
-      return false;
+    if (existing != null) {
+      if (incoming.version < existing.version) {
+        debugPrint(
+            '↩️ WaiterConfigStore: rejecting stale printers v=${incoming.version} (stored v=${existing.version})');
+        return false;
+      }
+      if (incoming.version == existing.version) {
+        final existSrc = _lastKitchenPrintersSource;
+        final incomingSrc = sourceId ?? '';
+        // Same payload (same source) → idempotent no-op.
+        // Different source at same version → alphabetical tiebreak.
+        if (existSrc == null || incomingSrc.compareTo(existSrc) <= 0) {
+          return false;
+        }
+      }
     }
     _kitchenPrinters = incoming;
+    _lastKitchenPrintersSource = sourceId;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kitchenPrintersKey, jsonEncode(incoming.toJson()));
@@ -258,19 +283,31 @@ class WaiterConfigStore extends ChangeNotifier {
     return true;
   }
 
-  /// Accept a KDS endpoint snapshot. When the host/port change we
-  /// reconnect the existing [DisplayAppService] so the waiter's next
-  /// NEW_ORDER flows to the cashier's chosen KDS.
-  Future<bool> applyKdsEndpoint(Map<String, dynamic> payload) async {
+  /// Accept a KDS endpoint snapshot. Same version-then-source-id
+  /// tiebreak as [applyKitchenPrinters] so two cashiers converge.
+  Future<bool> applyKdsEndpoint(
+    Map<String, dynamic> payload, {
+    String? sourceId,
+  }) async {
     await initialize();
     final incoming = SyncedKdsEndpoint.fromJson(payload);
     final existing = _kdsEndpoint;
-    if (existing != null && incoming.version <= existing.version) {
-      debugPrint(
-          '↩️ WaiterConfigStore: rejecting stale KDS endpoint v=${incoming.version} (stored v=${existing.version})');
-      return false;
+    if (existing != null) {
+      if (incoming.version < existing.version) {
+        debugPrint(
+            '↩️ WaiterConfigStore: rejecting stale KDS endpoint v=${incoming.version} (stored v=${existing.version})');
+        return false;
+      }
+      if (incoming.version == existing.version) {
+        final existSrc = _lastKdsEndpointSource;
+        final incomingSrc = sourceId ?? '';
+        if (existSrc == null || incomingSrc.compareTo(existSrc) <= 0) {
+          return false;
+        }
+      }
     }
     _kdsEndpoint = incoming;
+    _lastKdsEndpointSource = sourceId;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kdsEndpointKey, jsonEncode(incoming.toJson()));
