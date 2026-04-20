@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
@@ -5,6 +7,7 @@ import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
 import '../models/waiter.dart';
 import '../services/waiter_controller.dart';
+import '../theme/waiter_design.dart';
 import '../widgets/waiter_status_chip.dart';
 
 /// Profile / status screen — lets the waiter change their availability and
@@ -41,10 +44,10 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(WaiterSpacing.lg),
       children: [
         _header(context, me),
-        const SizedBox(height: 24),
+        const SizedBox(height: WaiterSpacing.xl),
         Text(
           translationService.t('waiter_set_status'),
           style: TextStyle(
@@ -54,10 +57,10 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
             letterSpacing: 0.6,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: WaiterSpacing.sm),
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
+          spacing: WaiterSpacing.sm,
+          runSpacing: WaiterSpacing.sm,
           children: [
             for (final s in [
               WaiterStatus.free,
@@ -67,43 +70,82 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
               _StatusChoice(
                 status: s,
                 selected: me.status == s,
-                onTap: () => widget.controller.setStatus(s),
+                onTap: () {
+                  unawaited(WaiterHaptics.tick());
+                  widget.controller.setStatus(s);
+                },
               ),
           ],
         ),
-        const SizedBox(height: 32),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: context.appDanger,
-            side: BorderSide(color: context.appDanger),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+        const SizedBox(height: WaiterSpacing.xxl),
+        SizedBox(
+          height: WaiterSizes.primaryButtonHeight,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: context.appDanger,
+              side: BorderSide(color: context.appDanger),
+              padding: const EdgeInsets.symmetric(
+                vertical: WaiterSpacing.md + 2,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(WaiterRadius.md),
+              ),
             ),
+            icon: const Icon(LucideIcons.logOut),
+            label: Text(translationService.t('waiter_end_shift')),
+            onPressed: _confirmEndShift,
           ),
-          icon: const Icon(LucideIcons.logOut),
-          label: Text(translationService.t('waiter_end_shift')),
-          onPressed: () async {
-            // Always run signOut even if stop() throws — otherwise a
-            // failed network teardown would leave the device "signed in"
-            // from the session's perspective, and the next open would
-            // skip the login screen and try to re-use a half-dead shift.
-            try {
-              await widget.controller.stop();
-            } catch (e) {
-              debugPrint('⚠️ Waiter end-shift stop failed: $e');
-            }
-            try {
-              await widget.controller.session.signOut();
-            } catch (e) {
-              debugPrint('⚠️ Waiter end-shift signOut failed: $e');
-            }
-            if (!mounted) return;
-            Navigator.of(context).popUntil((r) => r.isFirst);
-          },
         ),
       ],
     );
+  }
+
+  Future<void> _confirmEndShift() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.appSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(WaiterRadius.lg),
+        ),
+        title: Text(translationService.t('waiter_end_shift')),
+        content: const Text(
+          'هل أنت متأكد من إنهاء الوردية؟ سيتم تسجيل خروجك من الجهاز.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(translationService.t('waiter_cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: context.appDanger,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(translationService.t('waiter_end_shift')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    unawaited(WaiterHaptics.warn());
+    // Always run signOut even if stop() throws — otherwise a failed
+    // network teardown would leave the device "signed in" from the
+    // session's perspective, and the next open would skip the login
+    // screen and try to re-use a half-dead shift.
+    try {
+      await widget.controller.stop();
+    } catch (e) {
+      debugPrint('⚠️ Waiter end-shift stop failed: $e');
+    }
+    try {
+      await widget.controller.session.signOut();
+    } catch (e) {
+      debugPrint('⚠️ Waiter end-shift signOut failed: $e');
+    }
+    if (!mounted) return;
+    Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
   Widget _header(BuildContext context, Waiter me) {

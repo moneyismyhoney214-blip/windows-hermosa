@@ -18,6 +18,7 @@ import '../services/waiter_controller.dart';
 import '../services/waiter_kitchen_bridge.dart';
 import '../services/waiter_order_outbox.dart';
 import '../services/waiter_table_registry.dart';
+import '../theme/waiter_design.dart';
 
 /// Screen where the waiter assembles the order for a specific table and
 /// fires it to the kitchen (KDS + printer) with one button.
@@ -282,18 +283,10 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
           items: _snapshotItems(),
         ),
       );
+      unawaited(WaiterHaptics.success());
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _bridge.isConnected
-                ? translationService.t('waiter_order_sent')
-                : translationService.t('waiter_order_queued'),
-          ),
-          duration: const Duration(seconds: 2),
-        ),
-      );
     } catch (e) {
+      unawaited(WaiterHaptics.warn());
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString())),
@@ -496,8 +489,11 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            iconSize: 18,
-            visualDensity: VisualDensity.compact,
+            iconSize: 22,
+            constraints: const BoxConstraints(
+              minWidth: WaiterSizes.minTapTarget,
+              minHeight: WaiterSizes.minTapTarget,
+            ),
             tooltip: translationService.t('waiter_item_note'),
             onPressed: () => _editItemNotes(i, item),
             icon: Icon(LucideIcons.stickyNote,
@@ -506,8 +502,11 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                     : context.appPrimary),
           ),
           IconButton(
-            iconSize: 18,
-            visualDensity: VisualDensity.compact,
+            iconSize: 22,
+            constraints: const BoxConstraints(
+              minWidth: WaiterSizes.minTapTarget,
+              minHeight: WaiterSizes.minTapTarget,
+            ),
             onPressed: () {
               final newQty = item.quantity - 1;
               if (newQty <= 0) {
@@ -535,8 +534,11 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
           Text('${item.quantity.toInt()}',
               style: TextStyle(color: context.appText)),
           IconButton(
-            iconSize: 18,
-            visualDensity: VisualDensity.compact,
+            iconSize: 22,
+            constraints: const BoxConstraints(
+              minWidth: WaiterSizes.minTapTarget,
+              minHeight: WaiterSizes.minTapTarget,
+            ),
             onPressed: () {
               _cart.updateItem(
                 widget.table.id,
@@ -557,8 +559,11 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
             icon: const Icon(LucideIcons.plus),
           ),
           IconButton(
-            iconSize: 18,
-            visualDensity: VisualDensity.compact,
+            iconSize: 22,
+            constraints: const BoxConstraints(
+              minWidth: WaiterSizes.minTapTarget,
+              minHeight: WaiterSizes.minTapTarget,
+            ),
             onPressed: () {
               _cart.removeItem(widget.table.id, i);
               _broadcastUpdate();
@@ -1021,7 +1026,11 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                 ),
                 const Spacer(),
                 IconButton(
-                  visualDensity: VisualDensity.compact,
+                  iconSize: 22,
+                  constraints: const BoxConstraints(
+                    minWidth: WaiterSizes.minTapTarget,
+                    minHeight: WaiterSizes.minTapTarget,
+                  ),
                   onPressed: _guests > 1
                       ? () {
                           setState(() => _guests--);
@@ -1038,7 +1047,11 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                       fontWeight: FontWeight.w700,
                     )),
                 IconButton(
-                  visualDensity: VisualDensity.compact,
+                  iconSize: 22,
+                  constraints: const BoxConstraints(
+                    minWidth: WaiterSizes.minTapTarget,
+                    minHeight: WaiterSizes.minTapTarget,
+                  ),
                   onPressed: () {
                     setState(() => _guests++);
                     _cart.setGuests(widget.table.id, _guests);

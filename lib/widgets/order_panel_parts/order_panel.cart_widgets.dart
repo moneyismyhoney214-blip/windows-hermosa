@@ -54,6 +54,62 @@ extension OrderPanelCartWidgets on _OrderPanelState {
   }
 
   Widget _buildCustomerInfo() {
+    // Table and customer used to share a single chip — selecting a table hid
+    // the customer button entirely. Render them as two separate stacked rows
+    // so the cashier can still open the customer picker while a table is set.
+    return Column(
+      children: [
+        if (widget.selectedTable != null) ...[
+          _buildTableChip(),
+          const SizedBox(height: 8),
+        ],
+        _buildCustomerChip(),
+      ],
+    );
+  }
+
+  Widget _buildTableChip() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: context.appSurfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: context.appPrimary),
+      ),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            radius: 16,
+            backgroundColor: Color(0xFFFFF7ED),
+            child: Icon(LucideIcons.layout,
+                size: 16, color: Color(0xFFC2410C)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              _tr(
+                'طاولة ${widget.selectedTable!.number}',
+                'Table ${widget.selectedTable!.number}',
+              ),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Color(0xFFC2410C),
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(LucideIcons.x, size: 16, color: Colors.red),
+            onPressed: widget.onCancelTable,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomerChip() {
     return InkWell(
       onTap: () async {
         final customer = await showDialog<Customer?>(
@@ -77,40 +133,29 @@ extension OrderPanelCartWidgets on _OrderPanelState {
           children: [
             CircleAvatar(
               radius: 16,
-              backgroundColor: widget.selectedTable != null ||
-                      widget.selectedCustomer != null
+              backgroundColor: widget.selectedCustomer != null
                   ? const Color(0xFFFFF7ED)
                   : const Color(0xFFE2E8F0),
-              child: Icon(
-                  widget.selectedTable != null
-                      ? LucideIcons.layout
-                      : LucideIcons.user,
+              child: Icon(LucideIcons.user,
                   size: 16,
-                  color: widget.selectedTable != null ||
-                          widget.selectedCustomer != null
+                  color: widget.selectedCustomer != null
                       ? const Color(0xFFC2410C)
                       : const Color(0xFF64748B)),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                  widget.selectedTable != null
-                      ? _tr(
-                          'طاولة ${widget.selectedTable!.number}',
-                          'Table ${widget.selectedTable!.number}',
-                        )
-                      : widget.selectedCustomer?.name ??
-                          ((widget.isSalonMode ||
-                                  widget.requireCustomerSelection)
-                              ? _tr('يجب اختيار عميل', 'Customer is required')
-                              : _tr(
-                                  'اختيار العميل (اختياري)',
-                                  'Select Customer (Optional)',
-                                )),
+                  widget.selectedCustomer?.name ??
+                      ((widget.isSalonMode ||
+                              widget.requireCustomerSelection)
+                          ? _tr('يجب اختيار عميل', 'Customer is required')
+                          : _tr(
+                              'اختيار العميل (اختياري)',
+                              'Select Customer (Optional)',
+                            )),
                   style: TextStyle(
                       fontWeight: FontWeight.bold,
-                      color: widget.selectedTable != null ||
-                              widget.selectedCustomer != null
+                      color: widget.selectedCustomer != null
                           ? const Color(0xFFC2410C)
                           : ((widget.isSalonMode ||
                                   widget.requireCustomerSelection)
@@ -118,14 +163,7 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                               : const Color(0xFF64748B))),
                   overflow: TextOverflow.ellipsis),
             ),
-            if (widget.selectedTable != null)
-              IconButton(
-                icon: const Icon(LucideIcons.x, size: 16, color: Colors.red),
-                onPressed: widget.onCancelTable,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              )
-            else if (widget.selectedCustomer != null)
+            if (widget.selectedCustomer != null)
               IconButton(
                 icon: const Icon(LucideIcons.x, size: 16, color: Colors.red),
                 onPressed: () => widget.onSelectCustomer(null),

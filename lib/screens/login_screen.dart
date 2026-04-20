@@ -9,6 +9,7 @@ import '../models/branch.dart';
 import 'branch_selection_screen.dart';
 import 'forgot_password_screen.dart';
 import 'main_screen.dart';
+import '../waiter_module/waiter_module_entry.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -111,20 +112,23 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (mounted) {
-        // Waiter-shortcut login path intentionally removed — every account
-        // now follows the standard branch-selection flow regardless of
-        // email. The waiter module source stays on disk but no UI path
-        // opens it.
+        // Waiter accounts (role=WAITER on /seller/employees) skip the cashier
+        // POS and land in the dedicated waiter module. With a single branch,
+        // jump straight in; otherwise still show branch selection — that
+        // screen will route waiters to WaiterModuleEntry on selection.
+        final isWaiter = authService.isWaiter();
 
-        if (branches.isNotEmpty) {
-          // Navigate to branch selection
+        if (isWaiter && branches.length <= 1) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const WaiterModuleEntry()),
+          );
+        } else if (branches.isNotEmpty) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (_) => BranchSelectionScreen(branches: branches),
             ),
           );
         } else {
-          // Fallback if no branches (should not happen for a valid seller)
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MainScreen()),
           );

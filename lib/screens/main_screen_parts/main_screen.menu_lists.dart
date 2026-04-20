@@ -6,11 +6,23 @@ extension MainScreenMenuLists on _MainScreenState {
     try {
       final productService = getIt<ProductService>();
       final lists = await productService.getMenuLists();
-      if (mounted) {
-        setState(() => _availableMenuLists = lists.where((m) => m['is_active'] == true).toList());
+      debugPrint('🔍 [MenuLists] Raw API returned ${lists.length} items');
+      for (var i = 0; i < lists.length; i++) {
+        final m = lists[i];
+        debugPrint('🔍 [MenuLists] #$i -> id=${m['id']} name=${m['name']} '
+            'is_active=${m['is_active']} (type=${m['is_active']?.runtimeType})');
       }
-    } catch (e) {
+      final filtered = lists.where((m) {
+        final v = m['is_active'];
+        return v == true || v == 1 || v == '1' || v?.toString().toLowerCase() == 'true';
+      }).toList();
+      debugPrint('🔍 [MenuLists] After is_active filter: ${filtered.length} items');
+      if (mounted) {
+        setState(() => _availableMenuLists = filtered);
+      }
+    } catch (e, st) {
       debugPrint('⚠️ Failed to fetch menu lists: $e');
+      debugPrint('$st');
     }
   }
 

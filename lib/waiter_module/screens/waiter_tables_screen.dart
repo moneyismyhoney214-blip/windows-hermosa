@@ -10,6 +10,8 @@ import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
 import '../services/waiter_controller.dart';
 import '../services/waiter_table_registry.dart';
+import '../theme/waiter_design.dart';
+import '../widgets/skeleton_grid.dart';
 import '../widgets/waiter_table_card.dart';
 import 'waiter_order_screen.dart';
 
@@ -134,7 +136,7 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return Center(child: CircularProgressIndicator(color: context.appPrimary));
+      return const SkeletonTablesGrid();
     }
     if (_error != null) {
       return _ErrorView(onRetry: _load, error: _error!);
@@ -153,11 +155,11 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
         final w = constraints.maxWidth;
         final maxExtent = w < 420 ? w : 220.0;
         return GridView.builder(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(WaiterSpacing.md),
           gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: maxExtent,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
+            mainAxisSpacing: WaiterSpacing.sm + 2,
+            crossAxisSpacing: WaiterSpacing.sm + 2,
             childAspectRatio: 1.35,
           ),
           itemCount: _tables.length,

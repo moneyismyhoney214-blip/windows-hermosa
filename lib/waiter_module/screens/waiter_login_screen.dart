@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
@@ -6,6 +8,7 @@ import '../../services/api/api_constants.dart';
 import '../../services/language_service.dart';
 import '../services/waiter_controller.dart';
 import '../services/waiter_session_service.dart';
+import '../theme/waiter_design.dart';
 import 'waiter_home_screen.dart';
 
 /// Entry screen for the waiter module — the user types or picks the name
@@ -53,6 +56,7 @@ class _WaiterLoginScreenState extends State<WaiterLoginScreen> {
         branchId: ApiConstants.branchId.toString(),
       );
       await widget.controller.start();
+      unawaited(WaiterHaptics.success());
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
@@ -60,6 +64,7 @@ class _WaiterLoginScreenState extends State<WaiterLoginScreen> {
         ),
       );
     } catch (e) {
+      unawaited(WaiterHaptics.warn());
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString())),
@@ -176,9 +181,9 @@ class _WaiterLoginScreenState extends State<WaiterLoginScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: WaiterSpacing.xl),
               SizedBox(
-                height: 48,
+                height: WaiterSizes.primaryButtonHeight,
                 child: ElevatedButton.icon(
                   onPressed: _busy ? null : _signIn,
                   icon: _busy
@@ -200,7 +205,8 @@ class _WaiterLoginScreenState extends State<WaiterLoginScreen> {
                       fontWeight: FontWeight.w700,
                     ),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius:
+                          BorderRadius.circular(WaiterRadius.md),
                     ),
                   ),
                 ),

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:hermosa_pos/models.dart';
 import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
@@ -357,8 +358,12 @@ class ProductService {
 
   Future<List<Map<String, dynamic>>> getMenuLists() async {
     final endpoint = ApiConstants.menuListsEndpoint;
+    debugPrint('🌐 [ProductService] GET $endpoint');
     final response = await _client.get(endpoint);
+    debugPrint('🌐 [ProductService] menuLists response keys: ${response.keys.toList()}');
     final data = response['data'];
+    debugPrint('🌐 [ProductService] data type=${data.runtimeType} '
+        'value=${data is List ? "List(len=${data.length})" : data}');
     if (data is List) {
       return data
           .whereType<Map>()

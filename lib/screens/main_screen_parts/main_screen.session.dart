@@ -7,6 +7,39 @@ extension MainScreenSession on _MainScreenState {
     return token != null && token.isNotEmpty && ApiConstants.branchId > 0;
   }
 
+  /// Join the waiter LAN mesh as a viewer so the cashier can broadcast
+  /// printer + KDS config to waiters. Safe to call repeatedly — the
+  /// bootstrap is idempotent and the controller restarts on branch
+  /// change internally.
+  void _startCashierMesh() {
+    if (ApiConstants.branchId <= 0) return;
+    final CashierMeshBootstrap bootstrap;
+    try {
+      bootstrap = getIt<CashierMeshBootstrap>();
+    } catch (_) {
+      return;
+    }
+    bootstrap.setDevicesProvider(() => _devices);
+    final user = getIt<AuthService>().getUser();
+    final rawName = user?['name']?.toString().trim() ?? '';
+    final name = rawName.isNotEmpty ? rawName : 'Cashier';
+    unawaited(bootstrap.start(
+      name: name,
+      branchId: ApiConstants.branchId.toString(),
+    ));
+  }
+
+  /// Notify every waiter that the cashier's printer config just
+  /// changed. Called from the add/edit/remove callsites in
+  /// [MainScreenDevices] and the printers tab view.
+  void _broadcastCashierPrintersConfig() {
+    try {
+      final bootstrap = getIt<CashierMeshBootstrap>();
+      if (!bootstrap.isStarted) return;
+      unawaited(bootstrap.broadcastKitchenPrintersConfig());
+    } catch (_) {}
+  }
+
   Future<void> _redirectToLogin() async {
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -58,6 +91,12 @@ extension MainScreenSession on _MainScreenState {
           }
         } catch (_) {}
       }
+
+      // Kick the waiter-mesh viewer once the branch is confirmed. Runs in
+      // parallel with the bootstrap data loads — the mesh doesn't need
+      // products / settings to come up, and the printer snapshot uses
+      // the provider callback so it stays accurate as devices load.
+      _startCashierMesh();
 
       // PERF: parallelize the independent bootstrap calls. Cashier settings,
       // user profile, branch settings, and initial data have no inter-deps,

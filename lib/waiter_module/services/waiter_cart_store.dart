@@ -81,6 +81,40 @@ class WaiterCartStore extends ChangeNotifier {
     if (removed || removedSent || removedGuests) notifyListeners();
   }
 
+  /// Carry the entire per-table cart (drafts + sent + guest count) over
+  /// to a different table id. Used by [WaiterController] when the
+  /// cashier migrates a party to a new table — the guests take their
+  /// already-fired order with them.
+  ///
+  /// Returns `true` if any state actually moved. If [newTableId] already
+  /// has items they are preserved and the incoming entries are appended
+  /// — this matches the "merge" semantics a chef would expect if the
+  /// destination table happened to have been touched separately.
+  bool moveTableCart(String oldTableId, String newTableId) {
+    if (oldTableId == newTableId) return false;
+    final draft = _carts.remove(oldTableId);
+    final sent = _sent.remove(oldTableId);
+    final guests = _guestCounts.remove(oldTableId);
+    if ((draft == null || draft.isEmpty) &&
+        (sent == null || sent.isEmpty) &&
+        guests == null) {
+      return false;
+    }
+    if (draft != null && draft.isNotEmpty) {
+      _carts.putIfAbsent(newTableId, () => <CartItem>[]).addAll(draft);
+    }
+    if (sent != null && sent.isNotEmpty) {
+      _sent.putIfAbsent(newTableId, () => <CartItem>[]).addAll(sent);
+    }
+    if (guests != null) {
+      // Destination wins if it already had a guest count — the party's
+      // size doesn't change just because the table did.
+      _guestCounts[newTableId] = _guestCounts[newTableId] ?? guests;
+    }
+    notifyListeners();
+    return true;
+  }
+
   double draftSubtotalFor(String tableId) =>
       itemsFor(tableId).fold<double>(0, (s, i) => s + i.totalPrice);
 

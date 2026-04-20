@@ -32,6 +32,7 @@ import '../services/printer_role_registry.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/nearpay/nearpay_service.dart';
 import '../services/app_themes.dart';
+import '../services/cashier_mesh_bootstrap.dart';
 import '../customer_display/nearpay/nearpay_bootstrap.dart';
 import '../customer_display/nearpay/nearpay_config_service.dart';
 import '../customer_display/nearpay/nearpay_service.dart' as np_local;
@@ -274,6 +275,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _productsScrollController.dispose();
     _orderNotesController.dispose();
     _carNumberController.dispose();
+    // Tear down the waiter-mesh viewer so logout / branch switch stops
+    // the cashier broadcasting into a session it no longer belongs to.
+    try {
+      unawaited(getIt<CashierMeshBootstrap>().stop());
+    } catch (_) {}
     super.dispose();
   }
 
@@ -318,25 +324,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             _selectedOrderType = _resolveOrderTypeForBooking(table);
             _activeTab = 'home';
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                translationService.t(
-                  'table_selected',
-                  args: {'number': table.number},
-                ),
-              ),
-              backgroundColor: const Color(0xFFF58220),
-              action: SnackBarAction(
-                label: translationService.t('cancel'),
-                textColor: Colors.white,
-                onPressed: () => setState(() {
-                  _selectedTable = null;
-                  _lastSelectedTable = null;
-                }),
-              ),
-            ),
-          );
 
           if (pendingType == 'payment') {
             WidgetsBinding.instance.addPostFrameCallback((_) {

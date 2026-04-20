@@ -615,6 +615,27 @@ class AuthService {
   /// Get cached user data
   Map<String, dynamic>? getUser() => _cachedUser;
 
+  /// True when the signed-in user is an employee with the WAITER role.
+  /// Matches the `/seller/employees` payload where `role` is set to
+  /// "WAITER" (case-insensitive).
+  bool isWaiter() {
+    final user = _cachedUser;
+    if (user == null) return false;
+    final candidates = <dynamic>[
+      user['role'],
+      user['user_role'],
+      user['employee_role'],
+      user['type'],
+    ];
+    for (final value in candidates) {
+      final token = value?.toString().trim().toLowerCase();
+      if (token != null && token.isNotEmpty) {
+        if (token == 'waiter') return true;
+      }
+    }
+    return false;
+  }
+
   /// Logout - clear token
   Future<void> logout() async {
     try {

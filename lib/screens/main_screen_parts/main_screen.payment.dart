@@ -1460,15 +1460,6 @@ extension MainScreenPayment on _MainScreenState {
         _clearCart();
       }
 
-      if (mounted) {
-        final successOrderRef = normalizeDisplayOrderRef(displayOrderRef);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(translationService.t('order_saved_with_number', args: {'number': successOrderRef.toString()})),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
 
       // Show "Thank you" on customer display immediately
       if (type == 'payment') {

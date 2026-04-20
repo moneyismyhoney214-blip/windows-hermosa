@@ -786,6 +786,11 @@ extension MainScreenDevices on _MainScreenState {
         ..addAll(devices);
     });
 
+    // Now that the device list is populated, push a fresh snapshot to
+    // every connected waiter — the first broadcast at mesh start fired
+    // with an empty list.
+    _broadcastCashierPrintersConfig();
+
     // Auto-connect all printers on startup
     unawaited(_autoConnectPrinters());
 
@@ -852,6 +857,7 @@ extension MainScreenDevices on _MainScreenState {
     }
     setState(() => _devices.add(created));
     print('🖥️ [MainScreen] Device added to _devices list');
+    _broadcastCashierPrintersConfig();
 
     if (_isDisplayDeviceType(created.type) && created.ip.isNotEmpty) {
       final displayService = getIt<DisplayAppService>();
@@ -894,5 +900,6 @@ extension MainScreenDevices on _MainScreenState {
 
     if (!mounted) return;
     setState(() => _devices.removeWhere((d) => d.id == id));
+    _broadcastCashierPrintersConfig();
   }
 }

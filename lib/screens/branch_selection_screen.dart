@@ -5,6 +5,7 @@ import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
 import '../locator.dart';
 import 'main_screen.dart';
+import '../waiter_module/waiter_module_entry.dart';
 
 class BranchSelectionScreen extends StatefulWidget {
   final List<Branch> branches;
@@ -43,8 +44,12 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
       await authService.updateActiveBranch(branch);
 
       if (mounted) {
+        // Waiters land in the waiter module; everyone else goes to the POS.
+        final nextScreen = authService.isWaiter()
+            ? const WaiterModuleEntry()
+            : const MainScreen();
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const MainScreen()),
+          MaterialPageRoute(builder: (_) => nextScreen),
         );
       }
     } catch (e) {

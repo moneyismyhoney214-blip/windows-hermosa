@@ -10,6 +10,7 @@ import '../../models.dart';
 import '../../services/app_themes.dart';
 import '../../services/api/device_service.dart';
 import '../../services/api/filter_service.dart';
+import '../../services/cashier_mesh_bootstrap.dart';
 import '../../services/category_printer_route_registry.dart';
 import '../../services/language_service.dart';
 import '../../services/print_orchestrator_service.dart';
@@ -17,6 +18,17 @@ import '../../services/printer_role_registry.dart';
 import '../../services/printer_service.dart';
 import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+/// Fire a kitchen-printer snapshot to every waiter on the LAN. Internally
+/// debounced (250 ms) so a burst of printer edits produces a single
+/// broadcast. Safe no-op if the cashier mesh hasn't started yet.
+void _notifyPrinterConfigChanged() {
+  try {
+    final bootstrap = getIt<CashierMeshBootstrap>();
+    if (!bootstrap.isStarted) return;
+    unawaited(bootstrap.broadcastKitchenPrintersConfig());
+  } catch (_) {}
+}
 
 class PrintersTabView extends StatefulWidget {
   final List<DeviceConfig> devices;
@@ -248,6 +260,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     if (mounted) setState(() => device.name = name);
     try {
       await _deviceService.updateLocalDeviceConfig(device);
+      _notifyPrinterConfigChanged();
     } catch (_) {
       if (mounted) setState(() => device.name = previous);
     }
@@ -259,6 +272,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     if (mounted) setState(() => device.ip = ip);
     try {
       await _deviceService.updateLocalDeviceConfig(device);
+      _notifyPrinterConfigChanged();
     } catch (_) {
       if (mounted) setState(() => device.ip = previous);
     }
@@ -280,6 +294,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
 
     try {
       await _deviceService.updateLocalDeviceConfig(device);
+      _notifyPrinterConfigChanged();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -411,6 +426,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
   ) async {
     print('🔧 _updatePrinterRole called: "${device.name}" id=${device.id} → ${role.storageValue}');
     await _roleRegistry.setRole(device.id, role);
+    _notifyPrinterConfigChanged();
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
@@ -528,29 +544,16 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     if (mounted) setState(() => _busyId = busyToken);
     try {
       final selectedSet = selected.where((id) => id.trim().isNotEmpty).toSet();
-      final printers = widget.devices.where(_isPrinter).toList(growable: false);
 
-      final updates = <String, Set<String>>{
-        printer.id: selectedSet,
-      };
-
-      for (final other in printers) {
-        if (other.id == printer.id) continue;
-        final existing =
-            _categoryRouteRegistry.categoryIdsForPrinter(other.id).toSet();
-        final filtered = existing.difference(selectedSet);
-        if (filtered.length != existing.length) {
-          updates[other.id] = filtered;
-        }
-      }
-
-      // Save locally only (no API)
-      for (final entry in updates.entries) {
-        await _categoryRouteRegistry.setCategoryAssignmentsForPrinter(
-          entry.key,
-          entry.value,
-        );
-      }
+      // Multiple printers may share the same category (e.g. a "tea" category
+      // routed to both the main kitchen and the drinks-bay printer). Only
+      // update the printer the cashier is editing — don't strip overlapping
+      // assignments from other printers.
+      await _categoryRouteRegistry.setCategoryAssignmentsForPrinter(
+        printer.id,
+        selectedSet,
+      );
+      _notifyPrinterConfigChanged();
 
       if (!mounted) return;
       setState(() {});
@@ -1473,6 +1476,9 @@ class _AddPrinterDialogState extends State<_AddPrinterDialog> {
         final registry = getIt<PrinterRoleRegistry>();
         await registry.initialize();
         await registry.setRole(newId, _role!);
+        // Role wasn't set when `onAdd` fired the first broadcast; fire
+        // again so waiters see the final role, not the inferred one.
+        _notifyPrinterConfigChanged();
       }
       if (mounted) Navigator.pop(context);
     } finally {
