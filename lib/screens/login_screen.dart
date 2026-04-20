@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
 import '../services/api/base_client.dart';
 import '../services/language_service.dart';
@@ -10,7 +9,6 @@ import '../models/branch.dart';
 import 'branch_selection_screen.dart';
 import 'forgot_password_screen.dart';
 import 'main_screen.dart';
-import '../waiter_module/services/waiter_session_service.dart';
 import '../waiter_module/waiter_module_entry.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -62,30 +60,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return byId.values.toList();
   }
 
-  /// Credentials that trigger the offline waiter-test shortcut. Kept
-  /// as a single source of truth so the check below and any future
-  /// hint text stay in sync. Change both strings to rotate the code.
-  static const String _waiterTestEmail = 'waiter';
-  static const String _waiterTestPassword = 'waiter';
-
-  /// Distinctive branch id used by the test shortcut. Real branches
-  /// on this backend are in the 1-1000 range; 99999 keeps the LAN
-  /// mesh from colliding with a real-branch session running on the
-  /// same Wi-Fi.
-  static const int _waiterTestBranchId = 99999;
-
   Future<void> _login() async {
-    // Offline test shortcut: "waiter" / "waiter" drops the user
-    // straight into the waiter module without hitting the backend.
-    // Runs BEFORE form validation so the bypass works even if
-    // validators ever require an email-shaped address.
-    final email = _emailController.text.trim().toLowerCase();
-    final pwd = _passwordController.text;
-    if (email == _waiterTestEmail && pwd == _waiterTestPassword) {
-      await _enterWaiterTestMode();
-      return;
-    }
-
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -171,56 +146,6 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
-    }
-  }
-
-  /// Offline waiter-test shortcut entered from [_login] when the user
-  /// types "waiter / waiter". Skips the backend entirely and pushes
-  /// into [WaiterModuleEntry] with a pre-signed-in waiter session on
-  /// a synthetic branch id, so the full LAN mesh (pickup, messaging,
-  /// migration, printer sync) is exercisable without a real account.
-  ///
-  /// Caveats:
-  ///   * No API token is issued → any flow that hits the backend
-  ///     (tables list, menu items) will show empty state. For pure
-  ///     UI + mesh testing between two devices on the same Wi-Fi
-  ///     this is enough; for full data testing, use a real account.
-  ///   * Persists `waiter_name = 'waiter'` + `waiter_branch_id =
-  ///     '99999'` to SharedPreferences. End-shift clears the name.
-  Future<void> _enterWaiterTestMode() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-    try {
-      // Branch-scope the synthetic mesh so it doesn't bleed into a
-      // real-branch session running on the same LAN.
-      ApiConstants.branchId = _waiterTestBranchId;
-      ApiConstants.branchModule = 'restaurants';
-
-      final session = getIt<WaiterSessionService>();
-      await session.initialize(branchId: '$_waiterTestBranchId');
-      await session.signIn(
-        name: 'waiter',
-        branchId: '$_waiterTestBranchId',
-      );
-
-      if (!mounted) return;
-      // `push` (not pushReplacement) so the LoginScreen remains
-      // under the waiter module — when the tester ends the shift
-      // the stack unwinds back here and they can try real login.
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const WaiterModuleEntry(),
-        ),
-      );
-    } catch (e) {
-      print('❌ Waiter test mode failed: $e');
-      if (mounted) {
-        setState(() => _errorMessage = 'Test mode failed: $e');
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
     }
   }
 
