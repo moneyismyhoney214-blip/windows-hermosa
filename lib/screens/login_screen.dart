@@ -102,13 +102,22 @@ class _LoginScreenState extends State<LoginScreen> {
             .toList();
       }
 
-      List<Branch> branches = [];
-      try {
-        final fetched = await authService.getBranches();
-        branches = _mergeUniqueBranches([...fetched, ...branchesFromLogin]);
-      } catch (_) {
-        // Keep flow resilient; main screen bootstrap handles final fallback.
-        branches = branchesFromLogin;
+      // WAITER accounts have no permission on /seller/branches — hitting
+      // that endpoint returns 401, which fires BaseClient's global
+      // onUnauthorized hook and signs the freshly-logged-in waiter out
+      // again. The login payload already embeds every branch the
+      // waiter belongs to, so we skip the extra fetch for them and
+      // only merge/enrich for owner/manager roles.
+      final isWaiter = authService.isWaiter();
+      List<Branch> branches = branchesFromLogin;
+      if (!isWaiter) {
+        try {
+          final fetched = await authService.getBranches();
+          branches = _mergeUniqueBranches([...fetched, ...branchesFromLogin]);
+        } catch (_) {
+          // Keep flow resilient; main screen bootstrap handles final fallback.
+          branches = branchesFromLogin;
+        }
       }
 
       if (mounted) {
@@ -116,7 +125,6 @@ class _LoginScreenState extends State<LoginScreen> {
         // POS and land in the dedicated waiter module. With a single branch,
         // jump straight in; otherwise still show branch selection — that
         // screen will route waiters to WaiterModuleEntry on selection.
-        final isWaiter = authService.isWaiter();
 
         if (isWaiter && branches.length <= 1) {
           Navigator.of(context).pushReplacement(

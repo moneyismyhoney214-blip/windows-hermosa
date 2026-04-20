@@ -31,6 +31,11 @@
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
+
+    <!-- Sunmi customer-display permission. Harmless on non-Sunmi devices
+         (the system simply grants a no-op). Without it, some Sunmi firmware
+         builds refuse to let us launch an Activity on the OEM second screen. -->
+    <uses-permission android:name="com.sunmi.permission.DISPLAYER" />
     
     <application
         android:label="Hermosa"
@@ -62,14 +67,30 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- Customer Display Activity for secondary screen (Sunmi D2s, etc.) -->
+        <!-- Customer Display Activity for secondary screen (Sunmi D2s, etc.).
+             The extra attributes are required for reliable launch on real
+             Sunmi hardware:
+               • resizeableActivity: Android 11+ refuses placement on
+                 non-default displays without this.
+               • showForAllUsers: OEM firmware sometimes runs the second
+                 screen under a different user context.
+               • excludeFromRecents + taskAffinity="": keeps the CDS out
+                 of the cashier's task list so a back-swipe can't kill it.
+               • screenOrientation=landscape: matches the physical
+                 orientation of Sunmi customer-facing screens.
+             -->
         <activity
             android:name=".CustomerDisplayActivity"
             android:exported="false"
             android:launchMode="singleInstance"
             android:theme="@style/NormalTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:hardwareAccelerated="true" />
+            android:hardwareAccelerated="true"
+            android:resizeableActivity="true"
+            android:showForAllUsers="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:screenOrientation="sensorLandscape" />
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
