@@ -1,6 +1,6 @@
 {
-    "name": "cashier_app",
-    "short_name": "cashier_app",
+    "name": "Hermosa",
+    "short_name": "Hermosa",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
