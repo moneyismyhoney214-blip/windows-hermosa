@@ -19,6 +19,21 @@ workflows:
         script: C:\flutter\bin\flutter.bat doctor -v
       - name: Enable Windows desktop
         script: C:\flutter\bin\flutter.bat config --enable-windows-desktop
+      - name: Restore NearPay developer cert (optional)
+        script: |
+          # pubspec.yaml declares assets/certs/ as an asset bundle. The
+          # real developer_cert.pem is not committed to the repo; if a
+          # Codemagic secure variable named DEVELOPER_CERT_PEM is set,
+          # materialize it here so NearPay works in the built binary.
+          # Without the env var the build still succeeds (runtime loader
+          # catches the missing cert and keeps NearPay disabled).
+          New-Item -ItemType Directory -Force -Path assets\certs | Out-Null
+          if ($env:DEVELOPER_CERT_PEM) {
+            Write-Host "ℹ️ Restoring developer_cert.pem from DEVELOPER_CERT_PEM secret"
+            [System.IO.File]::WriteAllText("assets\certs\developer_cert.pem", $env:DEVELOPER_CERT_PEM)
+          } else {
+            Write-Host "⚠️ DEVELOPER_CERT_PEM not set — NearPay will run disabled in this build."
+          }
       - name: Clean project
         script: C:\flutter\bin\flutter.bat clean
       - name: Get Flutter packages
