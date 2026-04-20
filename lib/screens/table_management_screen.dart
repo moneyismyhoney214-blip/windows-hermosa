@@ -220,6 +220,31 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     if (picked == null) return;
     if (!mounted) return;
 
+    // Re-validate the destination right before broadcasting. Between
+    // dialog open and the cashier picking, a waiter may have claimed
+    // the destination (via استلام) or the table may have been
+    // deactivated by admin — we must NOT overwrite an occupied table
+    // with the source's cart, which would merge two parties' orders.
+    final latest = _tables.firstWhere(
+      (t) => t.id == picked.id,
+      orElse: () => picked,
+    );
+    final stillAvailable = latest.status == TableStatus.available &&
+        (_deactivatedTables[picked.id] ?? false) == false &&
+        _pickupByTable[picked.id]?.isClaimed != true;
+    if (!stillAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'الطاولة ${picked.number} لم تعد متاحة — النقل ملغي.',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     // Fire the broadcast — the owning waiter will shuffle its cart and
     // re-broadcast release+assign, which our _onTableEvent listener
     // then applies to the local _tables list.
