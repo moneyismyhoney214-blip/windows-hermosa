@@ -139,6 +139,15 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
     } catch (e) {
       debugPrint('⚠️ Waiter end-shift stop failed: $e');
     }
+    // Wipe session-scoped state so the next waiter on the device
+    // doesn't see the previous shift's drafts / pickups / messages /
+    // owned tables. Must run AFTER stop() so any in-flight writes
+    // from message handlers don't re-populate the stores.
+    try {
+      widget.controller.clearSessionStores();
+    } catch (e) {
+      debugPrint('⚠️ Waiter end-shift store clear failed: $e');
+    }
     try {
       await widget.controller.session.signOut();
     } catch (e) {

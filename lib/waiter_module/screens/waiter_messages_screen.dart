@@ -197,7 +197,7 @@ class _NotificationTile extends StatelessWidget {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          'الكاشير',
+                          translationService.t('cashier'),
                           style: TextStyle(
                             color: accent,
                             fontSize: 10,

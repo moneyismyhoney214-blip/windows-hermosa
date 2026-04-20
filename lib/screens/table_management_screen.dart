@@ -222,16 +222,30 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
 
     // Re-validate the destination right before broadcasting. Between
     // dialog open and the cashier picking, a waiter may have claimed
-    // the destination (via استلام) or the table may have been
-    // deactivated by admin — we must NOT overwrite an occupied table
-    // with the source's cart, which would merge two parties' orders.
-    final latest = _tables.firstWhere(
-      (t) => t.id == picked.id,
-      orElse: () => picked,
-    );
+    // the destination (via استلام), a pickup request may be pending
+    // on it, or the table may have been deleted/deactivated by admin
+    // — we must NOT overwrite it with the source's cart, which would
+    // merge two parties' orders.
+    final latestIdx = _tables.indexWhere((t) => t.id == picked.id);
+    if (latestIdx < 0) {
+      // Table was removed from the list entirely.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'الطاولة ${picked.number} لم تعد موجودة — النقل ملغي.',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    final latest = _tables[latestIdx];
+    final pending = _pickupByTable[picked.id];
     final stillAvailable = latest.status == TableStatus.available &&
         (_deactivatedTables[picked.id] ?? false) == false &&
-        _pickupByTable[picked.id]?.isClaimed != true;
+        pending?.isClaimed != true &&
+        pending?.isPending != true;
     if (!stillAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

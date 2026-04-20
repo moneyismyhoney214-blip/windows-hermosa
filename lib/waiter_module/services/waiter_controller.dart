@@ -167,10 +167,31 @@ class WaiterController extends ChangeNotifier {
       debugPrint(
           '🔄 ensureViewer: branch switched ($current → $branchId), restarting');
       await stop();
+      // Previous branch's mesh state must not leak into the new one.
+      // tableRegistry, messageStore, pickupStore all hold data scoped
+      // to the prior branch — clear before the new identity goes live.
+      clearSessionStores();
     }
     debugPrint('👁️ ensureViewer starting on branch $branchId');
     await session.assignViewerIdentity(name: name, branchId: branchId);
     await start();
+  }
+
+  /// Wipe every in-memory store that holds session-scoped data. Called
+  /// on logout (end-shift) and branch switch so the next user/branch
+  /// starts with a clean slate and doesn't inherit the previous
+  /// shift's drafts, claimed pickups, notifications, or table
+  /// ownership. Config (printer list + KDS endpoint) is NOT cleared —
+  /// that's the cashier's domain and survives the waiter turnover.
+  void clearSessionStores() {
+    messages.clear();
+    pickupStore.clear();
+    tableRegistry.clearAll();
+    roster.clear();
+    try {
+      getIt<WaiterCartStore>().clearAll();
+    } catch (_) {}
+    debugPrint('🧹 waiter session stores cleared');
   }
 
   Future<void> start() async {
@@ -847,6 +868,16 @@ class WaiterController extends ChangeNotifier {
         // Cashier echoes its own broadcast (self-loop already filtered
         // above). For a viewer the best action is to record — a second
         // cashier on the LAN shouldn't silently diverge.
+        //
+        // Anti-spoof: only a viewer (cashier) legitimately issues
+        // pickup requests. Reject if the sender isn't one, otherwise
+        // any waiter could fabricate "cashier X requested a pickup"
+        // and every tablet would ring.
+        if (!msg.senderId.startsWith(Waiter.viewerIdPrefix)) {
+          debugPrint(
+              '⚠️ dropping TABLE_PICKUP_REQUEST from non-viewer sender=${msg.senderId}');
+          break;
+        }
         try {
           final req = TablePickupRequest.fromJson(msg.data);
           final recorded = pickupStore.recordRequest(req);
@@ -912,6 +943,15 @@ class WaiterController extends ChangeNotifier {
         break;
 
       case WireMessageType.tablePickupCancelled:
+        // Anti-spoof: only cashiers can cancel. Without this a rogue
+        // waiter could dismiss a pending request from other waiters'
+        // banners. We enforce viewer-prefix on the sender id since
+        // that's the LAN-level marker for "this peer is a cashier".
+        if (!msg.senderId.startsWith(Waiter.viewerIdPrefix)) {
+          debugPrint(
+              '⚠️ dropping TABLE_PICKUP_CANCELLED from non-viewer sender=${msg.senderId}');
+          break;
+        }
         try {
           final rid = msg.data['request_id']?.toString() ?? '';
           if (rid.isEmpty) break;

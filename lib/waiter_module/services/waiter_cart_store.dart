@@ -81,6 +81,18 @@ class WaiterCartStore extends ChangeNotifier {
     if (removed || removedSent || removedGuests) notifyListeners();
   }
 
+  /// Wipe every table's draft + sent cart + guest count. Used when a
+  /// waiter ends their shift or a cashier switches branch — the next
+  /// user of the device shouldn't see the previous session's in-flight
+  /// orders.
+  void clearAll() {
+    if (_carts.isEmpty && _sent.isEmpty && _guestCounts.isEmpty) return;
+    _carts.clear();
+    _sent.clear();
+    _guestCounts.clear();
+    notifyListeners();
+  }
+
   /// Carry the entire per-table cart (drafts + sent + guest count) over
   /// to a different table id. Used by [WaiterController] when the
   /// cashier migrates a party to a new table — the guests take their
