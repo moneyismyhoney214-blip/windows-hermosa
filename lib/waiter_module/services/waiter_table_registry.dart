@@ -102,6 +102,14 @@ class WaiterTableRegistry extends ChangeNotifier {
     }
     if (removed.isNotEmpty) notifyListeners();
   }
+
+  /// Drop every ownership record. Used on branch switch / logout so the
+  /// next session doesn't inherit the previous shift's table state.
+  void clearAll() {
+    if (_byTableId.isEmpty) return;
+    _byTableId.clear();
+    notifyListeners();
+  }
 }
 
 @immutable

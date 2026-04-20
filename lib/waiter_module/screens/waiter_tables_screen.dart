@@ -180,6 +180,11 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
                       : TableStatus.available)
               ..waiterName = ownerName ?? t.waiterName;
             return WaiterTableCard(
+              // Stable per-table key lets Flutter reuse the underlying
+              // Element + State when the grid re-sorts (e.g. a peer
+              // HELLO shuffles ownership); without this the list can
+              // rebuild cards from scratch and flicker scroll state.
+              key: ValueKey('waiter_table_${t.id}'),
               table: overlaid,
               currentWaiterId: widget.controller.session.self!.id,
               ownerWaiterId: ownerId,
