@@ -33,7 +33,7 @@
     <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
     
     <application
-        android:label="cashier_app"
+        android:label="Hermosa"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
