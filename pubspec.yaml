@@ -51,6 +51,16 @@ dependencies:
   provider: ^6.0.0
   wakelock_plus: ^1.1.0
   sqflite: ^2.3.0
+  # Desktop (Windows/Linux/macOS) SQLite backend for the daily-closing
+  # report + offline stores. `sqflite_common_ffi` used to live in
+  # dev_dependencies, which meant the production Windows build was
+  # missing the plugin registration and the `databaseFactory` assignment
+  # in main.dart would throw at runtime. Moved here so it ships with
+  # the app. `sqlite3_flutter_libs` bundles the native sqlite3.dll /
+  # .so / .dylib alongside the executable — without it sqflite_ffi
+  # fails with "Couldn't resolve native function 'sqlite3_initialize'".
+  sqflite_common_ffi: ^2.3.0
+  sqlite3_flutter_libs: ^0.5.0
   connectivity_plus: ^5.0.0
   device_info_plus: ^9.0.0
   nfc_manager: any
@@ -74,7 +84,6 @@ dev_dependencies:
   build_runner: ^2.11.1
   json_serializable: ^6.12.0
   mockito: ^5.6.3
-  sqflite_common_ffi: ^2.3.0
 
   async: any
   stream_channel: any
