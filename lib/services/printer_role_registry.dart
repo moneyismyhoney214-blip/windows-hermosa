@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models.dart';
+import 'api/api_constants.dart';
 
 enum PrinterRole {
   kitchen,
@@ -31,7 +32,12 @@ extension PrinterRoleX on PrinterRole {
   String get labelAr {
     switch (this) {
       case PrinterRole.kitchen:
-        return 'طابعة المطبخ';
+        // Salon branches rename the kitchen role to "طابعة الأدوار" because
+        // the ticket printed is a per-service turn slip, not a kitchen order.
+        // Restaurant wording stays untouched.
+        return ApiConstants.branchModule == 'salons'
+            ? 'طابعة الأدوار'
+            : 'طابعة المطبخ';
       case PrinterRole.cashierReceipt:
         return 'طابعة الكاشير (إيصال)';
       case PrinterRole.kds:

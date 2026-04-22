@@ -1098,6 +1098,17 @@ extension MainScreenKitchenPrint on _MainScreenState {
   }) async {
     if (!_printKitchenInvoices) return;
 
+    // Salon mode replaces the kitchen ticket with one turn slip per booked
+    // service (طابعة الأدوار). Delegate immediately so none of the
+    // restaurant-specific grouping / kitchen-id resolution runs.
+    if (_isSalonMode) {
+      await _triggerSalonTurnPrint(
+        orderId: orderId,
+        invoiceNumber: invoiceNumber,
+      );
+      return;
+    }
+
     List<DeviceConfig> kitchenPrinters = const [];
     try {
       final deviceService = getIt<DeviceService>();
@@ -1426,4 +1437,161 @@ extension MainScreenKitchenPrint on _MainScreenState {
       print('⚠️ Failed to enqueue kitchen fallback print for #$orderId: $e');
     }
   }
+
+  // ── Salon module: per-service turn slip (طابعة الأدوار) ────────────
+  //
+  // Emits one ticket per salon cart item to every printer tagged with the
+  // kitchen/KDS/bar role — same targeting as the restaurant kitchen print,
+  // but with a distinct layout (see `_buildSalonTurnView`). The orchestrator
+  // is bypassed: salon tickets don't share the kitchen's grouping/backend
+  // receipt-generation semantics, and each service counts as an independent
+  // job (a booking with 3 services prints 3 tickets per printer).
+  Future<void> _triggerSalonTurnPrint({
+    required String orderId,
+    String? invoiceNumber,
+  }) async {
+    try {
+      final deviceService = getIt<DeviceService>();
+      final roleRegistry = getIt<PrinterRoleRegistry>();
+      await roleRegistry.initialize();
+
+      var printers =
+          (await deviceService.getDevices()).where(_isUsablePrinter).toList();
+      if (printers.isEmpty) {
+        printers = _devices.where(_isUsablePrinter).toList(growable: false);
+      }
+      printers = printers.where((p) {
+        final role = roleRegistry.resolveRole(p);
+        return role == PrinterRole.kitchen ||
+            role == PrinterRole.kds ||
+            role == PrinterRole.bar;
+      }).toList(growable: false);
+      if (printers.isEmpty) {
+        debugPrint('ℹ️ No salon turn printer found, skipping turn slip');
+        return;
+      }
+
+      // Build the list of (service, employee, price) rows from the current
+      // cart. Each cart item carries its salonData snapshot.
+      final salonServices = <_SalonTurnRow>[];
+      final employeeLookup = <int, String>{
+        for (final e in _salonEmployees)
+          if (e['id'] is num) (e['id'] as num).toInt(): (e['name'] ?? '').toString(),
+      };
+      for (final item in _cart) {
+        final salon = item.salonData ?? const <String, dynamic>{};
+        final empRaw = salon['employee_id'];
+        final empId = empRaw is num
+            ? empRaw.toInt()
+            : (empRaw is String ? int.tryParse(empRaw) : null);
+        final employeeName = (salon['employee_name']?.toString().trim().isNotEmpty ==
+                true)
+            ? salon['employee_name'].toString()
+            : (empId != null ? (employeeLookup[empId] ?? '') : '');
+        salonServices.add(_SalonTurnRow(
+          serviceName: (salon['item_name']?.toString().trim().isNotEmpty == true
+                  ? salon['item_name'].toString()
+                  : item.product.name),
+          employeeName: employeeName,
+          price: item.product.price * item.quantity,
+        ));
+      }
+      if (salonServices.isEmpty) return;
+
+      final dateStr = (salonServices.isNotEmpty &&
+              _cart.isNotEmpty &&
+              _cart.first.salonData?['date']?.toString().isNotEmpty == true)
+          ? _cart.first.salonData!['date'].toString()
+          : DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final timeStr = (_cart.isNotEmpty &&
+              _cart.first.salonData?['time']?.toString().isNotEmpty == true)
+          ? _cart.first.salonData!['time'].toString()
+          : DateFormat('hh:mm a').format(DateTime.now());
+
+      final bookingNumber = orderId;
+      final resolvedInvoiceNumber = (invoiceNumber?.trim().isNotEmpty == true)
+          ? invoiceNumber!
+          : '#$orderId';
+
+      final customerName = (_selectedCustomer?.name.trim().isNotEmpty == true)
+          ? _selectedCustomer!.name
+          : '-';
+
+      // Shop header — reuse the cashier-receipt cached seller/branch info.
+      final sellerAr = _firstNonEmptyText(<dynamic>[
+        _cachedBranchMap?['seller_name'],
+        _cachedBranchMap?['name'],
+        _cachedSellerInfo?['name'],
+      ]);
+      final sellerEn = _cachedSellerNameEn;
+      final addressLine = _firstNonEmptyText(<dynamic>[
+        _cachedBranchMap?['address'],
+        _cachedBranchAddressEn,
+      ]);
+      final phones = <String>[];
+      final branchPhone = _firstNonEmptyText(<dynamic>[
+        _cachedBranchMap?['mobile'],
+        _cachedBranchMap?['phone'],
+        _cachedSellerInfo?['mobile'],
+        _cachedSellerInfo?['phone'],
+      ]);
+      if (branchPhone != null && branchPhone.isNotEmpty) {
+        phones.add(branchPhone);
+      }
+
+      // The backend exposes the uploaded brand logo as `seller.logo`. It may
+      // live at the top of the cached seller map or nested inside the branch
+      // map depending on which API hydrated the cache first.
+      final logoUrl = _firstNonEmptyText(<dynamic>[
+        _cachedSellerInfo?['logo'],
+        _cachedBranchMap?['seller'] is Map
+            ? (_cachedBranchMap!['seller'] as Map)['logo']
+            : null,
+        _cachedBranchMap?['logo'],
+      ]);
+
+      final printerService = getIt<PrinterService>();
+
+      for (var i = 0; i < salonServices.length; i++) {
+        final row = salonServices[i];
+        final priceFormatted = row.price.toStringAsFixed(2);
+        for (final printer in printers) {
+          try {
+            await printerService.printSalonTurnTicket(
+              printer,
+              invoiceNumber: resolvedInvoiceNumber,
+              bookingNumber: bookingNumber,
+              dateStr: dateStr,
+              timeStr: timeStr,
+              serviceIndex: i + 1,
+              customerName: customerName,
+              serviceName: row.serviceName,
+              employeeName: row.employeeName.isNotEmpty ? row.employeeName : '-',
+              priceFormatted: priceFormatted,
+              sellerNameAr: sellerAr,
+              sellerNameEn: sellerEn,
+              addressLine: addressLine,
+              phones: phones,
+              logoUrl: logoUrl,
+            );
+          } catch (e) {
+            debugPrint('⚠️ Salon turn print failed on ${printer.name}: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ _triggerSalonTurnPrint failed: $e');
+    }
+  }
+}
+
+class _SalonTurnRow {
+  final String serviceName;
+  final String employeeName;
+  final double price;
+  const _SalonTurnRow({
+    required this.serviceName,
+    required this.employeeName,
+    required this.price,
+  });
 }

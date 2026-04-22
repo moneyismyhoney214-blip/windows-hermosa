@@ -17,6 +17,18 @@ class PaymentTenderDialog extends StatefulWidget {
   final PromoCode? appliedPromoCode;
   final ValueChanged<PromoCode?>? onPromoCodeChanged;
 
+  /// Salon-only: deposits available on the selected customer. Shape per entry:
+  /// `{label: "#DP-N", value: depositId, price: principal, ...}`.
+  final List<Map<String, dynamic>> availableDeposits;
+
+  /// Salon-only: currently applied deposit id, if any. The dialog keeps a
+  /// local copy so the cashier can change the selection without closing.
+  final int? selectedDepositId;
+
+  /// Salon-only: invoked whenever the cashier picks (or clears) a deposit so
+  /// the parent can forward the id to the invoice create/calculate payload.
+  final ValueChanged<int?>? onSelectDeposit;
+
   const PaymentTenderDialog({
     super.key,
     required this.total,
@@ -47,6 +59,9 @@ class PaymentTenderDialog extends StatefulWidget {
     this.promocodes = const [],
     this.appliedPromoCode,
     this.onPromoCodeChanged,
+    this.availableDeposits = const [],
+    this.selectedDepositId,
+    this.onSelectDeposit,
   });
 
   @override
@@ -56,6 +71,7 @@ class PaymentTenderDialog extends StatefulWidget {
 class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
   String? _selectedMethod;
   PromoCode? _localPromo;
+  int? _localDepositId;
   final TextEditingController _noteController = TextEditingController();
 
   bool get _useArabicUi {
@@ -65,12 +81,56 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
 
   String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
+  /// Pre-tax principal of the currently picked deposit (0 if none / unknown).
+  double get _depositPricePreTax {
+    if (_localDepositId == null) return 0.0;
+    for (final d in widget.availableDeposits) {
+      final v = d['value'];
+      final id = v is int
+          ? v
+          : (v is num
+              ? v.toInt()
+              : (v is String ? int.tryParse(v) : null));
+      if (id == _localDepositId) {
+        final p = d['price'];
+        if (p is num) return p.toDouble();
+        if (p is String) return double.tryParse(p) ?? 0.0;
+        return 0.0;
+      }
+    }
+    return 0.0;
+  }
+
+  /// Tax-inclusive deduction the server will apply for the selected deposit.
+  /// Mirrors the server formula observed in HAR: `pre_paid = price × (1 + tax)`.
+  double get _depositDeductionWithTax =>
+      _depositPricePreTax * (1 + widget.taxRate.clamp(0.0, 1.0));
+
+  /// The amount the cashier actually needs to collect after a deposit is
+  /// applied. Matches `data.invoice.total` from the calculate endpoint.
+  double get _effectiveTotal {
+    final net = widget.total - _depositDeductionWithTax;
+    return net < 0 ? 0.0 : double.parse(net.toStringAsFixed(2));
+  }
+
+  /// Deposits that would exceed the invoice total are rejected by the server
+  /// (422). We guard locally so the cashier only sees valid options.
+  bool _isDepositApplicable(Map<String, dynamic> deposit) {
+    if (widget.total <= 0) return false;
+    final p = deposit['price'];
+    final price = p is num
+        ? p.toDouble()
+        : (p is String ? (double.tryParse(p) ?? 0.0) : 0.0);
+    return price > 0 &&
+        price * (1 + widget.taxRate.clamp(0.0, 1.0)) <= widget.total + 0.01;
+  }
+
   Future<void> _handleSplitPayment() async {
     final List<Map<String, dynamic>>? result =
         await showDialog<List<Map<String, dynamic>>>(
       context: context,
       builder: (context) => SplitPaymentDialog(
-        total: widget.total,
+        total: _effectiveTotal,
         enabledMethods: widget.enabledMethods,
       ),
     );
@@ -250,6 +310,13 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
   void initState() {
     super.initState();
     _localPromo = widget.appliedPromoCode;
+    _localDepositId = widget.selectedDepositId;
+  }
+
+  void _pickDeposit(int? id) {
+    if (id == _localDepositId) return;
+    setState(() => _localDepositId = id);
+    widget.onSelectDeposit?.call(id);
   }
 
   void _pushNote() {
@@ -283,7 +350,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         {
           'name': method['label'],
           'pay_method': method['id'],
-          'amount': widget.total,
+          'amount': _effectiveTotal,
           'index': 0,
         }
       ]);
@@ -297,6 +364,8 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
     required double tax,
     required bool isCompact,
   }) {
+    final depositDeduction = _depositDeductionWithTax;
+    final hasDeposit = depositDeduction > 0;
     return _SectionCard(
       title: _tr('ملخص الفاتورة', 'Invoice Summary'),
       icon: LucideIcons.receipt,
@@ -325,15 +394,251 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
             strong: true,
             compact: isCompact,
           ),
+          if (hasDeposit) ...[
+            const SizedBox(height: 6),
+            _SummaryLine(
+              label: _tr('عربون', 'Deposit'),
+              value: '- ${depositDeduction.toStringAsFixed(2)}',
+              valueColor: const Color(0xFF22C55E),
+              compact: isCompact,
+            ),
+          ],
+          if (widget.onSelectDeposit != null) ...[
+            const SizedBox(height: 8),
+            _buildDepositPickerInline(isCompact: isCompact),
+          ],
           const Divider(height: 20),
           _SummaryLine(
             label: translationService.t('remaining_amount'),
-            value: widget.total.toStringAsFixed(2),
+            value: _effectiveTotal.toStringAsFixed(2),
             strong: true,
             valueColor: const Color(0xFFF58220),
             compact: isCompact,
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDepositPickerInline({required bool isCompact}) {
+    final deposits = widget.availableDeposits;
+    if (deposits.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Row(
+          children: [
+            const Icon(LucideIcons.wallet,
+                size: 16, color: Color(0xFF94A3B8)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _tr('لا يوجد عرابين لهذا العميل',
+                    'No deposits for this customer'),
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF64748B)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final selectedId = _localDepositId;
+    final selected = selectedId == null
+        ? null
+        : deposits.firstWhere(
+            (d) {
+              final v = d['value'];
+              final id = v is int
+                  ? v
+                  : (v is num
+                      ? v.toInt()
+                      : (v is String ? int.tryParse(v) : null));
+              return id == selectedId;
+            },
+            orElse: () => const {},
+          );
+    final hasSelection = selected != null && selected.isNotEmpty;
+
+    return InkWell(
+      onTap: _openDepositPickerSheet,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding:
+            EdgeInsets.symmetric(horizontal: 10, vertical: isCompact ? 8 : 10),
+        decoration: BoxDecoration(
+          color: hasSelection
+              ? const Color(0xFFEAFBEF)
+              : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: hasSelection
+                ? const Color(0xFF22C55E)
+                : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(LucideIcons.wallet,
+                size: 16,
+                color: hasSelection
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFF64748B)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                hasSelection
+                    ? '${_tr('عربون مطبّق', 'Deposit applied')}: ${selected['label'] ?? ''}'
+                    : _tr(
+                        'اختر عربون (${deposits.length})',
+                        'Apply a deposit (${deposits.length})',
+                      ),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: hasSelection
+                      ? const Color(0xFF15803D)
+                      : const Color(0xFF0F172A),
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (hasSelection)
+              InkWell(
+                onTap: () => _pickDeposit(null),
+                borderRadius: BorderRadius.circular(16),
+                child: const Padding(
+                  padding: EdgeInsets.all(2),
+                  child: Icon(LucideIcons.x,
+                      size: 14, color: Color(0xFF64748B)),
+                ),
+              )
+            else
+              const Icon(LucideIcons.chevronLeft,
+                  size: 16, color: Color(0xFF64748B)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openDepositPickerSheet() async {
+    final deposits = widget.availableDeposits;
+    if (deposits.isEmpty) return;
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: context.appSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                _tr('اختر عربون للخصم', 'Apply a deposit'),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _tr(
+                  'قيمة العربون يجب ألا تتجاوز إجمالي الفاتورة',
+                  'A deposit cannot exceed the invoice total',
+                ),
+                style: const TextStyle(
+                    fontSize: 11, color: Color(0xFF64748B)),
+              ),
+              const SizedBox(height: 12),
+              for (final d in deposits)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Builder(builder: (_) {
+                    final v = d['value'];
+                    final id = v is int
+                        ? v
+                        : (v is num
+                            ? v.toInt()
+                            : (v is String ? int.tryParse(v) : null));
+                    final isSelected = id != null && id == _localDepositId;
+                    final p = d['price'];
+                    final price = p is num
+                        ? p.toDouble()
+                        : (p is String ? (double.tryParse(p) ?? 0.0) : 0.0);
+                    final label = d['label']?.toString() ?? '#$id';
+                    final exceeds = !_isDepositApplicable(d);
+                    final disabled = id == null || (exceeds && !isSelected);
+                    return Opacity(
+                      opacity: disabled ? 0.55 : 1.0,
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          side: BorderSide(
+                            color: isSelected
+                                ? const Color(0xFF22C55E)
+                                : const Color(0xFFE2E8F0),
+                          ),
+                        ),
+                        leading: Icon(
+                          exceeds
+                              ? LucideIcons.alertTriangle
+                              : LucideIcons.wallet,
+                          color: exceeds
+                              ? const Color(0xFFEF4444)
+                              : const Color(0xFF22C55E),
+                        ),
+                        title: Text(label),
+                        subtitle: Text(
+                          exceeds
+                              ? _tr(
+                                  'المبلغ: ${price.toStringAsFixed(2)} — أكبر من الفاتورة',
+                                  'Amount: ${price.toStringAsFixed(2)} — exceeds invoice',
+                                )
+                              : '${_tr('المبلغ', 'Amount')}: ${price.toStringAsFixed(2)} ${ApiConstants.currency}',
+                          style: TextStyle(
+                            color:
+                                exceeds ? const Color(0xFFEF4444) : null,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(LucideIcons.check,
+                                color: Color(0xFF22C55E))
+                            : null,
+                        onTap: disabled
+                            ? null
+                            : () {
+                                _pickDeposit(id);
+                                Navigator.pop(ctx);
+                              },
+                      ),
+                    );
+                  }),
+                ),
+              if (_localDepositId != null) ...[
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: () {
+                    _pickDeposit(null);
+                    Navigator.pop(ctx);
+                  },
+                  icon: const Icon(LucideIcons.x, size: 16),
+                  label: Text(_tr('إزالة العربون', 'Remove deposit')),
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -465,7 +770,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${widget.total.toStringAsFixed(2)} ${ApiConstants.currency}',
+                        '${_effectiveTotal.toStringAsFixed(2)} ${ApiConstants.currency}',
                         textAlign: TextAlign.end,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
@@ -493,7 +798,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${widget.total.toStringAsFixed(2)} ${ApiConstants.currency}',
+                        '${_effectiveTotal.toStringAsFixed(2)} ${ApiConstants.currency}',
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF16A34A),

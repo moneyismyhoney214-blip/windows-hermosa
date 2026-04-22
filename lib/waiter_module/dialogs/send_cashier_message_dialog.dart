@@ -156,8 +156,10 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
           ),
         ],
       ),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
+      content: SizedBox(
+        width: MediaQuery.sizeOf(context).width < 540
+            ? double.maxFinite
+            : 480,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,

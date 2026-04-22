@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
@@ -52,7 +54,21 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
     // Rebuild when the waiter adds/edits items or the payment status
     // flips — otherwise the cashier stares at a frozen snapshot.
     _registry.addListener(_onRegistry);
+    // Pull the branch tax config so per-line totals render tax-inclusive
+    // (matches the cashier tables screen UX and what the waiter sees).
+    unawaited(_hydrateTaxConfig());
   }
+
+  Future<void> _hydrateTaxConfig() async {
+    try {
+      await _billing.refreshTaxConfig();
+      if (mounted) setState(() {});
+    } catch (_) {
+      /* fall back to raw prices */
+    }
+  }
+
+  double _displayPrice(double raw) => _billing.applyTax(raw);
 
   @override
   void dispose() {
@@ -75,11 +91,18 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
   @override
   Widget build(BuildContext context) {
     final items = snapshot.items;
+    final size = MediaQuery.sizeOf(context);
+    // Cap dialog to 90% of the viewport on small screens so the rounded
+    // corners and padding stay visible on phones while keeping a comfy
+    // reading width on tablets.
+    final maxW = size.width < 560 ? size.width * 0.92 : 520.0;
+    final maxH = size.height < 720 ? size.height * 0.92 : 680.0;
     return Dialog(
       backgroundColor: context.appSurface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 680),
+        constraints: BoxConstraints(maxWidth: maxW, maxHeight: maxH),
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -191,7 +214,7 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              it.lineTotal.toStringAsFixed(2),
+                              _displayPrice(it.lineTotal).toStringAsFixed(2),
                               style: TextStyle(
                                 color: context.appText,
                                 fontWeight: FontWeight.w600,
@@ -216,7 +239,7 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
                   ),
                   const Spacer(),
                   Text(
-                    '${(snapshot.total ?? 0).toStringAsFixed(2)} ${ApiConstants.currency}',
+                    '${_displayPrice(snapshot.total ?? 0).toStringAsFixed(2)} ${ApiConstants.currency}',
                     style: TextStyle(
                       color: context.appPrimary,
                       fontWeight: FontWeight.w800,

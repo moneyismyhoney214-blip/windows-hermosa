@@ -343,6 +343,7 @@ extension MainScreenCart on _MainScreenState {
         context,
         serviceData: serviceData,
         employees: employeesForDialog,
+        shopLogoUrl: _salonBranchLogoUrl,
       );
 
       if (result != null && mounted) {
@@ -648,7 +649,17 @@ extension MainScreenCart on _MainScreenState {
       _activePromoCode = null;
       _isOrderFree = false;
       _carNumberController.clear();
+      // Deposits are applied per-invoice — drop the selection when the cart
+      // is cleared so the next booking starts fresh.
+      if (_isSalonMode) {
+        _selectedDepositId = null;
+      }
     });
+    // Refetch the customer's deposits so a just-consumed one drops off the
+    // picker on the next booking.
+    if (_isSalonMode && _selectedCustomer != null) {
+      _loadCustomerDeposits(_selectedCustomer!.id);
+    }
     _syncDisplayCartFromMain();
   }
 
@@ -759,25 +770,62 @@ extension MainScreenCart on _MainScreenState {
               'discount_type': promoDiscountTypeForDisplay,
             'discount_amount': discountAmountForDisplay,
           };
+    final cashierLang =
+        ApiConstants.acceptLanguage.trim().toLowerCase().isEmpty
+            ? 'ar'
+            : ApiConstants.acceptLanguage.trim().toLowerCase();
     final payload = {
       'items': _cart
-          .map((item) => {
+          .map((item) {
+                // Merge every known translation for this meal so the CDS can
+                // resolve the receipt-primary / secondary language without
+                // guessing. Priority: product.localizedNames → cashier-side
+                // cache of per-language API fetches → the active `name` as a
+                // last-resort for the cashier's own language.
+                final merged = <String, String>{
+                  ...item.product.localizedNames,
+                  ...ProductService.cachedNamesFor(item.product.id),
+                };
+                merged.putIfAbsent(cashierLang, () => item.product.name);
+                if (item.product.nameAr.isNotEmpty) {
+                  merged.putIfAbsent('ar', () => item.product.nameAr);
+                }
+                if (item.product.nameEn.isNotEmpty) {
+                  merged.putIfAbsent('en', () => item.product.nameEn);
+                }
+                final nameAr = merged['ar'] ?? '';
+                final nameEn = merged['en'] ?? '';
+                return {
                 'cartId': item.cartId,
                 'meal_id': item.product.id,
                 'productId': item.product.id,
                 'name': item.product.name,
+                'name_lang': cashierLang,
+                'nameEn': nameEn,
+                'nameAr': nameAr,
+                'localizedNames': merged,
                 'category_name': item.product.category,
                 'quantity': item.quantity,
                 'price': item.product.price,
-                'extras': item.selectedExtras
-                    .map((e) => {
-                          'id': e.id,
-                          'name': e.name,
-                          'price': e.price,
-                        })
-                    .toList(),
+                'extras': item.selectedExtras.map((e) {
+                  final extraMerged = <String, String>{
+                    ...e.optionTranslations,
+                    ...ProductService.cachedOptionNamesFor(e.id),
+                  };
+                  extraMerged.putIfAbsent(cashierLang, () => e.name);
+                  return {
+                    'id': e.id,
+                    'name': e.name,
+                    'name_lang': cashierLang,
+                    'nameEn': extraMerged['en'] ?? e.name,
+                    'nameAr': extraMerged['ar'] ?? '',
+                    'localizedNames': extraMerged,
+                    'price': e.price,
+                  };
+                }).toList(),
                 'totalPrice': item.totalPrice,
                 'notes': item.notes,
+              };
               })
           .toList(),
       'subtotal': subtotal,
@@ -803,6 +851,9 @@ extension MainScreenCart on _MainScreenState {
         'discount_type': promoDiscountTypeForDisplay,
       if (promoPayload != null) 'promo': promoPayload,
       'cash_float': cashFloatSnapshot,
+      'invoice_primary_lang': printerLanguageSettings.primary,
+      'invoice_secondary_lang': printerLanguageSettings.secondary,
+      'invoice_allow_secondary': printerLanguageSettings.allowSecondary,
       'orderNumber': '',
       'orderType': _selectedOrderType,
       'note': _orderNotesController.text.trim().isEmpty
@@ -821,22 +872,46 @@ extension MainScreenCart on _MainScreenState {
             item.selectedExtras.fold<double>(0.0, (sum, e) => sum + e.price);
         final originalUnitPrice = basePrice + extrasPrice;
         final originalTotal = originalUnitPrice * item.quantity;
+        final merged = <String, String>{
+          ...item.product.localizedNames,
+          ...ProductService.cachedNamesFor(item.product.id),
+        };
+        merged.putIfAbsent(cashierLang, () => item.product.name);
+        if (item.product.nameAr.isNotEmpty) {
+          merged.putIfAbsent('ar', () => item.product.nameAr);
+        }
+        if (item.product.nameEn.isNotEmpty) {
+          merged.putIfAbsent('en', () => item.product.nameEn);
+        }
 
         return {
           'cartId': item.cartId,
           'meal_id': item.product.id,
           'productId': item.product.id,
           'name': item.product.name,
+          'name_lang': cashierLang,
+          'nameEn': merged['en'] ?? '',
+          'nameAr': merged['ar'] ?? '',
+          'localizedNames': merged,
           'category_name': item.product.category,
           'quantity': item.quantity,
           'price': item.product.price,
-          'extras': item.selectedExtras
-              .map((e) => {
-                    'id': e.id,
-                    'name': e.name,
-                    'price': e.price,
-                  })
-              .toList(),
+          'extras': item.selectedExtras.map((e) {
+            final extraMerged = <String, String>{
+              ...e.optionTranslations,
+              ...ProductService.cachedOptionNamesFor(e.id),
+            };
+            extraMerged.putIfAbsent(cashierLang, () => e.name);
+            return {
+              'id': e.id,
+              'name': e.name,
+              'name_lang': cashierLang,
+              'nameEn': extraMerged['en'] ?? e.name,
+              'nameAr': extraMerged['ar'] ?? '',
+              'localizedNames': extraMerged,
+              'price': e.price,
+            };
+          }).toList(),
           'totalPrice': item.totalPrice,
           'notes': item.notes,
           // ✅ Discount info for CDS
@@ -866,6 +941,9 @@ extension MainScreenCart on _MainScreenState {
       originalTotal: beforeDiscountTotal,
       discountedTotal: discountedTotalForDisplay,
       cashFloatSnapshot: cashFloatSnapshot,
+      invoicePrimaryLang: printerLanguageSettings.primary,
+      invoiceSecondaryLang: printerLanguageSettings.secondary,
+      invoiceAllowSecondary: printerLanguageSettings.allowSecondary,
       orderNumber: '',
       orderType: _selectedOrderType,
       note: _orderNotesController.text.trim().isEmpty

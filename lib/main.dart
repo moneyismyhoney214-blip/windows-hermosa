@@ -1,7 +1,6 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'Splash/splash_screen.dart';
@@ -11,6 +10,7 @@ import 'services/api/base_client.dart';
 import 'services/language_service.dart';
 import 'services/theme_service.dart';
 import 'services/printer_language_settings_service.dart';
+import 'services/api/product_service.dart';
 import 'services/app_themes.dart';
 import 'services/cashier_sound_service.dart';
 import 'services/presentation_service.dart';
@@ -19,24 +19,24 @@ import 'services/offline/offline_pos_database.dart';
 import 'services/offline/connectivity_service.dart';
 import 'services/offline/sync_service.dart';
 import 'widgets/print_listener.dart';
+// Imported so the Flutter CLI keeps `customer_display_main.dart` in the
+// kernel snapshot. The `customerDisplayMain` function itself is not called
+// from here — it's invoked by MainActivity.kt on the secondary engine via
+// a dedicated DartEntrypoint. Without this import the AOT tree-shaker may
+// drop the file entirely before `@pragma('vm:entry-point')` can save it.
+// ignore: unused_import
 import 'customer_display/customer_display_main.dart';
 
 import 'locator.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+// The secondary display boots into `customerDisplayMain` (see
+// lib/customer_display/customer_display_main.dart) via a dedicated
+// DartEntrypoint in MainActivity.kt, so `main` here only runs on the
+// primary cashier engine.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Check if this engine is running on the secondary display.
-  // The native side sets this flag before launching the engine.
-  final isSecondaryDisplay = await _checkIfSecondaryDisplay();
-
-  if (isSecondaryDisplay) {
-    // Run the lightweight customer display UI — no locator, no auth, no plugins.
-    runApp(const CustomerDisplayApp());
-    return;
-  }
 
   // Initialize sqflite FFI for desktop platforms (Linux, Windows, macOS)
   if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
@@ -107,6 +107,26 @@ void main() async {
   // Load persisted printer language preference (non-critical — defaults to ar/en)
   try {
     await printerLanguageSettings.initialize();
+    // On every boot, wipe any stale translation cache left over from a
+    // previous build (static state survives Flutter hot-restart and would
+    // otherwise resurface an older build's pollution). Subsequent
+    // [primeLanguages] calls re-fetch fresh data.
+    ProductService().invalidateTranslationsCache();
+
+    // Prime the meal-name cache for whichever pair the cashier chose, then
+    // keep it in sync whenever the user flips the setting live.
+    void _syncPrinterLangsToProducts() {
+      try {
+        ProductService().primeLanguages([
+          printerLanguageSettings.primary,
+          if (printerLanguageSettings.allowSecondary)
+            printerLanguageSettings.secondary,
+        ]);
+      } catch (_) {}
+    }
+
+    _syncPrinterLangsToProducts();
+    printerLanguageSettings.addListener(_syncPrinterLangsToProducts);
   } catch (e) {
     debugPrint('⚠️ Printer language init (non-fatal): $e');
   }
@@ -137,15 +157,28 @@ void main() async {
 
   // Initialize Presentation API for dual-screen devices (e.g. Sunmi D2s).
   try {
+    await PresentationService.logSunmi('=== primary app main() — Presentation bring-up START ===');
+    final logPath = await PresentationService.sunmiLogPath();
+    await PresentationService.logSunmi('sunmi log file path = $logPath');
     final presentationService = PresentationService();
     await presentationService.initialize();
     if (presentationService.hasSecondaryDisplay) {
-      debugPrint(
-          '🖥️ Dual-screen device detected — launching customer display');
+      await PresentationService.logSunmi(
+        'dual-screen device detected — calling showPresentation() from main()',
+      );
       await presentationService.showPresentation();
+    } else {
+      await PresentationService.logSunmi(
+        'no secondary display at boot — will retry on onDisplayAdded',
+        level: 'W',
+      );
     }
-  } catch (e) {
-    debugPrint('⚠️ Presentation init (non-fatal): $e');
+    await PresentationService.logSunmi('=== Presentation bring-up END ===');
+  } catch (e, st) {
+    await PresentationService.logSunmi(
+      'Presentation init threw: $e\n$st',
+      level: 'E',
+    );
   }
 
   BaseClient.onUnauthorized = () async {
@@ -168,8 +201,6 @@ void main() async {
   runApp(HermosaPosApp(isAuthenticated: isAuthenticated));
 }
 
-/// Ask the native side if we are running on a secondary display.
-/// The native side responds true for the secondary engine.
 Future<bool> _initSqfliteFfi() async {
   try {
     // ignore: depend_on_referenced_packages
@@ -179,17 +210,6 @@ Future<bool> _initSqfliteFfi() async {
     return true;
   } catch (e) {
     debugPrint('⚠️ sqflite FFI setup error: $e');
-    return false;
-  }
-}
-
-Future<bool> _checkIfSecondaryDisplay() async {
-  try {
-    const channel = MethodChannel('com.hermosaapp.presentation');
-    final result = await channel.invokeMethod<bool>('isSecondaryEngine');
-    return result ?? false;
-  } catch (_) {
-    // Channel not set up = primary engine
     return false;
   }
 }

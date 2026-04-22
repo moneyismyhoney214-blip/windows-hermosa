@@ -554,7 +554,7 @@ final Map<String, String> _enTranslations = {
     'waiter_name': 'Waiter name',
     'waiter_name_required': 'Please enter a name (at least 2 characters)',
     'waiter_start_shift': 'Start shift',
-    'waiter_end_shift': 'End shift',
+    'waiter_end_shift': 'Logout',
     'waiter_hi': 'Hi',
     'waiter_tab_tables': 'Tables',
     'waiter_tab_messages': 'Messages',
@@ -610,6 +610,8 @@ final Map<String, String> _enTranslations = {
     'waiter_table_owned_title': 'Table taken',
     'waiter_table_owned_body':
         'Table {table} is handled by {name}. Would you like to call them?',
+    'waiter_table_backend_locked_body':
+        'Table {table} is not available right now — open it from the cashier or wait until it clears.',
     'waiter_select_peer': 'Pick a waiter to start chatting',
     'waiter_thread_empty': 'No messages yet',
     'waiter_type_message': 'Type a message…',

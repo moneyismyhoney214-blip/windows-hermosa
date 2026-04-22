@@ -6,7 +6,6 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
 import '../models/table_pickup_request.dart';
-import '../models/waiter.dart';
 import '../models/waiter_message.dart';
 import '../services/waiter_controller.dart';
 import '../theme/waiter_design.dart';
@@ -67,6 +66,10 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
     // Cashier device (viewer) doesn't need the accept banner — it
     // already sees the pending card on its tables screen.
     if (widget.controller.session.self?.isViewer ?? false) return;
+    // A waiter mid-order must not be interrupted by a pickup banner.
+    // The request is still recorded in the store, so it appears in the
+    // notifications feed once they exit the order screen.
+    if (widget.controller.isTakingOrderNow) return;
     showIncomingPickupBanner(context, req, widget.controller);
   }
 
@@ -90,40 +93,6 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
         foregroundColor: context.appText,
         elevation: 0,
         title: Text(title),
-        actions: [
-          Padding(
-            padding: const EdgeInsetsDirectional.only(end: 8),
-            child: Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: context.appSurfaceAlt,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(LucideIcons.users,
-                        size: 14, color: context.appTextMuted),
-                    const SizedBox(width: 4),
-                    Text(
-                      // Only real waiters, and only those currently online —
-                      // an offline peer shouldn't inflate the "N waiters
-                      // on shift" badge.
-                      '${widget.controller.roster.all.where((w) => !w.isViewer && w.status != WaiterStatus.offline).length}',
-                      style: TextStyle(
-                        color: context.appTextMuted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
       body: IndexedStack(index: _tab, children: pages),
       bottomNavigationBar: NavigationBar(

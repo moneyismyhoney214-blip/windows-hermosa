@@ -207,9 +207,12 @@ extension OrderServiceBookingApis on OrderService {
 
   String _buildBookingCreateMetadataEndpointWithDefaults() {
     // Backend create endpoint expects these filters; calling without them
-    // may trigger "Unhandled match case NULL" on some branches.
+    // may trigger "Unhandled match case NULL" on some branches. Salon
+    // branches need `type=services` — passing `meals` there returns an empty
+    // catalogue and the debug dump shows a misleading response.
+    final type = ApiConstants.branchModule == 'salons' ? 'services' : 'meals';
     final query = Uri(queryParameters: <String, String>{
-      'type': 'meals',
+      'type': type,
       'is_favourite': '0',
       'category_id': '',
       'is_home': '0',

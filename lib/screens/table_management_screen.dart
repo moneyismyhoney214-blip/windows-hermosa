@@ -48,6 +48,12 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   /// still visible to the cashier for a few seconds.
   final Map<String, TablePickupRequest> _pickupByTable = {};
 
+  /// Table ids where the owning waiter is currently composing the first
+  /// order (opened the table but hasn't hit "Send to kitchen" yet). Renders
+  /// as "جاري اخذ الطلب" on the card. Cleared when the waiter either sends
+  /// the order or releases the table.
+  final Set<String> _takingOrderTables = {};
+
   StreamSubscription<TablePickupRequest>? _pickupUpdateSub;
   StreamSubscription<WaiterTableEventEnvelope>? _tableEventSub;
 
@@ -114,6 +120,13 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     if (idx < 0) return;
     final t = _tables[idx];
     switch (event.kind) {
+      case TableLifecycleKind.takingOrder:
+        t.status = TableStatus.occupied;
+        if (event.waiterName.isNotEmpty) {
+          t.waiterName = event.waiterName;
+        }
+        _takingOrderTables.add(event.tableId);
+        break;
       case TableLifecycleKind.assigned:
       case TableLifecycleKind.updated:
       case TableLifecycleKind.paymentPending:
@@ -121,12 +134,28 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         if (event.waiterName.isNotEmpty) {
           t.waiterName = event.waiterName;
         }
+        // First real send (or any subsequent update) promotes the table
+        // out of the "taking order" state.
+        _takingOrderTables.remove(event.tableId);
+        break;
+      case TableLifecycleKind.paid:
+        // Paid-but-still-seated: keep the table occupied until a
+        // waiter (or the cashier via 3-dots menu) explicitly releases.
+        // Flag isPaid so the card overlays the "paid" check icon; the
+        // registry already carries paid=true for re-mount hydration.
+        t.status = TableStatus.occupied;
+        t.isPaid = true;
+        if (event.waiterName.isNotEmpty) {
+          t.waiterName = event.waiterName;
+        }
+        _takingOrderTables.remove(event.tableId);
         break;
       case TableLifecycleKind.released:
-      case TableLifecycleKind.paid:
         t.status = TableStatus.available;
         t.waiterName = null;
+        t.isPaid = false;
         _pickupByTable.remove(event.tableId);
+        _takingOrderTables.remove(event.tableId);
         break;
     }
     setState(() {});
@@ -178,6 +207,79 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     setState(() {
       _pickupByTable.remove(table.id);
     });
+  }
+
+  /// Cashier-driven force-release. Used when a table is stuck in
+  /// "paid-but-still-seated" (the waiter ended their shift without
+  /// tapping Release, or a ghost paid entry survived a disconnect).
+  /// Shows a confirm dialog because this wipes the party's state on
+  /// every peer — a mis-tap would make another waiter lose the live
+  /// table they were serving.
+  Future<void> _forceReleaseTable(TableItem table) async {
+    final ownership = _waiter.tableRegistry.lookup(table.id);
+    if (ownership == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.appSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(LucideIcons.logOut, color: Color(0xFFDC2626)),
+            const SizedBox(width: 8),
+            Text(
+              'تحرير الطاولة ${table.number}',
+              style: TextStyle(color: context.appText, fontSize: 17),
+            ),
+          ],
+        ),
+        content: Text(
+          'هل تريد تحرير الطاولة يدوياً؟ سيتم إزالتها من لوحة النادل '
+          '"${ownership.waiterName}" فوراً.',
+          style: TextStyle(color: context.appText),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(translationService.t('cancel')),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(LucideIcons.logOut, size: 16),
+            label: const Text('تحرير الطاولة'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    _waiter.broadcastTableEvent(TableLifecycleEvent(
+      kind: TableLifecycleKind.released,
+      tableId: table.id,
+      tableNumber: table.number,
+      waiterId: ownership.waiterId,
+      waiterName: ownership.waiterName,
+    ));
+    setState(() {
+      final idx = _tables.indexWhere((t) => t.id == table.id);
+      if (idx >= 0) {
+        _tables[idx].status = TableStatus.available;
+        _tables[idx].waiterName = null;
+        _tables[idx].isPaid = false;
+      }
+      _takingOrderTables.remove(table.id);
+      _pickupByTable.remove(table.id);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('تم تحرير الطاولة ${table.number}'),
+        backgroundColor: const Color(0xFF10B981),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _openSendMessageDialog() async {
@@ -421,6 +523,12 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         _deactivatedTables[table.id] = !table.isActive;
       }
 
+      // Overlay the live waiter-mesh state onto the freshly-loaded list
+      // so states survive a navigate-away/back. Before this, the mount
+      // only subscribed to *future* events — existing ownership from a
+      // still-running shift looked "empty" until the next event fired.
+      _hydrateFromRegistry(tables);
+
       if (mounted) {
         setState(() {
           _tables = tables;
@@ -435,6 +543,38 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  /// Mirror the authoritative in-memory registry onto the fresh list of
+  /// tables, and replay the pickup store. Runs on every load so the
+  /// cashier sees the current state immediately on re-entry.
+  void _hydrateFromRegistry(List<TableItem> tables) {
+    _takingOrderTables.clear();
+    for (final t in tables) {
+      final ownership = _waiter.tableRegistry.lookup(t.id);
+      if (ownership == null) continue;
+      if (_waiter.tableRegistry.paidFor(t.id)) {
+        t.isPaid = true;
+        // Paid but still seated: treat as occupied until the waiter
+        // explicitly releases (see manual availability toggle).
+        t.status = TableStatus.occupied;
+      } else if (_waiter.tableRegistry.paymentPendingFor(t.id)) {
+        t.status = TableStatus.occupied;
+      } else {
+        t.status = TableStatus.occupied;
+      }
+      if (ownership.waiterName.isNotEmpty) {
+        t.waiterName = ownership.waiterName;
+      }
+      if (_waiter.tableRegistry.takingOrderFor(t.id)) {
+        _takingOrderTables.add(t.id);
+      }
+    }
+    // Replay the pickup store so pending/claimed banners survive nav.
+    _pickupByTable.clear();
+    for (final req in _waiter.pickupStore.all) {
+      _pickupByTable.putIfAbsent(req.tableId, () => req);
     }
   }
 
@@ -728,6 +868,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           final isDeactivated = _deactivatedTables[table.id] ?? false;
 
           final pickup = _pickupByTable[table.id];
+          final hasMeshOwner = _waiter.tableRegistry.ownerIdFor(table.id) != null;
           return _NormalTableCard(
             table: table,
             isDeactivated: isDeactivated,
@@ -740,6 +881,11 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
             onCancelPickup:
                 isDeactivated ? null : () => _cancelPickup(table),
             onMigrate: isDeactivated ? null : () => _migrateTable(table),
+            onReleaseTable: (isDeactivated || !hasMeshOwner)
+                ? null
+                : () => _forceReleaseTable(table),
+            isTakingOrder: _takingOrderTables.contains(table.id),
+            guestCount: _waiter.tableRegistry.guestCountFor(table.id),
           );
         },
       );
@@ -785,6 +931,8 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                     _tablePositions[table.id] ?? const Offset(100, 100);
 
                 final pickup = _pickupByTable[table.id];
+                final hasMeshOwner =
+                    _waiter.tableRegistry.ownerIdFor(table.id) != null;
                 return _DraggableTableCard(
                   key: ValueKey('table_${table.id}'),
                   table: table,
@@ -802,6 +950,12 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                       isDeactivated ? null : () => _cancelPickup(table),
                   onMigrate:
                       isDeactivated ? null : () => _migrateTable(table),
+                  onReleaseTable: (isDeactivated || !hasMeshOwner)
+                      ? null
+                      : () => _forceReleaseTable(table),
+                  isTakingOrder: _takingOrderTables.contains(table.id),
+                  guestCount:
+                      _waiter.tableRegistry.guestCountFor(table.id),
                 );
               }),
             ],
@@ -846,6 +1000,9 @@ class _DraggableTableCard extends StatefulWidget {
   final VoidCallback? onRequestPickup;
   final VoidCallback? onCancelPickup;
   final VoidCallback? onMigrate;
+  final VoidCallback? onReleaseTable;
+  final bool isTakingOrder;
+  final int? guestCount;
 
   const _DraggableTableCard({
     super.key,
@@ -860,6 +1017,9 @@ class _DraggableTableCard extends StatefulWidget {
     this.onRequestPickup,
     this.onCancelPickup,
     this.onMigrate,
+    this.onReleaseTable,
+    this.isTakingOrder = false,
+    this.guestCount,
   });
 
   @override
@@ -935,6 +1095,9 @@ class _DraggableTableCardState extends State<_DraggableTableCard> {
                 onRequestPickup: widget.onRequestPickup,
                 onCancelPickup: widget.onCancelPickup,
                 onMigrate: widget.onMigrate,
+                onReleaseTable: widget.onReleaseTable,
+                isTakingOrder: widget.isTakingOrder,
+                guestCount: widget.guestCount,
               ),
               // Drag handle indicator
               Positioned(
@@ -983,6 +1146,18 @@ class _NormalTableCard extends StatelessWidget {
   final VoidCallback? onRequestPickup;
   final VoidCallback? onCancelPickup;
   final VoidCallback? onMigrate;
+  /// Cashier force-release: clears the waiter's hold on an occupied
+  /// table so it becomes available again. Manual only — the cashier
+  /// decides when to fire this (no auto-timeout).
+  final VoidCallback? onReleaseTable;
+  /// Waiter has opened the table and is composing the first order but has
+  /// not yet sent it to the kitchen. Shown to the cashier as
+  /// "جاري اخذ الطلب" instead of the generic occupied label.
+  final bool isTakingOrder;
+
+  /// Number of guests the waiter set for this table (distinct from the
+  /// table's capacity `seats`). Null when no active party.
+  final int? guestCount;
 
   const _NormalTableCard({
     required this.table,
@@ -995,6 +1170,9 @@ class _NormalTableCard extends StatelessWidget {
     this.onRequestPickup,
     this.onCancelPickup,
     this.onMigrate,
+    this.onReleaseTable,
+    this.isTakingOrder = false,
+    this.guestCount,
   });
 
   Color _getStatusColor(TableStatus status) {
@@ -1113,17 +1291,25 @@ class _NormalTableCard extends StatelessWidget {
                                     color: Colors.grey[400],
                                   ),
                                   const SizedBox(width: 6),
-                                  // Seats come straight from the API so
-                                  // cards always show the table's capacity,
-                                  // independent of the (now-hidden) waiter
-                                  // registry.
+                                  // Actual-guests-at-the-table (from the
+                                  // waiter mesh) takes priority over the
+                                  // table's capacity; capacity is shown in
+                                  // parentheses when both are known so the
+                                  // cashier can spot an over-booked card.
                                   Text(
-                                    translationService.t('persons_count',
-                                        args: {'count': table.seats}),
+                                    (guestCount != null && guestCount! > 0)
+                                        ? '$guestCount / ${table.seats}'
+                                        : translationService.t(
+                                            'persons_count',
+                                            args: {'count': table.seats},
+                                          ),
                                     style: TextStyle(
                                       fontSize: seatsFontSize,
                                       fontWeight: FontWeight.bold,
-                                      color: Colors.grey[500],
+                                      color: (guestCount != null &&
+                                              guestCount! > 0)
+                                          ? const Color(0xFF0F172A)
+                                          : Colors.grey[500],
                                     ),
                                   ),
                                   if (table.qrImage != null) ...[
@@ -1212,16 +1398,58 @@ class _NormalTableCard extends StatelessWidget {
                                     padding: EdgeInsets.only(
                                       top: isReservedState ? 0 : 8,
                                     ),
-                                    child: Text(
-                                      table.waiterName ?? 'Branch Manager',
-                                      style: TextStyle(
-                                        color:
-                                            statusColor.withValues(alpha: 0.8),
-                                        fontSize: waiterFontSize,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (isTakingOrder)
+                                          Container(
+                                            padding: const EdgeInsets
+                                                .symmetric(
+                                              horizontal: 8,
+                                              vertical: 3,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFF59E0B)
+                                                  .withValues(alpha: 0.15),
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(
+                                                  LucideIcons.pencil,
+                                                  size: 12,
+                                                  color: Color(0xFFB45309),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'جاري اخذ الطلب',
+                                                  style: TextStyle(
+                                                    color: const Color(
+                                                        0xFFB45309),
+                                                    fontSize: waiterFontSize,
+                                                    fontWeight:
+                                                        FontWeight.w800,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          )
+                                        else
+                                          Text(
+                                            table.waiterName ??
+                                                'Branch Manager',
+                                            style: TextStyle(
+                                              color: statusColor.withValues(
+                                                  alpha: 0.8),
+                                              fontSize: waiterFontSize,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                      ],
                                     ),
                                   ),
                               ],
@@ -1312,6 +1540,21 @@ class _NormalTableCard extends StatelessWidget {
                             borderRadius: borderRadius,
                           ),
                         ),
+                      // Compact actions menu for an occupied table: keeps the
+                      // grid uncluttered while still exposing migrate +
+                      // force-release actions behind a 3-dots button.
+                      if (!isDeactivated &&
+                          activePickup == null &&
+                          table.status != TableStatus.available &&
+                          (onMigrate != null || onReleaseTable != null))
+                        PositionedDirectional(
+                          top: effectiveCompact ? 6 : 10,
+                          start: effectiveCompact ? 6 : 10,
+                          child: _buildActionsMenu(
+                            context,
+                            ultraCompact: ultraCompact,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -1330,17 +1573,11 @@ class _NormalTableCard extends StatelessWidget {
     required double borderRadius,
   }) {
     final pickup = activePickup;
-    // Occupied table with no pending pickup → show the migration action
-    // so the cashier can move the party's existing order to a different
-    // table (e.g. the group moved to a larger table mid-meal).
+    // Occupied table with no pending pickup → migration is now exposed
+    // via the 3-dots menu overlay on the card body (see build()). The
+    // bottom strip stays empty so the tables grid doesn't feel crowded.
     if (pickup == null && table.status != TableStatus.available) {
-      if (onMigrate == null) return const SizedBox.shrink();
-      return _buildMigrateStrip(
-        context,
-        compact: compact,
-        ultraCompact: ultraCompact,
-        borderRadius: borderRadius,
-      );
+      return const SizedBox.shrink();
     }
     if (pickup != null && pickup.cancelled) {
       return const SizedBox.shrink();
@@ -1479,45 +1716,71 @@ class _NormalTableCard extends StatelessWidget {
     );
   }
 
-  Widget _buildMigrateStrip(
+  Widget _buildActionsMenu(
     BuildContext context, {
-    required bool compact,
     required bool ultraCompact,
-    required double borderRadius,
   }) {
-    final vPad = ultraCompact ? 4.0 : (compact ? 6.0 : 8.0);
-    final hPad = ultraCompact ? 6.0 : (compact ? 8.0 : 10.0);
-    final fontSize = ultraCompact ? 11.0 : (compact ? 12.0 : 13.0);
-    return InkWell(
-      onTap: onMigrate,
-      borderRadius: BorderRadius.vertical(
-        bottom: Radius.circular(borderRadius),
-      ),
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad + 1),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2563EB).withValues(alpha: 0.12),
-          borderRadius: BorderRadius.vertical(
-            bottom: Radius.circular(borderRadius),
-          ),
+    final size = ultraCompact ? 26.0 : 30.0;
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 1.5,
+      child: PopupMenuButton<String>(
+        tooltip: 'خيارات',
+        padding: EdgeInsets.zero,
+        icon: Icon(
+          LucideIcons.moreVertical,
+          size: ultraCompact ? 15 : 17,
+          color: const Color(0xFF1E293B),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(LucideIcons.moveRight,
-                size: 15, color: Color(0xFF2563EB)),
-            const SizedBox(width: 6),
-            Text(
-              'نقل إلى طاولة أخرى',
-              style: TextStyle(
-                color: const Color(0xFF2563EB),
-                fontSize: fontSize,
-                fontWeight: FontWeight.w800,
+        constraints: BoxConstraints.tightFor(width: size, height: size),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        onSelected: (value) {
+          if (value == 'migrate' && onMigrate != null) onMigrate!();
+          if (value == 'release' && onReleaseTable != null) onReleaseTable!();
+        },
+        itemBuilder: (_) => [
+          if (onMigrate != null)
+            const PopupMenuItem<String>(
+              value: 'migrate',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.moveRight,
+                      size: 16, color: Color(0xFF2563EB)),
+                  SizedBox(width: 8),
+                  Text(
+                    'نقل إلى طاولة أخرى',
+                    style: TextStyle(
+                      color: Color(0xFF2563EB),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          if (onReleaseTable != null)
+            const PopupMenuItem<String>(
+              value: 'release',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.logOut,
+                      size: 16, color: Color(0xFFDC2626)),
+                  SizedBox(width: 8),
+                  Text(
+                    'تحرير الطاولة',
+                    style: TextStyle(
+                      color: Color(0xFFDC2626),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

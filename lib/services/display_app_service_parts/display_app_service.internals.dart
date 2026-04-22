@@ -48,6 +48,11 @@ extension DisplayAppServiceInternals on DisplayAppService {
   }
 
   Future<void> _sendKdsContext() async {
+    // KDS context is restaurant-specific: it pushes the `meals` catalogue to
+    // the kitchen display. Salons don't have meals/meal-categories — firing
+    // this endpoint against the salon backend yields a storm of 422/404s and
+    // paginates through every page for nothing.
+    if (ApiConstants.branchModule == 'salons') return;
     try {
       final productService = getIt<ProductService>();
       final mealAvailabilityService = getIt<KdsMealAvailabilityService>();

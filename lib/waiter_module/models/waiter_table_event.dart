@@ -3,6 +3,7 @@
 ///
 /// The waiter is the sole authoritative controller — the cashier is a viewer.
 enum TableLifecycleKind {
+  takingOrder, // Waiter opened the table and is composing the first order
   assigned,   // A waiter took the table (status → occupied)
   released,   // Table cleared / order closed (status → available)
   updated,    // Order edited mid-service
@@ -13,6 +14,8 @@ enum TableLifecycleKind {
 extension TableLifecycleKindX on TableLifecycleKind {
   String get wire {
     switch (this) {
+      case TableLifecycleKind.takingOrder:
+        return 'taking_order';
       case TableLifecycleKind.assigned:
         return 'assigned';
       case TableLifecycleKind.released:
@@ -28,6 +31,8 @@ extension TableLifecycleKindX on TableLifecycleKind {
 
   static TableLifecycleKind? fromWire(String? s) {
     switch (s) {
+      case 'taking_order':
+        return TableLifecycleKind.takingOrder;
       case 'assigned':
         return TableLifecycleKind.assigned;
       case 'released':

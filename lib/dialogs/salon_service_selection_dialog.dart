@@ -38,10 +38,15 @@ class SalonServiceSelectionDialog extends StatefulWidget {
   /// Example: `[{"id": 111, "name": "ليلى المهدي"}, ...]`
   final List<Map<String, dynamic>> employees;
 
+  /// Branch/seller logo URL. When set, it's shown in the service info card
+  /// instead of the initials placeholder when the service has no image.
+  final String? shopLogoUrl;
+
   const SalonServiceSelectionDialog({
     super.key,
     required this.serviceData,
     required this.employees,
+    this.shopLogoUrl,
   });
 
   /// Convenience launcher. Shows the dialog and returns the booking-item map
@@ -50,6 +55,7 @@ class SalonServiceSelectionDialog extends StatefulWidget {
     BuildContext context, {
     required Map<String, dynamic> serviceData,
     required List<Map<String, dynamic>> employees,
+    String? shopLogoUrl,
   }) {
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -57,6 +63,7 @@ class SalonServiceSelectionDialog extends StatefulWidget {
       builder: (_) => SalonServiceSelectionDialog(
         serviceData: serviceData,
         employees: employees,
+        shopLogoUrl: shopLogoUrl,
       ),
     );
   }
@@ -678,6 +685,20 @@ class _SalonServiceSelectionDialogState
   }
 
   Widget _imgPlaceholder() {
+    final logo = widget.shopLogoUrl;
+    if (logo != null && logo.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: logo,
+        fit: BoxFit.contain,
+        memCacheWidth: 200,
+        placeholder: (_, __) => _initialsPlaceholder(),
+        errorWidget: (_, __, ___) => _initialsPlaceholder(),
+      );
+    }
+    return _initialsPlaceholder();
+  }
+
+  Widget _initialsPlaceholder() {
     final initials = _serviceName.length >= 2
         ? _serviceName.substring(0, 2).toUpperCase()
         : _serviceName.toUpperCase();

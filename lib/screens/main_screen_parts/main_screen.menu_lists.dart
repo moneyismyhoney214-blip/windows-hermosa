@@ -3,6 +3,9 @@ part of '../main_screen.dart';
 
 extension MainScreenMenuLists on _MainScreenState {
   Future<void> _fetchAvailableMenuLists() async {
+    // Hungerstation-style menu lists are restaurant-only; salons have no
+    // equivalent catalogue so skip the API hit entirely.
+    if (_isSalonMode) return;
     try {
       final productService = getIt<ProductService>();
       final lists = await productService.getMenuLists();

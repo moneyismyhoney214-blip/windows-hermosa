@@ -97,6 +97,9 @@ extension DisplayAppServiceApi on DisplayAppService {
     double? orderDiscountPercent,
     String? discountSource,
     Map<String, dynamic>? cashFloatSnapshot,
+    String? invoicePrimaryLang,
+    String? invoiceSecondaryLang,
+    bool? invoiceAllowSecondary,
   }) {
     final resolvedTaxRate = _resolveTaxRate(
       subtotal: subtotal,
@@ -147,6 +150,12 @@ extension DisplayAppServiceApi on DisplayAppService {
       'currency': ApiConstants.currency,
       'lang': _currentLanguageCode,
       'language_code': _currentLanguageCode,
+      if (invoicePrimaryLang != null)
+        'invoice_primary_lang': invoicePrimaryLang,
+      if (invoiceSecondaryLang != null)
+        'invoice_secondary_lang': invoiceSecondaryLang,
+      if (invoiceAllowSecondary != null)
+        'invoice_allow_secondary': invoiceAllowSecondary,
     };
 
     _lastCartPayload = {
@@ -188,6 +197,12 @@ extension DisplayAppServiceApi on DisplayAppService {
         'currency': ApiConstants.currency,
         'lang': _currentLanguageCode,
         'language_code': _currentLanguageCode,
+        if (invoicePrimaryLang != null)
+          'invoice_primary_lang': invoicePrimaryLang,
+        if (invoiceSecondaryLang != null)
+          'invoice_secondary_lang': invoiceSecondaryLang,
+        if (invoiceAllowSecondary != null)
+          'invoice_allow_secondary': invoiceAllowSecondary,
       },
     };
 

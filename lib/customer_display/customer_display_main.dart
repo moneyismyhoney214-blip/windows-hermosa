@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cds_page.dart';
 import 'models.dart';
@@ -10,9 +13,24 @@ import 'models.dart';
 /// This runs in a separate Flutter engine on the secondary screen
 /// via Android's Presentation API. It receives data from the main
 /// cashier app through a MethodChannel.
+///
+/// When verifying on real Sunmi hardware, run:
+///   adb logcat -s flutter:D Presentation:D CustomerDisplay:D
+/// and look for the "[CDS] customerDisplayMain booted" line — its
+/// presence proves the dedicated entry point is alive on the second
+/// engine (i.e. the second screen is NOT just a mirror of the cashier).
 @pragma('vm:entry-point')
 void customerDisplayMain() {
   WidgetsFlutterBinding.ensureInitialized();
+  debugPrint('[CDS] customerDisplayMain booted on secondary Flutter engine');
+  // Log to the Sunmi diagnostic file using the same MethodChannel the
+  // engine was spawned with — this gives us a single file with events
+  // from BOTH engines, interleaved with timestamps.
+  const channel = MethodChannel('com.hermosaapp.presentation');
+  channel.invokeMethod('logSunmi', {
+    'level': 'I',
+    'message': 'customerDisplayMain ENTRY POINT booted on secondary engine',
+  }).catchError((_) {});
   runApp(const CustomerDisplayApp());
 }
 
@@ -31,6 +49,19 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Map<String, dynamic> _catalogContext = {};
   String _languageCode = 'ar';
 
+  // Merchant branding (mirrored from BranchService via SharedPreferences).
+  String _sellerNameAr = '';
+  String _sellerNameEn = '';
+  String _sellerLogoUrl = '';
+  Timer? _sellerNamePoll;
+
+  // Invoice/printer language settings mirrored from
+  // `printer_language_settings_v1` so the CDS meal names respect the same
+  // primary/secondary language pair the user picked for receipts.
+  String _invoicePrimaryLang = 'ar';
+  String _invoiceSecondaryLang = 'en';
+  bool _invoiceAllowSecondary = true;
+
   // Payment state
   String? _paymentStatus;
   String? _paymentMessage;
@@ -43,8 +74,64 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   void initState() {
     super.initState();
     _setupChannel();
+    _channel.invokeMethod('logSunmi', {
+      'level': 'I',
+      'message': 'CustomerDisplayApp.initState — about to send secondaryDisplayReady',
+    }).catchError((_) {});
     // Notify the main app that we're ready
     _channel.invokeMethod('secondaryDisplayReady', null);
+    _loadSellerName();
+    // Prefs may be populated slightly after the CDS boots (branch fetch runs
+    // on the cashier side). Poll a few times so the name snaps in once it
+    // lands, then stop to avoid idle work.
+    // Poll SharedPreferences continuously so branding + invoice language
+    // changes on the cashier side reflect on the CDS within ~2s without a
+    // cold restart.
+    _sellerNamePoll = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      _loadSellerName();
+    });
+  }
+
+  @override
+  void dispose() {
+    _sellerNamePoll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadSellerName() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Force a disk re-read so cross-engine writes from the cashier land
+      // here on the next tick. Without this, SharedPreferences keeps the
+      // in-memory cache from first load.
+      try {
+        await prefs.reload();
+      } catch (_) {}
+      final ar = prefs.getString('cds_seller_name_ar') ?? '';
+      final en = prefs.getString('cds_seller_name_en') ?? '';
+      final logo = prefs.getString('cds_seller_logo_url') ?? '';
+      if (!mounted) return;
+      // NOTE: invoice language settings are *not* pulled from prefs here —
+      // the cart payload (`UPDATE_CART`) carries them and
+      // [_syncInvoiceLanguageFromPayload] keeps the state in sync. Reading
+      // prefs on every poll tick would race with a stale disk cache and
+      // revert the live value a few seconds after the user applied it.
+      final same = ar == _sellerNameAr &&
+          en == _sellerNameEn &&
+          logo == _sellerLogoUrl;
+      if (same) return;
+      setState(() {
+        _sellerNameAr = ar;
+        _sellerNameEn = en;
+        _sellerLogoUrl = logo;
+      });
+    } catch (_) {
+      // Fall back to default brand rendering.
+    }
   }
 
   void _setupChannel() {
@@ -73,6 +160,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
         setState(() {
           _cartData = Map<String, dynamic>.from(data);
           _syncLanguage(data);
+          _syncInvoiceLanguageFromPayload(data);
         });
         break;
       case 'SET_MODE':
@@ -174,6 +262,12 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       orderDiscountValue: _extractDouble(_cartData['order_discount_value'] ?? _cartData['discount']),
       orderDiscountPercent: _extractDouble(_cartData['order_discount_percent'] ?? _cartData['discount_percent']),
       discountSource: _cartData['discount_source']?.toString(),
+      sellerNameAr: _sellerNameAr,
+      sellerNameEn: _sellerNameEn,
+      sellerLogoUrl: _sellerLogoUrl,
+      invoicePrimaryLang: _invoicePrimaryLang,
+      invoiceSecondaryLang: _invoiceSecondaryLang,
+      invoiceAllowSecondary: _invoiceAllowSecondary,
       catalogProducts: catalogProducts,
       catalogCategories: catalogCategories,
       disabledMealIds: disabledMealIds,
@@ -351,21 +445,43 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
         final extraMap = Map<String, dynamic>.from(e);
         return ProductExtra(
           id: extraMap['id']?.toString() ?? '',
-          name: _localizedText(extraMap['name'] ?? extraMap['label']),
+          name: _localizedText(extraMap['name'] ?? extraMap['label'], lang: 'ar'),
           nameEn: _localizedText(extraMap['nameEn'] ?? extraMap['name'], lang: 'en'),
           price: _toDouble(extraMap['price']),
+          localizedNames: _harvestLocalizedNames(extraMap),
         );
       }).toList();
 
       final unitPrice = _toDouble(itemMap['price'] ?? itemMap['unitPrice']);
+      String resolvedNameEn = '';
+      final rawNameEn = itemMap['nameEn'];
+      if (rawNameEn is String && rawNameEn.trim().isNotEmpty) {
+        resolvedNameEn = rawNameEn.trim();
+      }
+      if (resolvedNameEn.isEmpty) {
+        for (final src in [
+          itemMap['localizedNames'],
+          itemMap['meal_name_translations'],
+          itemMap['name'],
+        ]) {
+          if (src is Map) {
+            final v = src['en']?.toString().trim();
+            if (v != null && v.isNotEmpty) {
+              resolvedNameEn = v;
+              break;
+            }
+          }
+        }
+      }
       final product = Product(
         id: itemMap['productId']?.toString() ?? itemMap['id']?.toString() ?? '',
-        name: _localizedText(itemMap['name']),
-        nameEn: _localizedText(itemMap['nameEn'] ?? itemMap['name'], lang: 'en'),
+        name: _localizedText(itemMap['name'], lang: 'ar'),
+        nameEn: resolvedNameEn,
         basePrice: unitPrice,
         category: _localizedText(itemMap['category']),
         imageUrl: itemMap['imageUrl']?.toString() ?? '',
         availableExtras: extras,
+        localizedNames: _harvestLocalizedNames(itemMap),
       );
 
       final discountData = _asMap(itemMap['discount_data'] ?? itemMap['discountData']);
@@ -477,6 +593,62 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     final tax = _extractDouble(cartData['tax']);
     if (subtotal > 0 && tax > 0) return (tax / subtotal).clamp(0.0, 1.0);
     return null;
+  }
+
+  /// Adopt the invoice primary/secondary/allow trio from a live cart
+  /// payload. Beats polling SharedPreferences because the payload arrives
+  /// instantly when the cashier changes the setting.
+  void _syncInvoiceLanguageFromPayload(Map<String, dynamic> data) {
+    final primary =
+        data['invoice_primary_lang']?.toString().trim().toLowerCase();
+    final secondary =
+        data['invoice_secondary_lang']?.toString().trim().toLowerCase();
+    final allow = data['invoice_allow_secondary'];
+    if (primary != null && primary.isNotEmpty) {
+      _invoicePrimaryLang = primary;
+    }
+    if (secondary != null && secondary.isNotEmpty) {
+      _invoiceSecondaryLang = secondary;
+    }
+    if (allow is bool) {
+      _invoiceAllowSecondary = allow;
+    }
+  }
+
+  Map<String, String> _harvestLocalizedNames(Map<String, dynamic> source) {
+    final out = <String, String>{};
+    void absorb(dynamic raw) {
+      if (raw is! Map) return;
+      for (final entry in raw.entries) {
+        final code = entry.key.toString().trim().toLowerCase();
+        final value = entry.value?.toString().trim() ?? '';
+        if (code.isEmpty || value.isEmpty) continue;
+        out.putIfAbsent(code, () => value);
+      }
+    }
+
+    absorb(source['localizedNames']);
+    absorb(source['localized_names']);
+    absorb(source['name_locales']);
+    absorb(source['names']);
+    absorb(source['meal_name_translations']);
+    absorb(source['name_translations']);
+    absorb(source['translations']);
+    if (source['name'] is Map) absorb(source['name']);
+
+    final ar = source['nameAr']?.toString().trim() ?? '';
+    if (ar.isNotEmpty) out.putIfAbsent('ar', () => ar);
+    final en = source['nameEn']?.toString().trim() ?? '';
+    if (en.isNotEmpty) out.putIfAbsent('en', () => en);
+    final nameLang = source['name_lang']?.toString().trim().toLowerCase();
+    final rawNameStr = source['name'];
+    if (nameLang != null &&
+        nameLang.isNotEmpty &&
+        rawNameStr is String &&
+        rawNameStr.trim().isNotEmpty) {
+      out.putIfAbsent(nameLang, () => rawNameStr.trim());
+    }
+    return out;
   }
 
   String _localizedText(dynamic value, {String? lang}) {

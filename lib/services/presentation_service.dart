@@ -22,6 +22,37 @@ class PresentationService extends ChangeNotifier {
   bool _isSecondaryReady = false;
   Map<String, dynamic>? _displayInfo;
 
+  /// Write a line to both the Android logcat ("Sunmi" tag) and the
+  /// on-device file at Android/data/p.cash.hermosaapp.com/files/sunmi_log.txt.
+  /// Silently no-ops on non-Android platforms.
+  static Future<void> logSunmi(String message, {String level = 'I'}) async {
+    debugPrint('[Sunmi/$level] $message');
+    try {
+      await _channel.invokeMethod('logSunmi', {
+        'level': level,
+        'message': message,
+      });
+    } catch (_) {
+      // logging must never throw — swallow anything here.
+    }
+  }
+
+  /// Path of the Sunmi diagnostic log file on the device.
+  static Future<String?> sunmiLogPath() async {
+    try {
+      return await _channel.invokeMethod<String>('getSunmiLogPath');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Force a fresh display-enumeration dump into the Sunmi log.
+  static Future<void> dumpDisplays() async {
+    try {
+      await _channel.invokeMethod('dumpDisplays');
+    } catch (_) {}
+  }
+
   // Callbacks from secondary display
   void Function(Map<String, dynamic>)? onMealAvailabilityToggle;
 
@@ -37,8 +68,12 @@ class PresentationService extends ChangeNotifier {
 
   /// Initialize the service and detect secondary displays.
   Future<void> initialize() async {
+    await logSunmi('PresentationService.initialize START');
     _setupMethodCallHandler();
     await checkForSecondaryDisplay();
+    await logSunmi(
+      'PresentationService.initialize END — hasSecondaryDisplay=$_hasSecondaryDisplay info=$_displayInfo',
+    );
   }
 
   void _setupMethodCallHandler() {
@@ -46,15 +81,29 @@ class PresentationService extends ChangeNotifier {
       switch (call.method) {
         case 'onSecondaryDisplayReady':
           _isSecondaryReady = true;
-          debugPrint('[Presentation] Secondary display Flutter engine ready');
+          await logSunmi(
+            'primary received onSecondaryDisplayReady — secondary Flutter engine is alive',
+          );
           notifyListeners();
           return true;
         case 'onDisplayAdded':
-          debugPrint('[Presentation] Display added: ${call.arguments}');
+          await logSunmi('primary received onDisplayAdded: ${call.arguments}');
           await checkForSecondaryDisplay();
+          // Sunmi hardware enumerates the second screen a few hundred ms
+          // after boot, which means our initial `showPresentation()` in
+          // main.dart may have run before the display was visible. Launch
+          // the CDS now that it is — otherwise Android will keep mirroring
+          // the cashier onto the second panel until the user triggers us
+          // manually.
+          if (_hasSecondaryDisplay && !_isPresentationShowing) {
+            await logSunmi(
+              'auto-launching CDS after late display enumeration',
+            );
+            await showPresentation();
+          }
           return true;
         case 'onDisplayRemoved':
-          debugPrint('[Presentation] Display removed: ${call.arguments}');
+          await logSunmi('primary received onDisplayRemoved: ${call.arguments}');
           _isPresentationShowing = false;
           _isSecondaryReady = false;
           await checkForSecondaryDisplay();
@@ -84,15 +133,23 @@ class PresentationService extends ChangeNotifier {
             .invokeMethod<Map<Object?, Object?>>('getSecondaryDisplayInfo');
         if (info != null) {
           _displayInfo = info.map((k, v) => MapEntry(k.toString(), v));
-          debugPrint(
-            '[Presentation] Secondary display found: '
-            '${_displayInfo!['name']} '
-            '(${_displayInfo!['width']}x${_displayInfo!['height']})',
+          await logSunmi(
+            'checkForSecondaryDisplay: FOUND name=${_displayInfo!['name']} '
+            '${_displayInfo!['width']}x${_displayInfo!['height']}',
+          );
+        } else {
+          await logSunmi(
+            'checkForSecondaryDisplay: hasSecondaryDisplay=true but '
+            'getSecondaryDisplayInfo returned null',
+            level: 'W',
           );
         }
       } else {
         _displayInfo = null;
-        debugPrint('[Presentation] No secondary display detected');
+        await logSunmi(
+          'checkForSecondaryDisplay: NO secondary display detected',
+          level: 'W',
+        );
       }
 
       notifyListeners();
@@ -100,10 +157,13 @@ class PresentationService extends ChangeNotifier {
     } on MissingPluginException {
       // Not running on Android or platform doesn't support it
       _hasSecondaryDisplay = false;
-      debugPrint('[Presentation] Platform does not support Presentation API');
+      await logSunmi(
+        'checkForSecondaryDisplay: MissingPluginException — not Android?',
+        level: 'W',
+      );
       return false;
     } catch (e) {
-      debugPrint('[Presentation] Error checking display: $e');
+      await logSunmi('checkForSecondaryDisplay error: $e', level: 'E');
       _hasSecondaryDisplay = false;
       return false;
     }
@@ -112,20 +172,24 @@ class PresentationService extends ChangeNotifier {
   /// Show the customer display on the secondary screen.
   Future<bool> showPresentation() async {
     if (!_hasSecondaryDisplay) {
-      debugPrint('[Presentation] No secondary display to show on');
+      await logSunmi(
+        'showPresentation: no secondary display — refusing',
+        level: 'W',
+      );
       return false;
     }
 
     try {
+      await logSunmi('showPresentation: invoking native');
       final result = await _channel.invokeMethod<bool>('showPresentation');
       _isPresentationShowing = result ?? false;
-      debugPrint(
-        '[Presentation] Show presentation: $_isPresentationShowing',
+      await logSunmi(
+        'showPresentation: native returned $_isPresentationShowing',
       );
       notifyListeners();
       return _isPresentationShowing;
     } catch (e) {
-      debugPrint('[Presentation] Error showing presentation: $e');
+      await logSunmi('showPresentation error: $e', level: 'E');
       _isPresentationShowing = false;
       return false;
     }
@@ -134,12 +198,13 @@ class PresentationService extends ChangeNotifier {
   /// Dismiss the presentation from the secondary screen.
   Future<void> dismissPresentation() async {
     try {
+      await logSunmi('dismissPresentation: invoking native');
       await _channel.invokeMethod('dismissPresentation');
       _isPresentationShowing = false;
       _isSecondaryReady = false;
       notifyListeners();
     } catch (e) {
-      debugPrint('[Presentation] Error dismissing: $e');
+      await logSunmi('dismissPresentation error: $e', level: 'E');
     }
   }
 

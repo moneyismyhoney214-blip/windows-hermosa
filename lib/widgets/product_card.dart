@@ -14,6 +14,7 @@ class ProductCard extends StatefulWidget {
   final Function(Product)? onLongPress;
   final bool isDisabled;
   final double taxRate;
+  final String? placeholderImageUrl;
 
   const ProductCard({
     super.key,
@@ -23,6 +24,7 @@ class ProductCard extends StatefulWidget {
     this.onLongPress,
     this.isDisabled = false,
     this.taxRate = 0.0,
+    this.placeholderImageUrl,
   });
 
   @override
@@ -51,6 +53,47 @@ class _ProductCardState extends State<ProductCard> {
 
   String _computePrice() {
     return '${(widget.product.price * (1 + widget.taxRate)).toStringAsFixed(2)} ${ApiConstants.currency}';
+  }
+
+  Widget _buildProductImage() {
+    final productImg = widget.product.image;
+    final hasProductImg = productImg != null && productImg.isNotEmpty;
+    if (hasProductImg) {
+      return CachedNetworkImage(
+        imageUrl: productImg,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        memCacheWidth: 300,
+        fadeInDuration: const Duration(milliseconds: 150),
+        placeholder: (context, url) => _fallbackImage(),
+        errorWidget: (context, url, error) => _fallbackImage(),
+      );
+    }
+    return _fallbackImage();
+  }
+
+  Widget _fallbackImage() {
+    final logo = widget.placeholderImageUrl;
+    if (logo != null && logo.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: logo,
+        fit: BoxFit.contain,
+        width: double.infinity,
+        height: double.infinity,
+        memCacheWidth: 300,
+        fadeInDuration: const Duration(milliseconds: 150),
+        placeholder: (_, __) => const Center(
+          child: Icon(LucideIcons.image, size: 32, color: Color(0xFFCBD5E1)),
+        ),
+        errorWidget: (_, __, ___) => const Center(
+          child: Icon(LucideIcons.image, size: 32, color: Color(0xFFCBD5E1)),
+        ),
+      );
+    }
+    return const Center(
+      child: Icon(LucideIcons.image, size: 32, color: Color(0xFFCBD5E1)),
+    );
   }
 
   void _startLongPress() {
@@ -128,30 +171,7 @@ class _ProductCardState extends State<ProductCard> {
                       decoration: BoxDecoration(
                         color: context.appSurfaceAlt,
                       ),
-                      child: widget.product.image != null &&
-                              widget.product.image!.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: widget.product.image!,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              height: double.infinity,
-                              memCacheWidth: 300,
-                              fadeInDuration:
-                                  const Duration(milliseconds: 150),
-                              placeholder: (context, url) => const Center(
-                                child: Icon(LucideIcons.image,
-                                    size: 32, color: Color(0xFFCBD5E1)),
-                              ),
-                              errorWidget: (context, url, error) =>
-                                  const Center(
-                                child: Icon(LucideIcons.image,
-                                    size: 32, color: Color(0xFFCBD5E1)),
-                              ),
-                            )
-                          : const Center(
-                              child: Icon(LucideIcons.image,
-                                  size: 32, color: Color(0xFFCBD5E1)),
-                            ),
+                      child: _buildProductImage(),
                     ),
                     if (widget.isDisabled)
                       Positioned(

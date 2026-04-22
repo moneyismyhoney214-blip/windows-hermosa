@@ -60,6 +60,17 @@ extension MainScreenPayment on _MainScreenState {
 
     final tenderEnabledMethods = _effectiveEnabledPayMethodsForTender();
 
+    // Ensure a fresh deposit list is loaded before opening the tender so the
+    // picker reliably reflects the customer's available deposits — covers the
+    // case where the customer was selected before the deposits load finished,
+    // or a prior fetch silently failed.
+    if (_isSalonMode && _selectedCustomer != null) {
+      await _loadCustomerDeposits(_selectedCustomer!.id);
+    }
+    debugPrint(
+        '💰 [DEPOSIT] opening tender salon=$_isSalonMode customer=${_selectedCustomer?.id} '
+        'deposits=${_customerDeposits.length} selected=$_selectedDepositId');
+
     if (!mounted) return;
     showDialog(
       context: context,
@@ -71,6 +82,11 @@ extension MainScreenPayment on _MainScreenState {
         promocodes: _cachedPromoCodes,
         appliedPromoCode: _activePromoCode,
         onPromoCodeChanged: _applyPromoCode,
+        availableDeposits: _isSalonMode ? _customerDeposits : const [],
+        selectedDepositId: _isSalonMode ? _selectedDepositId : null,
+        onSelectDeposit: _isSalonMode
+            ? (id) => setState(() => _selectedDepositId = id)
+            : null,
         onNoteChanged: (note) {
           _orderNotesController.text = note;
         },
@@ -194,12 +210,26 @@ extension MainScreenPayment on _MainScreenState {
       }
     }
 
+    // Mirror the NearPay flow onto the built-in secondary display (CDS
+    // overlay). The overlay renders the same "processing / success /
+    // failed / cancelled" states used by the external WebSocket CDS.
+    final presentation = PresentationService();
+    unawaited(presentation.startPayment({
+      'amount': paymentAmount,
+      'payment_method': 'nearpay',
+      'timestamp': DateTime.now().toIso8601String(),
+    }));
+
     try {
       // 1️⃣ Ensure NearPay is fully bootstrapped (SDK + JWT + terminal).
       statusNotifier.value = 'جاري تجهيز الجهاز...';
       final ready = await NearPayBootstrap.ensureInitialized();
       if (!ready) {
         closeWaitingDialog();
+        unawaited(presentation.updatePaymentStatus(
+          'failed',
+          message: 'تعذر تهيئة NearPay. تأكد من الاتصال بالإنترنت وتفعيل NFC.',
+        ));
         if (mounted) {
           showDialog(
             context: context,
@@ -261,6 +291,7 @@ extension MainScreenPayment on _MainScreenState {
       closeWaitingDialog();
 
       if (result.success) {
+        unawaited(presentation.updatePaymentStatus('success'));
         // 4️⃣ Success — chain into the normal invoice/receipt pipeline.
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -283,6 +314,10 @@ extension MainScreenPayment on _MainScreenState {
       } else {
         // 5️⃣ Failure — show error dialog, keep cart intact.
         final errorMessage = result.errorMessage ?? 'فشل الدفع';
+        unawaited(presentation.updatePaymentStatus(
+          'failed',
+          message: errorMessage,
+        ));
         if (mounted) {
           showDialog(
             context: context,
@@ -307,6 +342,10 @@ extension MainScreenPayment on _MainScreenState {
       }
     } catch (e) {
       closeWaitingDialog();
+      unawaited(presentation.updatePaymentStatus(
+        'failed',
+        message: 'خطأ في الدفع: $e',
+      ));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1585,21 +1624,51 @@ extension MainScreenPayment on _MainScreenState {
         double extractExpectedInvoiceTotal(dynamic response, double fallback) {
           if (response is! Map) return fallback;
           final map = response.map((k, v) => MapEntry(k.toString(), v));
+          // Salon calculate response is `{data: {invoice: {total, pre_paid, ...}}}`
+          // where `total` is already net (deposit pre_paid has been subtracted).
+          // Restaurant returns `{data: {total: ...}}`. Check both shapes.
+          final dataMap = map['data'] is Map ? (map['data'] as Map) : null;
+          final invoiceMap =
+              dataMap != null && dataMap['invoice'] is Map ? dataMap['invoice'] as Map : null;
+          // Restaurant returns `{data: {total: ...}}` — put that first for the
+          // restaurant flow so a salon-shape key doesn't accidentally win when
+          // the backend happens to echo both. Salon shape (`data.invoice.*`)
+          // stays first in salon mode.
           final candidates = <dynamic>[
             map['total'],
             map['invoice_total'],
             map['grand_total'],
-            if (map['data'] is Map) (map['data'] as Map)['total'],
-            if (map['data'] is Map) (map['data'] as Map)['invoice_total'],
-            if (map['data'] is Map) (map['data'] as Map)['grand_total'],
-            if (map['data'] is Map) (map['data'] as Map)['total_with_tax'],
+            if (_isSalonMode) ...[
+              if (invoiceMap != null) invoiceMap['total'],
+              if (invoiceMap != null) invoiceMap['invoice_total'],
+              if (invoiceMap != null) invoiceMap['grand_total'],
+              if (dataMap != null) dataMap['total'],
+              if (dataMap != null) dataMap['invoice_total'],
+              if (dataMap != null) dataMap['grand_total'],
+              if (dataMap != null) dataMap['total_with_tax'],
+            ] else ...[
+              if (dataMap != null) dataMap['total'],
+              if (dataMap != null) dataMap['invoice_total'],
+              if (dataMap != null) dataMap['grand_total'],
+              if (dataMap != null) dataMap['total_with_tax'],
+              if (invoiceMap != null) invoiceMap['total'],
+              if (invoiceMap != null) invoiceMap['invoice_total'],
+              if (invoiceMap != null) invoiceMap['grand_total'],
+            ],
           ];
           for (final c in candidates) {
-            if (c is num) return c.toDouble();
-            if (c is String) {
-              final parsed = double.tryParse(c);
-              if (parsed != null) return parsed;
+            double? value;
+            if (c is num) {
+              value = c.toDouble();
+            } else if (c is String) {
+              value = double.tryParse(c);
             }
+            // Skip null and non-positive values — a 0 here means the
+            // backend didn't actually quote a total, so falling back to
+            // the locally-computed orderTotal is safer than zeroing the
+            // pays list (which the invoice endpoint then rejects as
+            // "طريقة الدفع مطلوبة").
+            if (value != null && value > 0) return value;
           }
           return fallback;
         }
@@ -1660,6 +1729,22 @@ extension MainScreenPayment on _MainScreenState {
               )
               .toList();
         }
+        // Server rule (observed): the applied deposit must not exceed the
+        // invoice total, otherwise calculate/invoices returns 422. Drop the
+        // deposit locally rather than hitting that error — the UI already
+        // warns the cashier in this case.
+        int? effectiveDepositId;
+        if (_isSalonMode && _selectedDepositId != null) {
+          final subtotal = cartItemsForOrder.fold<double>(
+              0.0, (sum, it) => sum + it.product.price * it.quantity);
+          final depositPrice = _lookupSelectedDepositPrice();
+          if (depositPrice <= subtotal + 0.01) {
+            effectiveDepositId = _selectedDepositId;
+          } else {
+            debugPrint(
+                '⚠️ Skipping deposit_id=$_selectedDepositId: price $depositPrice > subtotal $subtotal');
+          }
+        }
         final calculationPayload = {
           calcItemsKey: calcItems,
           'discount': _orderDiscount,
@@ -1669,14 +1754,21 @@ extension MainScreenPayment on _MainScreenState {
           if (promoCodeValue != null && promoCodeValue.isNotEmpty)
             'promocode_name': promoCodeValue,
           if (promoDiscountType != null) 'discount_type': promoDiscountType,
-          if (_isSalonMode && _selectedDepositId != null)
-            'deposit_id': _selectedDepositId,
+          if (effectiveDepositId != null) 'deposit_id': effectiveDepositId,
         };
         try {
           final calcResponse = await orderService.calculateInvoice(
             calculationPayload,
           );
           payableTotal = extractExpectedInvoiceTotal(calcResponse, orderTotal);
+          // Final guard: if calculate somehow returned a non-positive total
+          // (empty body, maintenance window, schema mismatch) the fallback
+          // should be the locally-computed cart total, never zero — a zero
+          // total zeroes the pays list and the invoice endpoint rejects it
+          // with "طريقة الدفع مطلوبة لإتمام الفاتورة".
+          if (payableTotal <= 0 && orderTotal > 0) {
+            payableTotal = orderTotal;
+          }
           if ((payableTotal - payableTotal.roundToDouble()).abs() <= 0.02) {
             payableTotal = payableTotal.roundToDouble();
           } else {
@@ -1896,8 +1988,7 @@ extension MainScreenPayment on _MainScreenState {
           'booking_id': bookingIdValue,
           if (primaryBookingProductId != null && !_isSalonMode)
             'booking_product_id': primaryBookingProductId,
-          if (_isSalonMode && _selectedDepositId != null)
-            'deposit_id': _selectedDepositId,
+          if (effectiveDepositId != null) 'deposit_id': effectiveDepositId,
           ...promoFields,
           'cash_back': 0,
           'date': dateStr,
@@ -1917,8 +2008,8 @@ extension MainScreenPayment on _MainScreenState {
                   normalizedPays.first['pay_method']?.toString(),
                 ) ==
                 'cash';
-        final depositField = (_isSalonMode && _selectedDepositId != null)
-            ? <String, dynamic>{'deposit_id': _selectedDepositId}
+        final depositField = effectiveDepositId != null
+            ? <String, dynamic>{'deposit_id': effectiveDepositId}
             : <String, dynamic>{};
         final invoiceDataCashPostman = <String, dynamic>{
           if (customerIdValue != null) 'customer_id': customerIdValue,
@@ -1928,6 +2019,19 @@ extension MainScreenPayment on _MainScreenState {
           'pays': normalizedPays,
           ...promoFields,
           ...depositField,
+        };
+        // Exact shape used by the working "قسم الطلبات → إنشاء فاتورة" path
+        // (see orders_screen.data.dart:579). No customer_id, no order_id, no
+        // booking_product_id, no promo/deposit. Tried first on restaurant so
+        // the دفع button matches the known-good request.
+        final invoiceDataOrdersSectionSlim = <String, dynamic>{
+          'branch_id': ApiConstants.branchId,
+          'booking_id': bookingIdValue,
+          'date': dateStr,
+          'cash_back': 0,
+          'pays': normalizedPays,
+          if (!_isSalonMode && hasValidSalesMealBookingIds)
+            'sales_meals': salesMeals,
         };
         final invoiceDataCashWithSalesMeals = <String, dynamic>{
           if (customerIdValue != null) 'customer_id': customerIdValue,
@@ -1992,6 +2096,23 @@ extension MainScreenPayment on _MainScreenState {
         Map<String, dynamic> invoiceResponse;
         Object? lastInvoiceError;
         final attempts = <Map<String, dynamic>>[];
+        // Restaurant: try the exact slim payload that the orders-section
+        // path uses (and is known to succeed). If the backend rejects it
+        // we fall through to the fuller variants below.
+        if (!_isSalonMode) {
+          attempts.add({
+            'label': 'json_orders_section_slim',
+            'run': () =>
+                orderService.createInvoice(invoiceDataOrdersSectionSlim),
+            'payload': invoiceDataOrdersSectionSlim,
+          });
+          attempts.add({
+            'label': 'multipart_orders_section_slim',
+            'run': () => orderService
+                .createInvoiceMultipart(invoiceDataOrdersSectionSlim),
+            'payload': invoiceDataOrdersSectionSlim,
+          });
+        }
         if (isCashOnlyPayment) {
           if (hasValidSalesMealBookingIds) {
             attempts.addAll([
@@ -2477,6 +2598,12 @@ extension MainScreenPayment on _MainScreenState {
             'multipart_cash_postman_exact',
             'json_postman_pays_only',
             'multipart_postman_pays_only',
+            // The orders-section slim payload matches the known-good contract
+            // used by قسم الطلبات; running updatePays after it risks a
+            // spurious 422 which the backend answers by cancelling the
+            // just-created invoice (ghost IN-N cancelled next to the real one).
+            'json_orders_section_slim',
+            'multipart_orders_section_slim',
             'existing_invoice_on_booking',
           }.contains(resolvedAttemptLabel);
 

@@ -5,6 +5,14 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
   Widget _buildKitchenView() {
     if (kitchenData == null) return const SizedBox.shrink();
 
+    // Salon module reuses the kitchen pipeline but renders a different
+    // layout — a per-service turn slip (تذكرة دور). Detect via the template
+    // marker the caller injects and short-circuit to that builder so the
+    // restaurant kitchen ticket path stays completely untouched.
+    if (kitchenData!['template']?.toString() == 'salon_turn') {
+      return _buildSalonTurnView();
+    }
+
     final orderNumber = kitchenData!['orderNumber'] ?? '';
     final orderTypeRaw = kitchenData!['orderType'] ?? '';
     final items = (kitchenData!['items'] as List? ?? []);

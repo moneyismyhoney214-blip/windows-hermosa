@@ -21,6 +21,7 @@ import '../dialogs/product_customization_dialog.dart';
 import '../dialogs/payment_tender_dialog.dart';
 import '../services/language_service.dart';
 import '../services/display_app_service.dart';
+import '../services/presentation_service.dart';
 import '../services/invoice_html_pdf_service.dart';
 import '../services/kds_meal_availability_service.dart';
 import '../services/print_orchestrator_service.dart';
@@ -210,6 +211,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   bool get _isSalonMode => ApiConstants.branchModule == 'salons';
   /// Selected deposit ID for invoice integration (salon only)
   int? _selectedDepositId;
+  /// Deposits belonging to the currently selected customer (salon only).
+  /// Populated from `/seller/filters/branches/{branchId}/allDeposits?customer_id=X`.
+  /// Each entry has the shape {label, value, price, is_active, ...}.
+  List<Map<String, dynamic>> _customerDeposits = [];
+  /// In-flight customer id for a deposits fetch; used to discard stale
+  /// responses when the user flips between customers quickly.
+  int? _depositsFetchCustomerId;
   String _salonServiceType = 'services'; // 'services' or 'packageServices'
   List<Map<String, dynamic>> _salonServices = [];
   List<Map<String, dynamic>> _salonPackages = []; // raw package data
@@ -218,6 +226,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _salonLastPage = 1;
   /// Maps service ID → list of employees who can perform that service
   Map<int, List<Map<String, dynamic>>> _serviceEmployeeMap = {};
+  /// Branch/seller logo URL — used as a fallback image for salon services
+  /// that don't have their own picture (product cards, service dialogs).
+  String? _salonBranchLogoUrl;
 
   /// Navigation items adjusted for salon module:
   /// - "orders" stays but gets renamed to "تذاكر مراجعه" in _navLabel
@@ -244,8 +255,37 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _displayAppService.addMealAvailabilityListener(_handleMealAvailabilitySync);
     WidgetsBinding.instance.addObserver(this);
     translationService.addListener(_onLanguageChanged);
+    // When the cashier flips invoice language settings, invalidate the CDS
+    // payload fingerprint and push a refreshed cart so the CDS can redraw
+    // names in the new primary/secondary pair immediately.
+    printerLanguageSettings.addListener(_onPrinterLanguageChanged);
+    // When ProductService harvests a new translation in the background,
+    // re-push the cart so the CDS picks up richer names without waiting
+    // for the next user-triggered cart edit.
+    ProductService.addCacheListener(_onProductNameCacheChanged);
     _productsScrollController.addListener(_onProductsScroll);
     unawaited(_bootstrapSessionAndLoad());
+  }
+
+  void _onPrinterLanguageChanged() {
+    // Prime ProductService for the new primary/secondary so the background
+    // fetcher starts harvesting translations for any cached pages. Listeners
+    // rebroadcast the cart once those translations land.
+    try {
+      getIt<ProductService>().primeLanguages([
+        printerLanguageSettings.primary,
+        if (printerLanguageSettings.allowSecondary)
+          printerLanguageSettings.secondary,
+      ]);
+    } catch (_) {}
+    _lastMainCartFingerprint = null;
+    _syncDisplayCartFromMain();
+  }
+
+  void _onProductNameCacheChanged() {
+    if (!mounted) return;
+    _lastMainCartFingerprint = null;
+    _syncDisplayCartFromMain();
   }
 
   // Fields relocated from mid-class positions during refactor
@@ -266,6 +306,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _searchDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     translationService.removeListener(_onLanguageChanged);
+    printerLanguageSettings.removeListener(_onPrinterLanguageChanged);
+    ProductService.removeCacheListener(_onProductNameCacheChanged);
     _displayAppService.removeMealAvailabilityListener(
       _handleMealAvailabilitySync,
     );

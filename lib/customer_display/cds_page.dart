@@ -26,6 +26,12 @@ class CustomerFacingScreen extends StatelessWidget {
     this.orderDiscountValue,
     this.orderDiscountPercent,
     this.discountSource,
+    this.sellerNameAr = '',
+    this.sellerNameEn = '',
+    this.sellerLogoUrl = '',
+    this.invoicePrimaryLang = 'ar',
+    this.invoiceSecondaryLang = 'en',
+    this.invoiceAllowSecondary = true,
     this.cashFloat,
     this.catalogProducts = const <Map<String, dynamic>>[],
     this.catalogCategories = const <String>[],
@@ -51,6 +57,12 @@ class CustomerFacingScreen extends StatelessWidget {
   final double? orderDiscountValue;
   final double? orderDiscountPercent;
   final String? discountSource;
+  final String sellerNameAr;
+  final String sellerNameEn;
+  final String sellerLogoUrl;
+  final String invoicePrimaryLang;
+  final String invoiceSecondaryLang;
+  final bool invoiceAllowSecondary;
   final Map<String, dynamic>? cashFloat;
   final List<Map<String, dynamic>> catalogProducts;
   final List<String> catalogCategories;
@@ -59,7 +71,8 @@ class CustomerFacingScreen extends StatelessWidget {
   onToggleMealAvailability;
   final VoidCallback? onClose;
 
-  Widget _buildBrandMark({double size = 40}) {
+  Widget _buildBrandMark({double size = 40, bool useRemoteLogo = true}) {
+    final hasRemoteLogo = useRemoteLogo && sellerLogoUrl.trim().isNotEmpty;
     return Container(
       width: size,
       height: size,
@@ -72,12 +85,25 @@ class CustomerFacingScreen extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(size * 0.28),
-        child: Image.asset(
-          'assets/hermosa app ico.png',
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-        ),
+        child: hasRemoteLogo
+            ? Image.network(
+                sellerLogoUrl,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stack) => Image.asset(
+                  'assets/hermosa app ico.png',
+                  width: size,
+                  height: size,
+                  fit: BoxFit.cover,
+                ),
+              )
+            : Image.asset(
+                'assets/hermosa app ico.png',
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+              ),
       ),
     );
   }
@@ -151,14 +177,28 @@ class CustomerFacingScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            'HERMOSA POS',
+            sellerNameAr.isNotEmpty ? sellerNameAr : 'HERMOSA POS',
+            textAlign: TextAlign.center,
             style: GoogleFonts.cairo(
-              fontSize: 20,
+              fontSize: 22,
               fontWeight: FontWeight.bold,
-              letterSpacing: 1.5,
+              letterSpacing: 1.2,
               color: const Color(0xFF1B2538),
             ),
           ),
+          if (sellerNameEn.isNotEmpty && sellerNameEn != sellerNameAr) ...[
+            const SizedBox(height: 4),
+            Text(
+              sellerNameEn,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.cairo(
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.8,
+                color: const Color(0xFF64748B),
+              ),
+            ),
+          ],
           const SizedBox(height: 48),
           const _AnimatedWelcomeWord(),
         ],
@@ -178,15 +218,28 @@ class CustomerFacingScreen extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  _buildBrandMark(size: 32),
+                  // Order screen header always shows the Hermosa brand — the
+                  // restaurant identity is only rendered on the welcome /
+                  // idle screen.
+                  _buildBrandMark(size: 32, useRemoteLogo: false),
                   const SizedBox(width: 12),
-                  Text(
-                    'HERMOSA POS',
-                    style: GoogleFonts.cairo(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF1B2538),
-                      letterSpacing: 1.0,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'HERMOSA POS',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.cairo(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF1B2538),
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -507,39 +560,52 @@ class CustomerFacingScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          item.displayName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: 'Cairo',
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: unavailable
-                                ? const Color(0xFF9AA3AF)
-                                : const Color(0xFF1B2538),
-                          ),
+                        Builder(
+                          builder: (context) {
+                            final primary = item.displayNameFor(invoicePrimaryLang);
+                            final secondary = invoiceAllowSecondary &&
+                                    invoiceSecondaryLang != invoicePrimaryLang
+                                ? item.displayNameFor(invoiceSecondaryLang)
+                                : '';
+                            final showSecondary = secondary.isNotEmpty &&
+                                secondary != primary;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  primary,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontFamily: 'Cairo',
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: unavailable
+                                        ? const Color(0xFF9AA3AF)
+                                        : const Color(0xFF1B2538),
+                                  ),
+                                ),
+                                if (showSecondary)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      secondary,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontFamily: 'Cairo',
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: unavailable
+                                            ? const Color(0xFFB0B7C3)
+                                            : const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
-                        // Secondary-language name (Arabic/English pair) so
-                        // non-Arabic-speaking customers can confirm the item.
-                        if (item.displayNameEn.isNotEmpty &&
-                            item.displayNameEn != item.displayName)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(
-                              item.displayNameEn,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontFamily: 'Cairo',
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: unavailable
-                                    ? const Color(0xFFB0B7C3)
-                                    : const Color(0xFF64748B),
-                              ),
-                            ),
-                          ),
                         // عرض الإضافات (extras)
                         if (item.selectedExtras.isNotEmpty && !unavailable)
                           Padding(
@@ -790,24 +856,34 @@ class CustomerFacingScreen extends StatelessWidget {
   }
 
   String _groupExtras(List<ProductExtra> extras) {
-    // Group by id so the Arabic/English pair for the same addon stays aligned.
-    // Rendering both names lets customers recognize the modifier regardless
-    // of which language they read.
+    // Group by id so repeated addons collapse to a single label with a count.
+    // Name resolution follows the invoice language pair: primary first,
+    // secondary only when allowed and distinct.
     final grouped = <String, _ExtraGroupEntry>{};
     for (final e in extras) {
       final key = e.id.isNotEmpty ? e.id : e.name;
       final existing = grouped[key];
       if (existing == null) {
-        grouped[key] =
-            _ExtraGroupEntry(nameAr: e.name, nameEn: e.nameEn, count: 1);
+        final primary = e.nameFor(invoicePrimaryLang);
+        final secondary = invoiceAllowSecondary &&
+                invoiceSecondaryLang != invoicePrimaryLang
+            ? e.nameFor(invoiceSecondaryLang)
+            : '';
+        grouped[key] = _ExtraGroupEntry(
+          primaryName: primary,
+          secondaryName: secondary,
+          count: 1,
+        );
       } else {
         existing.count += 1;
       }
     }
     return grouped.values.map((entry) {
-      final label = (entry.nameEn.isNotEmpty && entry.nameEn != entry.nameAr)
-          ? '${entry.nameAr} / ${entry.nameEn}'
-          : entry.nameAr;
+      final showSecondary = entry.secondaryName.isNotEmpty &&
+          entry.secondaryName != entry.primaryName;
+      final label = showSecondary
+          ? '${entry.primaryName} / ${entry.secondaryName}'
+          : entry.primaryName;
       return entry.count > 1 ? '${entry.count}x$label' : label;
     }).join('، ');
   }
@@ -1072,12 +1148,12 @@ class _AutoScrollCartListState extends State<_AutoScrollCartList> {
 }
 
 class _ExtraGroupEntry {
-  final String nameAr;
-  final String nameEn;
+  final String primaryName;
+  final String secondaryName;
   int count;
   _ExtraGroupEntry({
-    required this.nameAr,
-    required this.nameEn,
+    required this.primaryName,
+    required this.secondaryName,
     required this.count,
   });
 }

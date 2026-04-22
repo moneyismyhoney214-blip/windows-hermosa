@@ -245,11 +245,15 @@ class Extra {
       name: resolvedName,
       price: price,
       optionTranslations: _readLocalizedMap(json['optionTranslations']) ??
+          _readLocalizedMap(json['names']) ??
+          _readLocalizedMap(json['name_translations']) ??
+          _readLocalizedMap(json['translations']) ??
           _readLocalizedMap(json['option']) ??
           _readLocalizedMap(json['option_name']) ??
           _readLocalizedMap(json['name']) ??
           const {},
       attributeTranslations: _readLocalizedMap(json['attributeTranslations']) ??
+          _readLocalizedMap(json['attribute_names']) ??
           _readLocalizedMap(json['attribute']) ??
           _readLocalizedMap(json['attribute_name']) ??
           const {},
@@ -402,12 +406,54 @@ class Product {
         localizedNames[code] = resolved;
       }
     }
+    // Harvest from any translation map the API supplies — catalog endpoints
+    // tend to use `names`, sales meals use `meal_name_translations`, a few
+    // older surfaces expose `translations` or `name_locales`.
+    for (final key in const [
+      'names',
+      'meal_name_translations',
+      'name_translations',
+      'translations',
+      'name_locales',
+    ]) {
+      final mt = normalized[key];
+      if (mt is Map) {
+        for (final entry in mt.entries) {
+          final code = entry.key.toString().trim().toLowerCase();
+          final value = entry.value?.toString().trim() ?? '';
+          if (code.isEmpty || value.isEmpty) continue;
+          localizedNames.putIfAbsent(code, () => value);
+        }
+      }
+    }
+    // If `name` itself is a multilingual map (some catalog endpoints return
+    // this), extract every language key directly.
+    final rawName = json['name'];
+    if (rawName is Map) {
+      for (final entry in rawName.entries) {
+        final code = entry.key.toString().trim().toLowerCase();
+        final value = entry.value?.toString().trim() ?? '';
+        if (code.isEmpty || value.isEmpty) continue;
+        localizedNames.putIfAbsent(code, () => value);
+      }
+    }
     // Ensure ar and en are always populated from dedicated fields
     if (!localizedNames.containsKey('ar') && (normalized['nameAr'] as String).isNotEmpty) {
       localizedNames['ar'] = normalized['nameAr'] as String;
     }
     if (!localizedNames.containsKey('en') && (normalized['nameEn'] as String).isNotEmpty) {
       localizedNames['en'] = normalized['nameEn'] as String;
+    }
+    // Promote `en` / `ar` from localizedNames back onto the dedicated fields
+    // when the separate `name_xx` columns were missing but a translations map
+    // provided the value.
+    if ((normalized['nameEn'] as String).isEmpty &&
+        (localizedNames['en'] ?? '').isNotEmpty) {
+      normalized['nameEn'] = localizedNames['en']!;
+    }
+    if ((normalized['nameAr'] as String).isEmpty &&
+        (localizedNames['ar'] ?? '').isNotEmpty) {
+      normalized['nameAr'] = localizedNames['ar']!;
     }
 
     final normalizedCategory = _readLocalizedText([

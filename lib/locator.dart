@@ -30,6 +30,7 @@ import 'package:hermosa_pos/services/offline/sync_service.dart';
 import 'package:hermosa_pos/services/api/sync_api_service.dart';
 import 'package:hermosa_pos/customer_display/nearpay/nearpay_service.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_billing_service.dart';
+import 'package:hermosa_pos/waiter_module/services/waiter_print_dispatcher.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_cart_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_config_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_controller.dart';
@@ -139,6 +140,7 @@ void setupLocator() {
         pickupStore: getIt<WaiterPickupStore>(),
       ));
   registerIfNeeded<WaiterBillingService>(() => WaiterBillingService());
+  registerIfNeeded<WaiterPrintDispatcher>(() => WaiterPrintDispatcher());
   registerIfNeeded<CashierMeshBootstrap>(() => CashierMeshBootstrap(
         controller: getIt<WaiterController>(),
         configStore: getIt<WaiterConfigStore>(),

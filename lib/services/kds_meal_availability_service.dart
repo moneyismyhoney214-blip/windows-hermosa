@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/models.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
+import 'package:hermosa_pos/services/api/api_constants.dart';
 import 'package:hermosa_pos/services/api/product_service.dart';
 
 class DisabledMealState {
@@ -139,6 +140,9 @@ class KdsMealAvailabilityService extends ChangeNotifier {
   Future<void> refreshFromApi({bool force = false}) async {
     if (_refreshInProgress) return;
     if (!force && isCircuitOpen) return;
+    // Meals-based KDS availability is restaurant-only; salons have no meals
+    // endpoint to poll and would just hammer 422s.
+    if (ApiConstants.branchModule == 'salons') return;
 
     _refreshInProgress = true;
     try {

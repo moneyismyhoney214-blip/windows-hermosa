@@ -33,7 +33,7 @@ class NearPayConfigService {
   static const String country = 'SA';
   static const int googleCloudProjectNumber =
       764962961378; // From security_config.dart (removed)
-  static const String androidApplicationId = 'display.hermosaapp.com';
+  static const String androidApplicationId = 'p.cash.hermosaapp.com';
 
   Future<NfcAvailability> _checkNfcAvailability() async {
     final probe = _nfcAvailabilityProbe;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:hermosa_pos/models.dart';
 import 'package:hermosa_pos/services/api/base_client.dart';
@@ -21,6 +23,406 @@ class ProductService {
   static const Duration _memProductTtl = Duration(seconds: 60);
   final Map<String, _CachedEntry<List<Product>>> _memProductCache = {};
   final Map<String, Future<List<Product>>> _inFlightProducts = {};
+
+  /// Per-language cache of meal names, keyed first by language code then by
+  /// meal id. Populated via parallel fetches with `Accept-Language: <code>`
+  /// so the CDS can render the name in whichever language(s) the cashier
+  /// picked for receipts — even when the API only serves the active UI
+  /// language per request.
+  static final Map<String, Map<String, String>> _namesByLangById =
+      <String, Map<String, String>>{};
+  static final Set<String> _fetchedLangPages = <String>{};
+
+  /// Languages we're willing to pre-fetch in the background for the CDS.
+  /// Callers can extend this by invoking [primeLanguages] — the set is
+  /// additive so newly needed languages (e.g. the printer primary/secondary)
+  /// kick off a fetch the next time [getProducts] runs.
+  static final Set<String> _primedLanguages = <String>{'en'};
+
+  /// Every (page, categoryId) combo that has been fetched in the active
+  /// language. Used by [primeLanguages] to retroactively fetch a newly
+  /// added language on the same pages without waiting for the user to
+  /// navigate back to each category.
+  static final Set<String> _fetchedPageKeys = <String>{};
+
+  /// Callbacks notified whenever new translations land — wakes up the
+  /// cashier cart sync so the CDS payload refreshes with richer names.
+  static final Set<VoidCallback> _cacheListeners = <VoidCallback>{};
+
+  /// Addon option-name cache, structured like [_namesByLangById] but keyed
+  /// by the option id returned under `option.id` on the mealAddons endpoint.
+  /// Populated by fetching mealAddons in parallel per primed language.
+  static final Map<String, Map<String, String>> _addonNamesByLangById =
+      <String, Map<String, String>>{};
+  static final Set<String> _fetchedAddonMealLangs = <String>{};
+
+  /// Every mealId whose addons have been fetched at least once in the
+  /// active language. Used by [primeLanguages] to back-fill a newly added
+  /// language on every meal the cashier has already used — otherwise
+  /// existing cart addons would be stuck in the old language until the
+  /// user reopens each addon dialog.
+  static final Set<String> _addonFetchedMeals = <String>{};
+
+  /// Returns all cached translations for the given addon option id, or an
+  /// empty map when we haven't fetched that option yet.
+  static Map<String, String> cachedOptionNamesFor(String? optionId) {
+    if (optionId == null || optionId.isEmpty) return const {};
+    final out = <String, String>{};
+    _addonNamesByLangById.forEach((lang, byId) {
+      final v = byId[optionId];
+      if (v != null && v.isNotEmpty) out[lang] = v;
+    });
+    return out;
+  }
+
+  /// Subscribe to translation-cache updates. Each time a background fetch
+  /// harvests a new meal name (or a new language entirely), registered
+  /// callbacks fire so the caller can re-push the CDS payload.
+  static void addCacheListener(VoidCallback listener) {
+    _cacheListeners.add(listener);
+  }
+
+  static void removeCacheListener(VoidCallback listener) {
+    _cacheListeners.remove(listener);
+  }
+
+  static void _notifyCacheListeners() {
+    for (final cb in List<VoidCallback>.from(_cacheListeners)) {
+      try {
+        cb();
+      } catch (_) {}
+    }
+  }
+
+  /// Returns the cached English meal name for [mealId], or null if none.
+  static String? englishNameFor(String? mealId) =>
+      nameForLangAndMeal('en', mealId);
+
+  /// Returns the cached meal name in [lang] for [mealId], or null if we
+  /// haven't successfully fetched that language yet.
+  static String? nameForLangAndMeal(String lang, String? mealId) {
+    if (mealId == null || mealId.isEmpty) return null;
+    final code = lang.trim().toLowerCase();
+    if (code.isEmpty) return null;
+    final byLang = _namesByLangById[code];
+    if (byLang == null) return null;
+    final v = byLang[mealId];
+    return (v == null || v.isEmpty) ? null : v;
+  }
+
+  /// Returns all cached translations for [mealId] — useful when building a
+  /// payload that should carry every available language.
+  static Map<String, String> cachedNamesFor(String? mealId) {
+    if (mealId == null || mealId.isEmpty) return const {};
+    final out = <String, String>{};
+    _namesByLangById.forEach((lang, byId) {
+      final v = byId[mealId];
+      if (v != null && v.isNotEmpty) out[lang] = v;
+    });
+    return out;
+  }
+
+  /// Register [langs] as languages that should be pre-fetched for the CDS.
+  /// Fires fetches for any (language × page) combo we haven't hit yet —
+  /// existing good cache entries are kept, so the CDS never goes through a
+  /// "blank" window while new translations arrive.
+  void primeLanguages(Iterable<String> langs) {
+    final normalized = <String>{};
+    for (final raw in langs) {
+      final code = raw.trim().toLowerCase();
+      if (code.isEmpty) continue;
+      normalized.add(code);
+      _primedLanguages.add(code);
+    }
+    if (normalized.isEmpty) return;
+
+    final seen = _fetchedPageKeys.isNotEmpty
+        ? _fetchedPageKeys.toList()
+        : <String>['all|1'];
+    for (final key in seen) {
+      final parts = key.split('|');
+      if (parts.length != 2) continue;
+      final categoryId = parts[0];
+      final page = int.tryParse(parts[1]) ?? 1;
+      unawaited(_ensureNamesForPage(page, categoryId: categoryId));
+    }
+
+    // Re-prime addon translations for every meal whose addons we've
+    // already fetched, so cart items that already include addons flip to
+    // the new language within a couple of seconds.
+    for (final mealId in _addonFetchedMeals.toList()) {
+      unawaited(_ensureAddonNamesForMeal(mealId));
+    }
+  }
+
+  /// Force a fresh parallel fetch for every primed non-active language
+  /// across every page we've already visited — wipes the in-memory
+  /// translations cache first so pollution from an earlier build can't
+  /// survive. Expensive; call sparingly (e.g. on app boot).
+  void invalidateTranslationsCache() {
+    final activeLang = ApiConstants.acceptLanguage.toLowerCase();
+    for (final lang in _primedLanguages.toList()) {
+      if (lang == activeLang || activeLang.startsWith(lang)) continue;
+      _namesByLangById.remove(lang);
+      _fetchedLangPages.removeWhere((k) => k.startsWith('${lang}_'));
+      _addonNamesByLangById.remove(lang);
+      _fetchedAddonMealLangs.removeWhere((k) => k.endsWith('__$lang'));
+    }
+  }
+
+  /// Fetch the meals page once per (language × page × category) combo and
+  /// harvest meal names into [_namesByLangById]. Best-effort — never
+  /// throws. Language fetches run in **parallel** so picking a new primary
+  /// + secondary pair doesn't stretch wait time by 2×.
+  Future<void> _ensureNamesForPage(int page, {String? categoryId}) async {
+    if (_connectivity.isOffline) return;
+    final token = _client.getToken();
+    if (token == null || token.isEmpty) return;
+
+    final activeLang = ApiConstants.acceptLanguage.toLowerCase();
+    final int? catId = (categoryId != null && categoryId != 'all')
+        ? int.tryParse(categoryId)
+        : null;
+    final endpoint = ApiConstants.mealsPaginatedEndpoint(page, categoryId: catId);
+
+    final pending = <Future<bool>>[];
+    for (final lang in _primedLanguages) {
+      if (lang == activeLang || activeLang.startsWith(lang)) continue;
+      final pageKey = '${lang}_page_${categoryId ?? "all"}_$page';
+      if (_fetchedLangPages.contains(pageKey)) continue;
+      _fetchedLangPages.add(pageKey);
+      pending.add(_fetchOneLangPage(lang, endpoint, pageKey));
+    }
+    if (pending.isEmpty) return;
+    final results = await Future.wait(pending);
+    if (results.any((harvested) => harvested)) _notifyCacheListeners();
+  }
+
+  Future<bool> _fetchOneLangPage(
+    String lang,
+    String endpoint,
+    String pageKey,
+  ) async {
+    try {
+      final response = await _client.get(
+        endpoint,
+        headers: {'Accept-Language': lang},
+      );
+      if (response is! Map || response['data'] is! List) return false;
+      final bucket =
+          _namesByLangById.putIfAbsent(lang, () => <String, String>{});
+      var harvested = false;
+      for (final raw in response['data'] as List) {
+        if (raw is! Map) continue;
+        final id = (raw['id'] ?? raw['meal_id'] ?? raw['product_id'])
+            ?.toString();
+        if (id == null || id.isEmpty) continue;
+        final name = _pickNameForLang(
+          Map<String, dynamic>.from(raw),
+          lang,
+          rawNameMatchesLang: true,
+        );
+        if (name.isNotEmpty) {
+          bucket[id] = name;
+          harvested = true;
+        }
+      }
+      return harvested;
+    } catch (e) {
+      _fetchedLangPages.remove(pageKey);
+      debugPrint('⚠️ [ProductService] "$lang" name fetch failed: $e');
+      return false;
+    }
+  }
+
+  /// Harvest names from the primary-language response so the active-language
+  /// bucket stays in sync without a duplicate request.
+  ///
+  /// [rawNameMatchesLang] must be `true` only when the API response was
+  /// actually served in [lang] — otherwise we'd pollute the bucket by
+  /// storing the response's raw `name` string under the wrong language (the
+  /// #1 symptom: picking English surfaces Arabic text).
+  void _harvestNamesFromPrimary(
+    List<dynamic> data, {
+    required String lang,
+    required bool rawNameMatchesLang,
+  }) {
+    final normalized = lang.trim().toLowerCase();
+    if (normalized.isEmpty) return;
+    final bucket =
+        _namesByLangById.putIfAbsent(normalized, () => <String, String>{});
+    for (final raw in data) {
+      if (raw is! Map) continue;
+      final map = Map<String, dynamic>.from(raw);
+      final id =
+          (map['id'] ?? map['meal_id'] ?? map['product_id'])?.toString();
+      if (id == null || id.isEmpty) continue;
+      final name = _pickNameForLang(
+        map,
+        normalized,
+        rawNameMatchesLang: rawNameMatchesLang,
+      );
+      if (name.isNotEmpty) bucket[id] = name;
+    }
+  }
+
+  /// Flatten a `{category: [...addons]}` response into a single list so the
+  /// addon harvest can iterate uniformly regardless of whether the API
+  /// returned a grouped Map or a flat List.
+  List<dynamic> _flattenAddonMap(Map data) {
+    final out = <dynamic>[];
+    for (final entry in data.values) {
+      if (entry is List) out.addAll(entry);
+    }
+    return out;
+  }
+
+  /// Harvest option-name translations from a mealAddons response into the
+  /// per-language bucket. `_normalizeExtraJson` prefers the top-level
+  /// `addon entry id` (e.g. 834) for `Extra.id` but falls back to
+  /// `option.id` (e.g. 72) when the entry id is missing — so we cache the
+  /// translation under BOTH identifiers, guaranteeing the cashier's
+  /// `cachedOptionNamesFor(Extra.id)` lookup hits no matter which branch
+  /// `_normalizeExtraJson` took.
+  void _harvestAddonNamesFromPrimary(
+    List<dynamic> data, {
+    required String lang,
+  }) {
+    final code = lang.trim().toLowerCase();
+    if (code.isEmpty) return;
+    final bucket =
+        _addonNamesByLangById.putIfAbsent(code, () => <String, String>{});
+    var harvested = false;
+    for (final raw in data) {
+      if (raw is! Map) continue;
+      final opt = raw['option'];
+      if (opt is! Map) continue;
+      final name = opt['name']?.toString().trim() ?? '';
+      if (name.isEmpty) continue;
+      final entryId = raw['id']?.toString();
+      final optionId = (opt['id'] ?? opt['option_id'])?.toString();
+      for (final key in <String?>[entryId, optionId]) {
+        if (key == null || key.isEmpty) continue;
+        bucket[key] = name;
+        harvested = true;
+      }
+    }
+    if (harvested) _notifyCacheListeners();
+  }
+
+  /// Fetch the mealAddons endpoint in every primed non-active language so
+  /// addon option names can be resolved in any invoice-language pair.
+  /// Dedup per (mealId × language) to avoid thrashing.
+  Future<void> _ensureAddonNamesForMeal(String mealId) async {
+    if (mealId.isEmpty) return;
+    if (_connectivity.isOffline) return;
+    final token = _client.getToken();
+    if (token == null || token.isEmpty) return;
+
+    final activeLang = ApiConstants.acceptLanguage.toLowerCase();
+    final endpoint = ApiConstants.mealAddonsEndpoint(mealId);
+
+    final pending = <Future<bool>>[];
+    for (final lang in _primedLanguages) {
+      if (lang == activeLang || activeLang.startsWith(lang)) continue;
+      final dedupKey = '${mealId}__$lang';
+      if (_fetchedAddonMealLangs.contains(dedupKey)) continue;
+      _fetchedAddonMealLangs.add(dedupKey);
+      pending.add(_fetchOneLangAddons(lang, endpoint, dedupKey));
+    }
+    if (pending.isEmpty) return;
+    final results = await Future.wait(pending);
+    if (results.any((harvested) => harvested)) _notifyCacheListeners();
+  }
+
+  Future<bool> _fetchOneLangAddons(
+    String lang,
+    String endpoint,
+    String dedupKey,
+  ) async {
+    try {
+      final response = await _client.get(
+        endpoint,
+        headers: {'Accept-Language': lang},
+      );
+      if (response is! Map || response['data'] == null) return false;
+      final data = response['data'];
+      final items = data is List ? data : (data is Map ? _flattenAddonMap(data) : const []);
+      if (items.isEmpty) return false;
+      final bucket =
+          _addonNamesByLangById.putIfAbsent(lang, () => <String, String>{});
+      var harvested = false;
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final opt = raw['option'];
+        if (opt is! Map) continue;
+        final name = opt['name']?.toString().trim() ?? '';
+        if (name.isEmpty) continue;
+        // Cache under both the top-level addon-entry id and the
+        // `option.id` so a lookup by whichever identifier ended up on
+        // `Extra.id` hits.
+        final entryId = raw['id']?.toString();
+        final optionId = (opt['id'] ?? opt['option_id'])?.toString();
+        for (final key in <String?>[entryId, optionId]) {
+          if (key == null || key.isEmpty) continue;
+          bucket[key] = name;
+          harvested = true;
+        }
+      }
+      return harvested;
+    } catch (e) {
+      _fetchedAddonMealLangs.remove(dedupKey);
+      debugPrint('⚠️ [ProductService] addon "$lang" fetch failed: $e');
+      return false;
+    }
+  }
+
+  /// Extract the meal name for [lang] from a raw API entry, preferring
+  /// explicit per-language fields and translation maps. Only falls back to
+  /// the bare `name` string when the caller confirms the response was
+  /// fetched in [lang] via [rawNameMatchesLang].
+  String _pickNameForLang(
+    Map<String, dynamic> raw,
+    String lang, {
+    bool rawNameMatchesLang = false,
+  }) {
+    final code = lang.trim().toLowerCase();
+    if (code.isEmpty) return '';
+    for (final key in <String>[
+      'name_$code',
+      'name_display_$code',
+      'title_$code',
+      'meal_name_$code',
+      'item_name_$code',
+    ]) {
+      final v = raw[key]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    for (final key in const [
+      'names',
+      'meal_name_translations',
+      'name_translations',
+      'translations',
+      'name_locales',
+      'localized_names',
+      'localizedNames',
+    ]) {
+      final mt = raw[key];
+      if (mt is Map) {
+        final v = mt[code]?.toString().trim();
+        if (v != null && v.isNotEmpty) return v;
+      }
+    }
+    final rawName = raw['name'];
+    if (rawName is Map) {
+      final v = rawName[code]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    } else if (rawNameMatchesLang && rawName is String) {
+      final v = rawName.trim();
+      if (v.isNotEmpty) return v;
+    }
+    return '';
+  }
 
   /// Fetch categories from API (offline-first)
   Future<List<CategoryModel>> getCategories({String? type}) async {
@@ -283,6 +685,30 @@ class ProductService {
           final data = response['data'] as List;
           final products =
               data.map((e) => Product.fromJson(e)).toList(growable: false);
+          // Remember this (category, page) pair so [primeLanguages] can
+          // back-fill any newly added language on the same dataset.
+          _fetchedPageKeys.add('${categoryId ?? "all"}|$page');
+          // Populate the active-language bucket + english (via translation
+          // maps or explicit `name_en` fields) from the primary response.
+          final activeLang = ApiConstants.acceptLanguage.toLowerCase();
+          _harvestNamesFromPrimary(
+            data,
+            lang: activeLang,
+            rawNameMatchesLang: true,
+          );
+          if (!activeLang.startsWith('en')) {
+            // Pull English only from structured translation fields — the raw
+            // `name` string is in the active language, not English.
+            _harvestNamesFromPrimary(
+              data,
+              lang: 'en',
+              rawNameMatchesLang: false,
+            );
+          }
+          _notifyCacheListeners();
+          // Fire-and-forget parallel fetches for any other primed language
+          // (e.g. the CDS needs Arabic while cashier is running English).
+          unawaited(_ensureNamesForPage(page, categoryId: categoryId));
           _memProductCache[cacheKey] = _CachedEntry(products);
           // Disk cache page 1 for offline resilience.
           if (page == 1) {
@@ -430,6 +856,13 @@ class ProductService {
       final response = await _client.get(endpoint);
 
       final addonEntries = _extractAddonEntries(response);
+      // Seed the active-language option-name bucket, then fire background
+      // fetches for every primed non-active language so CDS invoice-lang
+      // resolution works immediately once the user adds the addon.
+      final activeLang = ApiConstants.acceptLanguage.toLowerCase();
+      _harvestAddonNamesFromPrimary(addonEntries, lang: activeLang);
+      _addonFetchedMeals.add(mealId);
+      unawaited(_ensureAddonNamesForMeal(mealId));
       return addonEntries
           .map((e) => Extra.fromJson(_normalizeExtraJson(e)))
           .toList();
@@ -473,6 +906,19 @@ class ProductService {
             groupedAddons.putIfAbsent(groupName, () => <Extra>[]).add(extra);
           }
         }
+
+        // Seed the active-language bucket from this response, then fire
+        // parallel fetches for every primed non-active language so the CDS
+        // can resolve addon names in any invoice-language pair the cashier
+        // picks — even when the mealAddons endpoint only serves one
+        // language at a time.
+        final activeLang = ApiConstants.acceptLanguage.toLowerCase();
+        _harvestAddonNamesFromPrimary(
+          data is List ? data : _flattenAddonMap(data as Map),
+          lang: activeLang,
+        );
+        _addonFetchedMeals.add(mealId);
+        unawaited(_ensureAddonNamesForMeal(mealId));
       }
       // Refresh the presence cache — any non-empty group counts as "has
       // add-ons". Keeping it in sync with the grouped-fetch saves a second
@@ -609,11 +1055,23 @@ class ProductService {
     normalized['price'] = priceVal is num ? priceVal.toDouble() : 0.0;
 
     // Preserve translation maps so Extra.fromJson can fill `optionTranslations`
-    // / `attributeTranslations`. Without this, the kitchen ticket would lose
-    // the cashier's language on cart-side addons because _normalizeExtraJson
-    // strips nested option/attribute objects before forwarding to the model.
+    // / `attributeTranslations`. Without this, the kitchen ticket + CDS would
+    // lose the cashier's language on cart-side addons because
+    // _normalizeExtraJson strips nested translation fields before forwarding
+    // to the model.
     if (json['option'] is Map) normalized['option'] = json['option'];
     if (json['attribute'] is Map) normalized['attribute'] = json['attribute'];
+    for (final key in const [
+      'names',
+      'name_translations',
+      'translations',
+      'optionTranslations',
+      'attributeTranslations',
+      'attribute_names',
+    ]) {
+      final v = json[key];
+      if (v != null) normalized[key] = v;
+    }
 
     return normalized;
   }

@@ -1,4 +1,22 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+
+/// Viewport breakpoints used across the waiter module. Resolved from the
+/// shorter side so rotating a tablet doesn't flip the entire layout.
+enum WaiterBreakpoint { compact, medium, expanded }
+
+extension WaiterBreakpointX on BuildContext {
+  WaiterBreakpoint get waiterBreakpoint {
+    final size = MediaQuery.sizeOf(this);
+    final shortest = size.shortestSide;
+    if (shortest < 480) return WaiterBreakpoint.compact;
+    if (shortest < 720) return WaiterBreakpoint.medium;
+    return WaiterBreakpoint.expanded;
+  }
+
+  bool get isWaiterCompact => waiterBreakpoint == WaiterBreakpoint.compact;
+  bool get isWaiterExpanded => waiterBreakpoint == WaiterBreakpoint.expanded;
+}
 
 /// Design tokens shared across the waiter module. A tiny set by design —
 /// the goal is "pick one of these" instead of eyeballing numbers per

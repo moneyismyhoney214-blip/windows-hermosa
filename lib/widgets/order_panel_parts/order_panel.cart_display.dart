@@ -40,23 +40,61 @@ extension OrderPanelCartDisplay on _OrderPanelState {
             double.infinity,
           );
 
+    final cashierLang =
+        ApiConstants.acceptLanguage.trim().toLowerCase().isEmpty
+            ? 'ar'
+            : ApiConstants.acceptLanguage.trim().toLowerCase();
+    Map<String, String> mergedNames(CartItem item) {
+      final merged = <String, String>{
+        ...item.product.localizedNames,
+        ...ProductService.cachedNamesFor(item.product.id),
+      };
+      merged.putIfAbsent(cashierLang, () => item.product.name);
+      if (item.product.nameAr.isNotEmpty) {
+        merged.putIfAbsent('ar', () => item.product.nameAr);
+      }
+      if (item.product.nameEn.isNotEmpty) {
+        merged.putIfAbsent('en', () => item.product.nameEn);
+      }
+      return merged;
+    }
+
+    List<Map<String, dynamic>> extrasPayload(CartItem item) {
+      return item.selectedExtras.map((e) {
+        final extraMerged = <String, String>{
+          ...e.optionTranslations,
+          ...ProductService.cachedOptionNamesFor(e.id),
+        };
+        extraMerged.putIfAbsent(cashierLang, () => e.name);
+        return <String, dynamic>{
+          'id': e.id,
+          'name': e.name,
+          'name_lang': cashierLang,
+          'nameEn': extraMerged['en'] ?? e.name,
+          'nameAr': extraMerged['ar'] ?? '',
+          'localizedNames': extraMerged,
+          'price': e.price,
+        };
+      }).toList();
+    }
+
     final payload = {
-      'items': widget.cart
-          .map((item) => {
-                'cartId': item.cartId,
-                'productId': item.product.id,
-                'name': item.product.name,
-                'quantity': item.quantity,
-                'price': item.product.price,
-                'extras': item.selectedExtras
-                    .map((e) => {
-                          'id': e.id,
-                          'name': e.name,
-                          'price': e.price,
-                        })
-                    .toList(),
-                'totalPrice': item.totalPrice,
-                'notes': item.notes,
+      'items': widget.cart.map((item) {
+                final merged = mergedNames(item);
+                return {
+                  'cartId': item.cartId,
+                  'productId': item.product.id,
+                  'name': item.product.name,
+                  'name_lang': cashierLang,
+                  'nameEn': merged['en'] ?? '',
+                  'nameAr': merged['ar'] ?? '',
+                  'localizedNames': merged,
+                  'quantity': item.quantity,
+                  'price': item.product.price,
+                  'extras': extrasPayload(item),
+                  'totalPrice': item.totalPrice,
+                  'notes': item.notes,
+                };
               })
           .toList(),
       'subtotal': subtotal,
@@ -86,20 +124,19 @@ extension OrderPanelCartDisplay on _OrderPanelState {
       final discType = item.discountType == DiscountType.percentage
           ? 'percentage'
           : 'amount';
+      final merged = mergedNames(item);
 
       return {
         'cartId': item.cartId,
         'productId': item.product.id,
         'name': item.product.name,
+        'name_lang': cashierLang,
+        'nameEn': merged['en'] ?? '',
+        'nameAr': merged['ar'] ?? '',
+        'localizedNames': merged,
         'quantity': item.quantity,
         'price': item.product.price,
-        'extras': item.selectedExtras
-            .map((e) => {
-                  'id': e.id,
-                  'name': e.name,
-                  'price': e.price,
-                })
-            .toList(),
+        'extras': extrasPayload(item),
         'totalPrice': item.totalPrice,
         'notes': item.notes,
         'original_unit_price': originalUnitPrice,
@@ -125,6 +162,9 @@ extension OrderPanelCartDisplay on _OrderPanelState {
       discountedTotal: afterDiscountTotal,
       isOrderFree: widget.isOrderFree,
       orderNumber: '',
+      invoicePrimaryLang: printerLanguageSettings.primary,
+      invoiceSecondaryLang: printerLanguageSettings.secondary,
+      invoiceAllowSecondary: printerLanguageSettings.allowSecondary,
     );
   }
 
@@ -147,59 +187,82 @@ extension OrderPanelCartDisplay on _OrderPanelState {
 
 
   void _showDisplayConnectionDialog() {
+    if (!mounted) return;
+
     if (!widget.cdsEnabled && !widget.kdsEnabled) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('CDS و KDS متوقفان من الإعدادات',
-              'CDS and KDS are disabled from settings')),
-          backgroundColor: Colors.orange,
-        ),
+      _showDisplayStatusSnack(
+        _tr('CDS و KDS متوقفان من الإعدادات',
+            'CDS and KDS are disabled from settings'),
+        Colors.orange,
       );
       return;
     }
 
-    showDialog(
-      context: context,
-      builder: (context) => ImprovedDisplayConnectionDialog(
-        onConnect: (ip, port, mode) async {
-          final targetMode =
-              mode.toLowerCase() == 'cds' ? DisplayMode.cds : DisplayMode.kds;
-          if (targetMode == DisplayMode.cds && !widget.cdsEnabled) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  _tr('CDS غير مفعّل من الإعدادات',
-                      'CDS is disabled from settings'),
-                ),
-                backgroundColor: Colors.orange,
-              ),
-            );
-            return;
-          }
-          if (targetMode == DisplayMode.kds && !widget.kdsEnabled) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  _tr('KDS غير مفعّل من الإعدادات',
-                      'KDS is disabled from settings'),
-                ),
-                backgroundColor: Colors.orange,
-              ),
-            );
-            return;
-          }
-          await _displayService.connectWithMode(
-            ip,
-            port: port,
-            mode: targetMode,
-          );
-        },
-        onDisconnect: () => _displayService.disconnect(),
-        isConnected: _displayService.isConnected,
-        currentIp: _displayService.connectedIp,
+    if (_displayService.isConnected) {
+      final ip = _displayService.connectedIp ?? '';
+      _showDisplayStatusSnack(
+        _tr('متصل بشاشة العرض${ip.isNotEmpty ? ' ($ip)' : ''}',
+            'Connected to display${ip.isNotEmpty ? ' ($ip)' : ''}'),
+        const Color(0xFF22C55E),
+      );
+      return;
+    }
+
+    if (_displayService.isConnecting || _displayService.isReconnecting) {
+      _showDisplayStatusSnack(
+        _tr('جاري الاتصال بشاشة العرض...', 'Connecting to display...'),
+        Colors.blue,
+      );
+      return;
+    }
+
+    final savedIp = _displayService.connectedIp?.trim() ?? '';
+    if (savedIp.isEmpty) {
+      _showDisplayStatusSnack(
+        _tr('لم يتم إعداد شاشة العرض. قم بالإعداد من الإعدادات',
+            'No display configured. Configure it from Settings'),
+        Colors.orange,
+      );
+      return;
+    }
+
+    var mode = _displayService.currentMode;
+    if (mode == DisplayMode.none) {
+      mode = widget.cdsEnabled ? DisplayMode.cds : DisplayMode.kds;
+    }
+
+    _showDisplayStatusSnack(
+      _tr('جاري إعادة الاتصال بـ $savedIp', 'Reconnecting to $savedIp'),
+      Colors.blue,
+    );
+
+    unawaited(() async {
+      try {
+        await _displayService.connectWithMode(
+          savedIp,
+          port: _displayService.connectedPort,
+          mode: mode,
+        );
+      } catch (_) {
+        if (!mounted) return;
+        _showDisplayStatusSnack(
+          _tr('تعذر الاتصال بشاشة العرض',
+              'Failed to connect to display'),
+          Colors.red,
+        );
+      }
+    }());
+  }
+
+  void _showDisplayStatusSnack(String message, Color color) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: const Duration(seconds: 2),
       ),
     );
   }

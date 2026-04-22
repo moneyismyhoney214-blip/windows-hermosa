@@ -123,6 +123,60 @@ extension MainScreenSalon on _MainScreenState {
     }
   }
 
+  /// Fetches the branch/seller logo URL so salon product cards and the
+  /// service selection dialog can use it as a placeholder when services
+  /// don't have their own image.
+  Future<void> _loadSalonBranchLogo() async {
+    try {
+      final branchId = ApiConstants.branchId;
+      if (branchId <= 0) return;
+      final branchService = getIt<BranchService>();
+
+      String url = '';
+
+      // 1. Try the cached receipt info first (populated at startup).
+      final cached = branchService.cachedBranchReceiptInfo;
+      if (cached != null) {
+        url = _pickLogoFromBranch(cached['branch']);
+      }
+
+      // 2. Fall back to a direct API call.
+      if (url.isEmpty) {
+        url = await branchService.getBranchLogoUrl(branchId);
+      }
+
+      if (url.isEmpty) return;
+      if (url.startsWith('/')) {
+        url = 'https://portal.hermosaapp.com$url';
+      }
+
+      if (!mounted) return;
+      setState(() => _salonBranchLogoUrl = url);
+      debugPrint('🖼️ [SALON] branch logo resolved: $url');
+    } catch (e) {
+      debugPrint('⚠️ Failed to load salon branch logo: $e');
+    }
+  }
+
+  String _pickLogoFromBranch(dynamic branch) {
+    if (branch is! Map) return '';
+    final candidates = <dynamic>[
+      branch['logo'],
+      branch['image'],
+      (branch['seller'] is Map) ? branch['seller']['logo'] : null,
+      (branch['original_seller'] is Map)
+          ? branch['original_seller']['logo']
+          : null,
+    ];
+    for (final c in candidates) {
+      final val = c?.toString().trim();
+      if (val != null && val.isNotEmpty && val.toLowerCase() != 'null') {
+        return val;
+      }
+    }
+    return '';
+  }
+
   Future<void> _loadSalonEmployees() async {
     try {
       final salonService = getIt<SalonEmployeeService>();
@@ -184,6 +238,157 @@ extension MainScreenSalon on _MainScreenState {
       if ((s['id'] ?? 0).toString() == productId) return s;
     }
     return null;
+  }
+
+  /// Loads the deposits (عرابين) that the currently selected customer has
+  /// previously paid. In salon mode the cashier can apply one of these as a
+  /// credit against the final invoice — the selected deposit_id flows into
+  /// `/seller/calculate/branches/{id}/invoices` and the create-invoice call.
+  ///
+  /// Pass `null` to clear the list (e.g. when the customer is deselected).
+  ///
+  /// Strategy: try the customer-filter endpoint first
+  /// (`/seller/filters/branches/{id}/allDeposits?customer_id=X`). If it returns
+  /// empty, fall back to scanning the paginated deposits list
+  /// (`/seller/branches/{id}/deposits`) and match by client name — this covers
+  /// cases where the filter endpoint misses legitimate pending deposits that
+  /// the cashier can plainly see on the deposits screen.
+  Future<void> _loadCustomerDeposits(int? customerId) async {
+    if (!_isSalonMode) return;
+    if (customerId == null) {
+      if (!mounted) return;
+      setState(() {
+        _customerDeposits = const [];
+        _selectedDepositId = null;
+        _depositsFetchCustomerId = null;
+      });
+      return;
+    }
+    _depositsFetchCustomerId = customerId;
+    try {
+      final svc = getIt<SalonEmployeeService>();
+      debugPrint('💰 [DEPOSIT] fetching for customer=$customerId');
+      var list = await svc.getCustomerDeposits(customerId);
+      if (!mounted) return;
+      if (_depositsFetchCustomerId != customerId) return;
+      debugPrint(
+          '💰 [DEPOSIT] filter endpoint returned ${list.length} for customer=$customerId');
+
+      if (list.isEmpty) {
+        final fallback = await _findDepositsByCustomerName(customerId);
+        if (!mounted) return;
+        if (_depositsFetchCustomerId != customerId) return;
+        if (fallback.isNotEmpty) {
+          debugPrint(
+              '💰 [DEPOSIT] fallback matched ${fallback.length} by customer name');
+          list = fallback;
+        }
+      }
+
+      debugPrint(
+          '💰 [DEPOSIT] final list for customer=$customerId: '
+          '${list.map((d) => '${d['label']}=${d['price']}').join(', ')}');
+      setState(() {
+        _customerDeposits = list;
+        if (_selectedDepositId != null &&
+            !list.any((d) => _parseDepositId(d['value']) == _selectedDepositId)) {
+          _selectedDepositId = null;
+        }
+      });
+    } catch (e) {
+      debugPrint('⚠️ Failed to load customer deposits: $e');
+      if (!mounted) return;
+      if (_depositsFetchCustomerId != customerId) return;
+      setState(() {
+        _customerDeposits = const [];
+        _selectedDepositId = null;
+      });
+    }
+  }
+
+  /// Fallback: scan the paginated `/seller/branches/{id}/deposits` list, keep
+  /// only PENDING deposits (status=1) whose `user.name` matches the selected
+  /// customer's name, and convert them into the filter-endpoint shape the
+  /// picker expects (`{label, value, price}`).
+  Future<List<Map<String, dynamic>>> _findDepositsByCustomerName(
+      int customerId) async {
+    final customerName = _selectedCustomer?.name.trim().toLowerCase();
+    if (customerName == null || customerName.isEmpty) return const [];
+
+    try {
+      final svc = getIt<SalonEmployeeService>();
+      final response = await svc.getDeposits(page: 1, perPage: 100);
+      dynamic raw = response['data'];
+      if (raw is Map) {
+        raw = raw['collection'] is Map ? (raw['collection'] as Map)['data'] : raw['data'];
+      }
+      if (raw is! List) return const [];
+
+      final matches = <Map<String, dynamic>>[];
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final status = item['status'];
+        final isPending = status == 1 || status == '1';
+        if (!isPending) continue;
+
+        final user = item['user'];
+        final userName = (user is Map ? user['name']?.toString() : null)
+            ?.trim()
+            .toLowerCase();
+        if (userName == null || userName != customerName) continue;
+
+        final id = _parseDepositId(item['id']);
+        if (id == null) continue;
+
+        // Extract numeric price from strings like "50.00 ر.س".
+        final rawTotal = item['total']?.toString() ?? '';
+        final numeric = RegExp(r'[0-9]+(\.[0-9]+)?').firstMatch(rawTotal);
+        final totalWithTax =
+            numeric != null ? double.tryParse(numeric.group(0)!) ?? 0.0 : 0.0;
+        // Deposits list returns tax-inclusive `total`; reverse the 15% VAT so
+        // the field matches the filter endpoint's `price` (pre-tax principal).
+        final price = totalWithTax > 0 ? totalWithTax / 1.15 : 0.0;
+
+        matches.add({
+          'label': item['invoice_number']?.toString() ?? '#DP-$id',
+          'value': id,
+          'price': double.parse(price.toStringAsFixed(2)),
+          'is_active': true,
+          'cash_back': null,
+          'equal_qty': null,
+          'children': const [],
+        });
+      }
+      return matches;
+    } catch (e) {
+      debugPrint('⚠️ Fallback deposits scan failed: $e');
+      return const [];
+    }
+  }
+
+  static int? _parseDepositId(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  /// Pre-tax principal of the currently selected deposit, or 0 if nothing is
+  /// selected / the deposit can't be found in the cached customer list. Used
+  /// to locally reject deposits that would exceed the invoice subtotal (server
+  /// returns 422 otherwise).
+  double _lookupSelectedDepositPrice() {
+    final id = _selectedDepositId;
+    if (id == null) return 0.0;
+    for (final d in _customerDeposits) {
+      if (_parseDepositId(d['value']) == id) {
+        final p = d['price'];
+        if (p is num) return p.toDouble();
+        if (p is String) return double.tryParse(p) ?? 0.0;
+        return 0.0;
+      }
+    }
+    return 0.0;
   }
 
   /// Switches the salon service type toggle and reloads data.

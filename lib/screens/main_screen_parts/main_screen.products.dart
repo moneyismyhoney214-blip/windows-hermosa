@@ -103,6 +103,9 @@ extension MainScreenProducts on _MainScreenState {
         branchService.fetchAndCacheBranchReceiptInfo().then((_) => _prewarmReceiptCache()).ignore();
         _loadSalonServices(categoryId: categoryId);
         _loadSalonEmployees();
+        if (_salonBranchLogoUrl == null) {
+          _loadSalonBranchLogo();
+        }
 
         // Load service categories for the category bar
         final fServiceCategories = BaseClient()

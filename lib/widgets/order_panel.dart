@@ -10,10 +10,11 @@ import '../models/customer.dart';
 import '../dialogs/customer_selection_dialog.dart';
 import '../services/display_app_service.dart';
 import '../services/api/api_constants.dart';
+import '../services/api/product_service.dart';
+import '../services/printer_language_settings_service.dart';
 import '../services/language_service.dart';
 import '../services/app_themes.dart';
 import '../locator.dart';
-import '../dialogs/improved_display_connection_dialog.dart';
 import 'connectivity_status_indicator.dart';
 import '../services/cashier_sound_service.dart';
 
@@ -70,6 +71,19 @@ class OrderPanel extends StatefulWidget {
   /// - Booking payload uses the salon card format
   final bool isSalonMode;
 
+  /// Deposits (عرابين) available on the currently selected customer. Each
+  /// entry follows the shape returned by `/seller/filters/branches/{id}/allDeposits?customer_id=X`:
+  /// `{label: "#DP-247", value: 2491, price: 300, is_active: false, ...}`.
+  /// Only consulted in salon mode.
+  final List<Map<String, dynamic>> availableDeposits;
+
+  /// The deposit currently applied to the cart's invoice, or null.
+  final int? selectedDepositId;
+
+  /// Invoked when the cashier picks (or clears) a deposit. Null disables the
+  /// picker (e.g. in restaurant mode).
+  final Function(int?)? onSelectDeposit;
+
   const OrderPanel({
     super.key,
     required this.cart,
@@ -105,6 +119,9 @@ class OrderPanel extends StatefulWidget {
     this.kdsEnabled = true,
     this.taxRate = 0.15,
     this.isSalonMode = false,
+    this.availableDeposits = const [],
+    this.selectedDepositId,
+    this.onSelectDeposit,
   });
 
   @override

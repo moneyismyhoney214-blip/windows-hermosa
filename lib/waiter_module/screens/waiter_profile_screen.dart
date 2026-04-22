@@ -3,12 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../locator.dart';
+import '../../screens/login_screen.dart';
+import '../../services/api/auth_service.dart';
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
 import '../models/waiter.dart';
 import '../services/waiter_controller.dart';
 import '../theme/waiter_design.dart';
 import '../widgets/waiter_status_chip.dart';
+import 'waiter_printer_settings_screen.dart';
 
 /// Profile / status screen — lets the waiter change their availability and
 /// end their shift (which broadcasts `WAITER_LEAVE` to peers).
@@ -82,6 +86,25 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
           height: WaiterSizes.primaryButtonHeight,
           child: OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
+              foregroundColor: context.appPrimary,
+              side: BorderSide(color: context.appPrimary),
+              padding: const EdgeInsets.symmetric(
+                vertical: WaiterSpacing.md + 2,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(WaiterRadius.md),
+              ),
+            ),
+            icon: const Icon(LucideIcons.settings),
+            label: const Text('إعدادات الأجهزة والطباعة'),
+            onPressed: _openPrinterSettings,
+          ),
+        ),
+        const SizedBox(height: WaiterSpacing.md),
+        SizedBox(
+          height: WaiterSizes.primaryButtonHeight,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
               foregroundColor: context.appDanger,
               side: BorderSide(color: context.appDanger),
               padding: const EdgeInsets.symmetric(
@@ -100,6 +123,14 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
     );
   }
 
+  void _openPrinterSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const WaiterPrinterSettingsScreen(),
+      ),
+    );
+  }
+
   Future<void> _confirmEndShift() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -110,7 +141,7 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
         ),
         title: Text(translationService.t('waiter_end_shift')),
         content: const Text(
-          'هل أنت متأكد من إنهاء الوردية؟ سيتم تسجيل خروجك من الجهاز.',
+          'هل أنت متأكد من تسجيل الخروج؟ سيتم إنهاء جلستك على هذا الجهاز.',
         ),
         actions: [
           TextButton(
@@ -130,31 +161,45 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
     );
     if (confirmed != true) return;
     unawaited(WaiterHaptics.warn());
-    // Always run signOut even if stop() throws — otherwise a failed
-    // network teardown would leave the device "signed in" from the
-    // session's perspective, and the next open would skip the login
-    // screen and try to re-use a half-dead shift.
+    // Full logout, in order:
+    //   1. Tear down the mesh controller so no outgoing broadcasts can
+    //      race the signOut.
+    //   2. Clear session-scoped stores (drafts, pickups, messages,
+    //      table registry) so the next user on this device starts
+    //      fresh. Must run AFTER stop() — otherwise in-flight message
+    //      handlers may re-populate the stores.
+    //   3. Sign out from the waiter session (local name/branch reset).
+    //   4. Call AuthService.logout() to revoke the backend token; this
+    //      is the step the old popUntil flow missed, so the waiter
+    //      module re-entry path would auto-sign the user back in.
+    //   5. Navigate to LoginScreen via pushAndRemoveUntil so even when
+    //      WaiterModuleEntry is the root route (the cashier's
+    //      pushReplacement path) the stack is fully cleared.
     try {
       await widget.controller.stop();
     } catch (e) {
-      debugPrint('⚠️ Waiter end-shift stop failed: $e');
+      debugPrint('⚠️ Waiter logout stop failed: $e');
     }
-    // Wipe session-scoped state so the next waiter on the device
-    // doesn't see the previous shift's drafts / pickups / messages /
-    // owned tables. Must run AFTER stop() so any in-flight writes
-    // from message handlers don't re-populate the stores.
     try {
       widget.controller.clearSessionStores();
     } catch (e) {
-      debugPrint('⚠️ Waiter end-shift store clear failed: $e');
+      debugPrint('⚠️ Waiter logout store clear failed: $e');
     }
     try {
       await widget.controller.session.signOut();
     } catch (e) {
-      debugPrint('⚠️ Waiter end-shift signOut failed: $e');
+      debugPrint('⚠️ Waiter logout session signOut failed: $e');
+    }
+    try {
+      await getIt<AuthService>().logout();
+    } catch (e) {
+      debugPrint('⚠️ Waiter logout AuthService.logout failed: $e');
     }
     if (!mounted) return;
-    Navigator.of(context).popUntil((r) => r.isFirst);
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
   }
 
   Widget _header(BuildContext context, Waiter me) {

@@ -71,8 +71,13 @@ class _CallWaiterDialogState extends State<CallWaiterDialog> {
           ),
         ],
       ),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
+      content: SizedBox(
+        // AlertDialog already applies a sensible max width; using a Sized
+        // box of constraints.maxWidth lets us fill the dialog's available
+        // width instead of shrinking to a hard 420 on larger screens.
+        width: MediaQuery.sizeOf(context).width < 480
+            ? double.maxFinite
+            : 420,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,

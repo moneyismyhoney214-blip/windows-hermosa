@@ -4,13 +4,32 @@ class ProductExtra {
   final String name;
   final String nameEn;
   final double price;
+  final Map<String, String> localizedNames;
 
   const ProductExtra({
     required this.id,
     required this.name,
     required this.nameEn,
     required this.price,
+    this.localizedNames = const <String, String>{},
   });
+
+  /// Resolve the addon name for [langCode] with a graceful fallback through
+  /// the stored translations, the Arabic/English shorthand fields, and the
+  /// raw `name` as a last resort.
+  String nameFor(String langCode) {
+    final code = langCode.trim().toLowerCase();
+    final direct = localizedNames[code]?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+    if (code == 'ar' && name.isNotEmpty) return name;
+    if (code == 'en' && nameEn.isNotEmpty) return nameEn;
+    final en = localizedNames['en']?.trim();
+    if (en != null && en.isNotEmpty) return en;
+    final ar = localizedNames['ar']?.trim();
+    if (ar != null && ar.isNotEmpty) return ar;
+    if (name.isNotEmpty) return name;
+    return nameEn;
+  }
 }
 
 // نموذج المنتج
@@ -23,6 +42,7 @@ class Product {
   final String imageUrl;
   final List<ProductExtra> availableExtras;
   final bool isAvailable;
+  final Map<String, String> localizedNames;
 
   const Product({
     required this.id,
@@ -33,7 +53,25 @@ class Product {
     required this.imageUrl,
     this.availableExtras = const [],
     this.isAvailable = true,
+    this.localizedNames = const <String, String>{},
   });
+
+  /// Resolve the meal name for [langCode] with a graceful fallback through
+  /// the stored translations, the Arabic/English shorthand fields, and the
+  /// raw `name` as a last resort.
+  String nameFor(String langCode) {
+    final code = langCode.trim().toLowerCase();
+    final direct = localizedNames[code]?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+    if (code == 'ar' && name.isNotEmpty) return name;
+    if (code == 'en' && nameEn.isNotEmpty) return nameEn;
+    final en = localizedNames['en']?.trim();
+    if (en != null && en.isNotEmpty) return en;
+    final ar = localizedNames['ar']?.trim();
+    if (ar != null && ar.isNotEmpty) return ar;
+    if (name.isNotEmpty) return name;
+    return nameEn;
+  }
 }
 
 enum DiscountType { amount, percentage }
@@ -120,6 +158,9 @@ class CartItem {
 
   String get displayName => product.name;
   String get displayNameEn => product.nameEn;
+
+  /// Resolve the meal name for [langCode] using the product's translations.
+  String displayNameFor(String langCode) => product.nameFor(langCode);
 }
 
 // حالات الطلب

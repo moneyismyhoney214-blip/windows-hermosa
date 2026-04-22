@@ -253,6 +253,57 @@ class PrinterService {
     await request.done;
   }
 
+  /// Salon-module "turn slip" (تذكرة دور): one ticket per booked service,
+  /// rendered from the flat `kitchenData` map by the salon-turn view.
+  /// Restaurant kitchen tickets go through `printKitchenReceipt`; this is a
+  /// parallel entry point so the two flows don't share data shapes.
+  Future<void> printSalonTurnTicket(
+    DeviceConfig device, {
+    required String invoiceNumber,
+    required String bookingNumber,
+    required String dateStr,
+    required String timeStr,
+    required int serviceIndex,
+    required String customerName,
+    required String serviceName,
+    required String employeeName,
+    required String priceFormatted,
+    String currencyAr = 'ر.س',
+    String currencyEn = 'SAR',
+    String? sellerNameAr,
+    String? sellerNameEn,
+    String? addressLine,
+    List<String> phones = const [],
+    String? logoUrl,
+  }) async {
+    _assertPrinterDevice(device);
+    final request = PrintRequest(
+      device: device,
+      kitchenData: {
+        'template': 'salon_turn',
+        'invoice_number': invoiceNumber,
+        'booking_number': bookingNumber,
+        'date_str': dateStr,
+        'time_str': timeStr,
+        'service_index': serviceIndex,
+        'customer_name': customerName,
+        'service_name': serviceName,
+        'employee_name': employeeName,
+        'price_formatted': priceFormatted,
+        'currency_ar': currencyAr,
+        'currency_en': currencyEn,
+        if (sellerNameAr != null) 'seller_name_ar': sellerNameAr,
+        if (sellerNameEn != null) 'seller_name_en': sellerNameEn,
+        if (addressLine != null) 'address_line': addressLine,
+        'phones': phones,
+        if (logoUrl != null && logoUrl.trim().isNotEmpty) 'logo_url': logoUrl,
+      },
+      isRtl: true,
+    );
+    _addPrintRequest(request);
+    await request.done;
+  }
+
   /// Triggers a print job for a raw image.
   /// Used for pre-rendered receipts like ZATCA PDFs.
   Future<void> printRawImage(

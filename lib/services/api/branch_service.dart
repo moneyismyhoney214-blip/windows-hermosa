@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'base_client.dart';
 import 'api_constants.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
@@ -51,31 +52,206 @@ class BranchService {
   /// Fetch and cache full branch info for receipts.
   /// Call once at startup; subsequent access via [cachedBranchReceiptInfo].
   Future<Map<String, dynamic>> fetchAndCacheBranchReceiptInfo() async {
-    if (_cachedBranchReceiptInfo != null) return _cachedBranchReceiptInfo!;
+    if (_cachedBranchReceiptInfo != null) {
+      // Invalidate the in-memory cache when it was populated by an older
+      // build that didn't know about `branch_logo_url` — otherwise hot
+      // restarts keep returning an entry without the logo and the CDS
+      // mirror stays empty.
+      final hasLogoInfo =
+          _cachedBranchReceiptInfo!.containsKey('branch_logo_url') ||
+              _cachedBranchReceiptInfo!.containsKey('profile_branch_name');
+      if (!hasLogoInfo) {
+        _cachedBranchReceiptInfo = null;
+      } else {
+        // Re-mirror on cache hits so a fresh session / hot-reload still
+        // refreshes the CDS prefs if they were cleared out-of-band.
+        unawaited(
+          _ensureProfileNameThenMirror(_cachedBranchReceiptInfo!),
+        );
+        return _cachedBranchReceiptInfo!;
+      }
+    }
     if (ApiConstants.branchId <= 0) return {};
 
-    try {
-      // Fetch Arabic only — NEVER change global Accept-Language
-      final arInfo = _unwrapBranchData(await getBranchInfo(ApiConstants.branchId));
-
-      final receiptInfo = <String, dynamic>{
-        'branch': arInfo,
-      };
-
-      // Extract English from bilingual fields (e.g. "تكانة | Takana")
-      final sellerName = arInfo['seller_name']?.toString() ?? '';
-      if (sellerName.contains('|')) {
-        receiptInfo['seller_name_en'] = sellerName.split('|').last.trim();
-      } else if (sellerName.contains(' - ')) {
-        receiptInfo['seller_name_en'] = sellerName.split(' - ').last.trim();
+    // Run both endpoints in parallel — `/seller/get_branches/<id>` currently
+    // 500s on some accounts, so we must not let its failure block the CDS
+    // mirror that `/seller/branches` depends on for the canonical
+    // restaurant name + logo.
+    final arInfoFuture = () async {
+      try {
+        return _unwrapBranchData(
+          await getBranchInfo(ApiConstants.branchId),
+        );
+      } catch (e) {
+        debugPrint('⚠️ getBranchInfo failed: $e');
+        return <String, dynamic>{};
       }
+    }();
+    final branchSummaryFuture =
+        _fetchBranchSummary(ApiConstants.branchId);
 
-      _cachedBranchReceiptInfo = receiptInfo;
-      debugPrint('✅ Branch receipt info cached');
-      return receiptInfo;
+    final arInfo = await arInfoFuture;
+    final summary = await branchSummaryFuture;
+    final profileName = summary['name'] ?? '';
+    final logoUrl = summary['logo'] ?? '';
+
+    final receiptInfo = <String, dynamic>{
+      'branch': arInfo,
+    };
+
+    // Extract English from bilingual fields (e.g. "تكانة | Takana")
+    final sellerName = arInfo['seller_name']?.toString() ?? '';
+    if (sellerName.contains('|')) {
+      receiptInfo['seller_name_en'] = sellerName.split('|').last.trim();
+    } else if (sellerName.contains(' - ')) {
+      receiptInfo['seller_name_en'] = sellerName.split(' - ').last.trim();
+    }
+
+    // `/seller/branches` returns the canonical restaurant name + uploaded
+    // logo — the CDS welcome header prefers these over the brand fallback.
+    if (profileName.isNotEmpty) {
+      receiptInfo['profile_branch_name'] = profileName;
+    }
+    if (logoUrl.isNotEmpty) {
+      receiptInfo['branch_logo_url'] = logoUrl;
+    }
+
+    _cachedBranchReceiptInfo = receiptInfo;
+
+    // Mirror seller name + logo to SharedPreferences so the CDS secondary
+    // Flutter engine (customer_display) can read it without a MethodChannel.
+    unawaited(_mirrorSellerNameToPrefs(arInfo, receiptInfo));
+
+    debugPrint(
+      '✅ Branch receipt info cached (name="$profileName", logo="$logoUrl")',
+    );
+    return receiptInfo;
+  }
+
+  Future<void> _ensureProfileNameThenMirror(
+    Map<String, dynamic> receiptInfo,
+  ) async {
+    try {
+      final hasName =
+          (receiptInfo['profile_branch_name']?.toString().trim() ?? '').isNotEmpty;
+      final hasLogo =
+          (receiptInfo['branch_logo_url']?.toString().trim() ?? '').isNotEmpty;
+      if (!hasName || !hasLogo) {
+        final summary = await _fetchBranchSummary(ApiConstants.branchId);
+        if (!hasName && (summary['name'] ?? '').isNotEmpty) {
+          receiptInfo['profile_branch_name'] = summary['name'];
+        }
+        if (!hasLogo && (summary['logo'] ?? '').isNotEmpty) {
+          receiptInfo['branch_logo_url'] = summary['logo'];
+        }
+      }
+      final branch = receiptInfo['branch'];
+      if (branch is Map<String, dynamic>) {
+        await _mirrorSellerNameToPrefs(branch, receiptInfo);
+      } else {
+        await _mirrorSellerNameToPrefs(<String, dynamic>{}, receiptInfo);
+      }
     } catch (e) {
-      debugPrint('⚠️ Failed to fetch branch receipt info: $e');
-      return _cachedBranchReceiptInfo ?? {};
+      if (kDebugMode) debugPrint('⚠️ re-mirror seller name failed: $e');
+    }
+  }
+
+  /// Fetch the canonical restaurant name + uploaded logo from
+  /// `/seller/branches` for the given [branchId]. Returns
+  /// `{'name': '<restaurant name>', 'logo': '<absolute url>'}` — either
+  /// value may be empty if the entry is missing or the call fails.
+  Future<Map<String, String>> _fetchBranchSummary(int branchId) async {
+    try {
+      final response = await _client.get(ApiConstants.branchesEndpoint);
+      final list = _coerceBranchList(response);
+      debugPrint(
+          '🏷️ /seller/branches → ${list.length} entries, looking for id=$branchId');
+      Map<String, dynamic>? match;
+      for (final item in list) {
+        final id = item['id'];
+        final isMatch = id is num
+            ? id.toInt() == branchId
+            : int.tryParse(id?.toString() ?? '') == branchId;
+        if (isMatch) {
+          match = item;
+          break;
+        }
+      }
+      match ??= list.isNotEmpty ? list.first : null;
+      if (match == null) return const {'name': '', 'logo': ''};
+      final name = match['name']?.toString().trim() ?? '';
+      final logo = match['logo']?.toString().trim() ?? '';
+      debugPrint('🏷️ /seller/branches match: name="$name" logo="$logo"');
+      return {'name': name, 'logo': logo};
+    } catch (e) {
+      if (kDebugMode) debugPrint('⚠️ /seller/branches fetch failed: $e');
+    }
+    return const {'name': '', 'logo': ''};
+  }
+
+  /// Normalise a `/seller/profile/branches` response into a flat list of
+  /// branch maps regardless of the wrapper shape the API returns.
+  List<Map<String, dynamic>> _coerceBranchList(dynamic raw) {
+    if (raw is List) {
+      final out = <Map<String, dynamic>>[];
+      for (final item in raw) {
+        if (item is Map) {
+          out.add(item.map((k, v) => MapEntry(k.toString(), v)));
+        }
+      }
+      return out;
+    }
+    if (raw is Map) {
+      final map = raw.map((k, v) => MapEntry(k.toString(), v));
+      for (final key in const ['data', 'branches', 'items', 'results']) {
+        final nested = _coerceBranchList(map[key]);
+        if (nested.isNotEmpty) return nested;
+      }
+      if (map['id'] != null) return [map];
+    }
+    return const [];
+  }
+
+  Future<void> _mirrorSellerNameToPrefs(
+    Map<String, dynamic> arInfo,
+    Map<String, dynamic> receiptInfo,
+  ) async {
+    try {
+      // Prefer the restaurant name from /seller/profile/branches when
+      // available — that's the canonical display name for the branch.
+      final profileName =
+          receiptInfo['profile_branch_name']?.toString().trim() ?? '';
+
+      final rawName = arInfo['seller_name']?.toString().trim() ?? '';
+      String ar = profileName.isNotEmpty ? profileName : rawName;
+      String en = receiptInfo['seller_name_en']?.toString().trim() ?? '';
+      if (profileName.isEmpty) {
+        if (rawName.contains('|')) {
+          final parts = rawName.split('|');
+          ar = parts.first.trim();
+          if (en.isEmpty) en = parts.last.trim();
+        } else if (rawName.contains(' - ')) {
+          final parts = rawName.split(' - ');
+          ar = parts.first.trim();
+          if (en.isEmpty) en = parts.last.trim();
+        }
+      }
+      final logoUrl =
+          receiptInfo['branch_logo_url']?.toString().trim() ?? '';
+      final prefs = await SharedPreferences.getInstance();
+      // Never clobber a populated value with an empty one — a single failed
+      // fetch otherwise blanks the CDS welcome until the next cold restart.
+      if (ar.isNotEmpty) {
+        await prefs.setString('cds_seller_name_ar', ar);
+      }
+      if (en.isNotEmpty) {
+        await prefs.setString('cds_seller_name_en', en);
+      }
+      if (logoUrl.isNotEmpty) {
+        await prefs.setString('cds_seller_logo_url', logoUrl);
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('⚠️ mirror seller name to prefs failed: $e');
     }
   }
 

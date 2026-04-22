@@ -361,40 +361,6 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                         side: const BorderSide(color: Color(0xFF16A34A)),
                       ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: canOrderActions
-                          ? () async {
-                              final resolvedOrderId =
-                                  orderId ?? await _resolveOrderIdForInvoiceAsync(invoice);
-                              if (resolvedOrderId == null || resolvedOrderId <= 0) {
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(_tr(
-                                      'تعذر تحديد رقم الطلب لهذه الفاتورة',
-                                      'Unable to resolve order for this invoice',
-                                    )),
-                                  ),
-                                );
-                                return;
-                              }
-                              await _showUpdateStatusDialogForOrder(
-                                orderId: resolvedOrderId,
-                                orderLabel: _formatInvoiceNumber(invoice),
-                                currentStatus:
-                                    invoice.raw['order_status']?.toString() ??
-                                        invoice.raw['status']?.toString() ??
-                                        '1',
-                              );
-                            }
-                          : null,
-                      icon: const Icon(LucideIcons.edit, size: 16),
-                      label: Text(_tr('تغيير الحالة', 'Change status')),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF0EA5E9),
-                        side: const BorderSide(color: Color(0xFF0EA5E9)),
-                      ),
-                    ),
                     if (canRefund)
                       OutlinedButton.icon(
                         onPressed: isRefunding

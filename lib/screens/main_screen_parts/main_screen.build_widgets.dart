@@ -108,6 +108,9 @@ extension MainScreenBuildWidgets on _MainScreenState {
                                         product.id,
                                       ),
                                       taxRate: _isTaxEnabled ? _taxRate : 0.0,
+                                      placeholderImageUrl: _isSalonMode
+                                          ? _salonBranchLogoUrl
+                                          : null,
                                       onTap: () => _onProductTap(product),
                                       onQuickAdd: () => _addToCartWithExtras(
                                         product,
@@ -866,8 +869,24 @@ extension MainScreenBuildWidgets on _MainScreenState {
         _lastSelectedTable = null;
       }),
       selectedCustomer: _selectedCustomer,
-      onSelectCustomer: (customer) =>
-          setState(() => _selectedCustomer = customer),
+      onSelectCustomer: (customer) {
+        setState(() {
+          _selectedCustomer = customer;
+          // Clear any prior deposit selection — deposits are per-customer.
+          if (_isSalonMode) {
+            _selectedDepositId = null;
+            _customerDeposits = const [];
+          }
+        });
+        if (_isSalonMode) {
+          _loadCustomerDeposits(customer?.id);
+        }
+      },
+      availableDeposits: _isSalonMode ? _customerDeposits : const [],
+      selectedDepositId: _isSalonMode ? _selectedDepositId : null,
+      onSelectDeposit: _isSalonMode
+          ? (id) => setState(() => _selectedDepositId = id)
+          : null,
       onPay: _handlePay,
       onPayLater: _handlePayLater,
       onBookingLongPress: _showBookingDetails,

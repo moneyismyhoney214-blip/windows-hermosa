@@ -20,6 +20,7 @@ part 'invoice_print_widget_parts/invoice_print_widget.footer_qr.dart';
 part 'invoice_print_widget_parts/invoice_print_widget.translators.dart';
 part 'invoice_print_widget_parts/invoice_print_widget.test_view.dart';
 part 'invoice_print_widget_parts/invoice_print_widget.kitchen_view.dart';
+part 'invoice_print_widget_parts/invoice_print_widget.salon_turn_view.dart';
 
 // Static helpers relocated from InvoicePrintWidget class to library-level
 // so extensions can reference them without qualification.

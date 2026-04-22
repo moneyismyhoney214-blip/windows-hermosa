@@ -568,7 +568,7 @@ final Map<String, String> _arTranslations = {
     'waiter_name': 'اسم النادل',
     'waiter_name_required': 'يرجى إدخال اسم لا يقل عن حرفين',
     'waiter_start_shift': 'ابدأ الوردية',
-    'waiter_end_shift': 'إنهاء الوردية',
+    'waiter_end_shift': 'تسجيل خروج',
     'waiter_hi': 'مرحباً',
     'waiter_tab_tables': 'الطاولات',
     'waiter_tab_messages': 'الرسائل',
@@ -624,6 +624,8 @@ final Map<String, String> _arTranslations = {
     'waiter_table_owned_title': 'الطاولة محجوزة',
     'waiter_table_owned_body':
         'الطاولة {table} تتابعها النادلة/النادل {name}. هل ترغب في استدعائه/ها؟',
+    'waiter_table_backend_locked_body':
+        'الطاولة {table} غير متاحة حالياً — افتحها من الكاشير أو انتظر حتى تتحرر.',
     'waiter_select_peer': 'اختر نادلًا لبدء محادثة',
     'waiter_thread_empty': 'لا توجد رسائل بعد',
     'waiter_type_message': 'اكتب رسالة…',

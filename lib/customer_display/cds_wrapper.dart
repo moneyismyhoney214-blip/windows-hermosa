@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
+import '../services/printer_language_settings_service.dart';
 import 'display_provider.dart';
 import 'models.dart';
 import 'display_language_service.dart';
@@ -20,11 +24,59 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
   bool _hasPinnedLastFrame = false;
   DisplayProvider? _provider;
 
+  // Merchant name + logo mirrored from BranchService via SharedPreferences
+  // (same source the secondary CDS engine reads — keeps parity).
+  String _sellerNameAr = '';
+  String _sellerNameEn = '';
+  String _sellerLogoUrl = '';
+  Timer? _sellerNamePoll;
+
   @override
   void initState() {
     super.initState();
     // Initialize video immediately
     _initSuccessAnimation();
+    _loadSellerName();
+    // Rebuild immediately when the cashier flips invoice language settings
+    // so the welcome screen / idle preview reflects the change without
+    // waiting for a cart push.
+    printerLanguageSettings.addListener(_onPrinterLangChanged);
+    // Poll SharedPreferences on a gentle cadence so:
+    //   1. Branch name / logo snap in once BranchService finishes its fetch.
+    //   2. Any live change to the invoice language pair (cashier UI →
+    //      `PrinterLanguageSettingsService`) reflects on the CDS within a
+    //      couple of seconds, without requiring a cold restart.
+    _sellerNamePoll = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      _loadSellerName();
+    });
+  }
+
+  Future<void> _loadSellerName() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ar = prefs.getString('cds_seller_name_ar') ?? '';
+      final en = prefs.getString('cds_seller_name_en') ?? '';
+      final logo = prefs.getString('cds_seller_logo_url') ?? '';
+      if (!mounted) return;
+      // Invoice language state is sourced live from the cart payload (see
+      // [build]), not from prefs — the cashier and CDS share this engine so
+      // the payload is authoritative and can't race with a stale disk read.
+      final same = ar == _sellerNameAr &&
+          en == _sellerNameEn &&
+          logo == _sellerLogoUrl;
+      if (same) return;
+      setState(() {
+        _sellerNameAr = ar;
+        _sellerNameEn = en;
+        _sellerLogoUrl = logo;
+      });
+    } catch (_) {
+      // Fall back to default brand rendering.
+    }
   }
 
   @override
@@ -45,9 +97,16 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
 
   @override
   void dispose() {
+    _sellerNamePoll?.cancel();
+    printerLanguageSettings.removeListener(_onPrinterLangChanged);
     _provider?.removeListener(_onProviderChanged);
     _successController?.dispose();
     super.dispose();
+  }
+
+  void _onPrinterLangChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _initSuccessAnimation() async {
@@ -139,6 +198,31 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         final showPayment = provider.isShowingPayment;
         final showStatusOverlay = provider.hasStatusOverlay && !showPayment;
 
+        // Prefer invoice language settings from the cart payload — they
+        // arrive atomically with the cart push so the CDS flips instantly
+        // when the cashier changes the setting. Fall back to the live
+        // `printerLanguageSettings` singleton for the welcome screen (cart
+        // empty) — we're in the same engine as the settings service so the
+        // values are always fresh, no polling required.
+        final payloadPrimary =
+            cartData['invoice_primary_lang']?.toString().trim().toLowerCase();
+        final payloadSecondary = cartData['invoice_secondary_lang']
+            ?.toString()
+            .trim()
+            .toLowerCase();
+        final payloadAllow = cartData['invoice_allow_secondary'];
+        final invoicePrimaryLang =
+            (payloadPrimary != null && payloadPrimary.isNotEmpty)
+                ? payloadPrimary
+                : printerLanguageSettings.primary;
+        final invoiceSecondaryLang =
+            (payloadSecondary != null && payloadSecondary.isNotEmpty)
+                ? payloadSecondary
+                : printerLanguageSettings.secondary;
+        final invoiceAllowSecondary = payloadAllow is bool
+            ? payloadAllow
+            : printerLanguageSettings.allowSecondary;
+
         final baseScreen = CustomerFacingScreen(
           cart: cart,
           languageCode: languageCode,
@@ -157,6 +241,12 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
           orderDiscountValue: orderDiscountValue,
           orderDiscountPercent: orderDiscountPercent,
           discountSource: discountSource,
+          sellerNameAr: _sellerNameAr,
+          sellerNameEn: _sellerNameEn,
+          sellerLogoUrl: _sellerLogoUrl,
+          invoicePrimaryLang: invoicePrimaryLang,
+          invoiceSecondaryLang: invoiceSecondaryLang,
+          invoiceAllowSecondary: invoiceAllowSecondary,
           catalogProducts: catalogProducts,
           catalogCategories: catalogCategories,
           disabledMealIds: disabledMealIds,
@@ -445,7 +535,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         final extraMap = Map<String, dynamic>.from(e);
         final localizedName = _localizedText(
           extraMap['name'] ?? extraMap['label'] ?? extraMap['title'],
-          languageCode: languageCode,
+          languageCode: 'ar',
         );
         return ProductExtra(
           id: extraMap['id']?.toString() ?? '',
@@ -455,6 +545,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
             languageCode: 'en',
           ),
           price: _parseDouble(extraMap['price']),
+          localizedNames: _harvestLocalizedNames(extraMap),
         );
       }).toList();
 
@@ -462,7 +553,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
       final unitPrice = _parseDouble(itemMap['price'] ?? itemMap['unitPrice']);
       final localizedProductName = _localizedText(
         itemMap['name'],
-        languageCode: languageCode,
+        languageCode: 'ar',
       );
       final localizedCategory = _localizedText(
         itemMap['category'],
@@ -470,17 +561,35 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
       );
 
       // Create Product from the data
+      String resolvedNameEn = '';
+      final rawNameEn = itemMap['nameEn'];
+      if (rawNameEn is String && rawNameEn.trim().isNotEmpty) {
+        resolvedNameEn = rawNameEn.trim();
+      }
+      if (resolvedNameEn.isEmpty) {
+        for (final src in [
+          itemMap['localizedNames'],
+          itemMap['meal_name_translations'],
+          itemMap['name'],
+        ]) {
+          if (src is Map) {
+            final v = src['en']?.toString().trim();
+            if (v != null && v.isNotEmpty) {
+              resolvedNameEn = v;
+              break;
+            }
+          }
+        }
+      }
       final product = Product(
         id: itemMap['productId']?.toString() ?? itemMap['id']?.toString() ?? '',
         name: localizedProductName,
-        nameEn: _localizedText(
-          itemMap['nameEn'] ?? itemMap['name'],
-          languageCode: 'en',
-        ),
+        nameEn: resolvedNameEn,
         basePrice: unitPrice,
         category: localizedCategory,
         imageUrl: itemMap['imageUrl']?.toString() ?? '',
         availableExtras: extras,
+        localizedNames: _harvestLocalizedNames(itemMap),
       );
 
       // ✅ استخراج بيانات الخصم للمنتج
@@ -796,6 +905,48 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
     return sorted;
   }
 
+  /// Merge every translation map we might receive for a meal/addon into a
+  /// single `{langCode: name}` dictionary. Picks up `localizedNames`,
+  /// `meal_name_translations`, `name_translations`, and — as a last resort —
+  /// a multilingual `name` map.
+  Map<String, String> _harvestLocalizedNames(Map<String, dynamic> source) {
+    final out = <String, String>{};
+    void absorb(dynamic raw) {
+      if (raw is! Map) return;
+      for (final entry in raw.entries) {
+        final code = entry.key.toString().trim().toLowerCase();
+        final value = entry.value?.toString().trim() ?? '';
+        if (code.isEmpty || value.isEmpty) continue;
+        out.putIfAbsent(code, () => value);
+      }
+    }
+
+    absorb(source['localizedNames']);
+    absorb(source['localized_names']);
+    absorb(source['name_locales']);
+    absorb(source['names']);
+    absorb(source['meal_name_translations']);
+    absorb(source['name_translations']);
+    absorb(source['translations']);
+    if (source['name'] is Map) absorb(source['name']);
+
+    final ar = source['nameAr']?.toString().trim() ?? '';
+    if (ar.isNotEmpty) out.putIfAbsent('ar', () => ar);
+    final en = source['nameEn']?.toString().trim() ?? '';
+    if (en.isNotEmpty) out.putIfAbsent('en', () => en);
+    // When the cashier tells us which language the raw `name` is in, use it
+    // as the final fallback for that language.
+    final nameLang = source['name_lang']?.toString().trim().toLowerCase();
+    final rawNameStr = source['name'];
+    if (nameLang != null &&
+        nameLang.isNotEmpty &&
+        rawNameStr is String &&
+        rawNameStr.trim().isNotEmpty) {
+      out.putIfAbsent(nameLang, () => rawNameStr.trim());
+    }
+    return out;
+  }
+
   String _localizedText(dynamic value, {required String languageCode}) {
     if (value == null) return '';
     if (value is String) return value.trim();
@@ -836,3 +987,4 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
     return result;
   }
 }
+

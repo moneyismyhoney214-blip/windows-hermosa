@@ -16,6 +16,24 @@ class WaiterCartStore extends ChangeNotifier {
   final Map<String, List<CartItem>> _carts = {};
   final Map<String, List<CartItem>> _sent = {};
   final Map<String, int> _guestCounts = {};
+  /// Table → backend booking id of an in-flight submission that failed
+  /// (e.g. network drop after createBooking succeeded on the server but
+  /// the response was lost). Retry paths pass this into
+  /// `WaiterBillingService.processBill(existingBookingId: ...)` so the
+  /// backend isn't double-charged with a ghost booking. Cleared on
+  /// successful completion or on explicit release.
+  final Map<String, String> _pendingBookingIds = {};
+
+  String? pendingBookingIdFor(String tableId) => _pendingBookingIds[tableId];
+
+  void setPendingBookingId(String tableId, String bookingId) {
+    if (bookingId.isEmpty) return;
+    _pendingBookingIds[tableId] = bookingId;
+  }
+
+  void clearPendingBookingId(String tableId) {
+    _pendingBookingIds.remove(tableId);
+  }
 
   List<CartItem> itemsFor(String tableId) =>
       List.unmodifiable(_carts[tableId] ?? const <CartItem>[]);
@@ -78,7 +96,10 @@ class WaiterCartStore extends ChangeNotifier {
     final removed = _carts.remove(tableId) != null;
     final removedSent = _sent.remove(tableId) != null;
     final removedGuests = _guestCounts.remove(tableId) != null;
-    if (removed || removedSent || removedGuests) notifyListeners();
+    final removedPending = _pendingBookingIds.remove(tableId) != null;
+    if (removed || removedSent || removedGuests || removedPending) {
+      notifyListeners();
+    }
   }
 
   /// Wipe every table's draft + sent cart + guest count. Used when a
@@ -86,10 +107,14 @@ class WaiterCartStore extends ChangeNotifier {
   /// user of the device shouldn't see the previous session's in-flight
   /// orders.
   void clearAll() {
-    if (_carts.isEmpty && _sent.isEmpty && _guestCounts.isEmpty) return;
+    if (_carts.isEmpty &&
+        _sent.isEmpty &&
+        _guestCounts.isEmpty &&
+        _pendingBookingIds.isEmpty) return;
     _carts.clear();
     _sent.clear();
     _guestCounts.clear();
+    _pendingBookingIds.clear();
     notifyListeners();
   }
 

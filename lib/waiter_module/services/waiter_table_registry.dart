@@ -26,6 +26,9 @@ class WaiterTableRegistry extends ChangeNotifier {
   bool paymentPendingFor(String tableId) =>
       _byTableId[tableId]?.paymentPending ?? false;
   bool paidFor(String tableId) => _byTableId[tableId]?.paid ?? false;
+  bool takingOrderFor(String tableId) =>
+      _byTableId[tableId]?.takingOrder ?? false;
+  String? bookingIdFor(String tableId) => _byTableId[tableId]?.orderId;
 
   /// Every (tableId, ownership) pair owned by [waiterId]. Used by the
   /// controller to snapshot this device's tables to a newly-joined peer
@@ -39,6 +42,20 @@ class WaiterTableRegistry extends ChangeNotifier {
   void apply(TableLifecycleEvent event) {
     final prev = _byTableId[event.tableId];
     switch (event.kind) {
+      case TableLifecycleKind.takingOrder:
+        _byTableId[event.tableId] = _TableOwnership(
+          waiterId: event.waiterId,
+          waiterName: event.waiterName,
+          tableNumber: event.tableNumber,
+          guestCount: event.guestCount ?? prev?.guestCount,
+          total: event.total ?? prev?.total,
+          itemCount: event.itemCount ?? prev?.itemCount ?? 0,
+          items: event.items ?? prev?.items ?? const [],
+          paymentPending: false,
+          paid: false,
+          takingOrder: true,
+        );
+        break;
       case TableLifecycleKind.assigned:
         _byTableId[event.tableId] = _TableOwnership(
           waiterId: event.waiterId,
@@ -50,6 +67,7 @@ class WaiterTableRegistry extends ChangeNotifier {
           items: event.items ?? prev?.items ?? const [],
           paymentPending: false,
           paid: false,
+          takingOrder: false,
         );
         break;
       case TableLifecycleKind.released:
@@ -66,6 +84,8 @@ class WaiterTableRegistry extends ChangeNotifier {
           total: event.total,
           itemCount: event.itemCount,
           items: event.items,
+          // Any real update (items sent) clears the "taking order" flag.
+          takingOrder: false,
         );
         break;
       case TableLifecycleKind.paymentPending:
@@ -75,6 +95,7 @@ class WaiterTableRegistry extends ChangeNotifier {
           total: event.total,
           itemCount: event.itemCount,
           items: event.items,
+          orderId: event.orderId ?? prev?.orderId,
         );
         break;
       case TableLifecycleKind.paid:
@@ -123,6 +144,11 @@ class _TableOwnership {
   final List<TableItemSnapshot> items;
   final bool paymentPending;
   final bool paid;
+  final bool takingOrder;
+  /// Backend booking id for the active order on this table. Stashed so
+  /// the waiter's "Edit Order" reuses `updateBookingItems` on the same
+  /// record instead of creating a duplicate booking.
+  final String? orderId;
 
   const _TableOwnership({
     required this.waiterId,
@@ -134,6 +160,8 @@ class _TableOwnership {
     this.items = const [],
     this.paymentPending = false,
     this.paid = false,
+    this.takingOrder = false,
+    this.orderId,
   });
 
   _TableOwnership copyWith({
@@ -146,6 +174,8 @@ class _TableOwnership {
     List<TableItemSnapshot>? items,
     bool? paymentPending,
     bool? paid,
+    bool? takingOrder,
+    String? orderId,
   }) {
     return _TableOwnership(
       waiterId: waiterId ?? this.waiterId,
@@ -157,6 +187,8 @@ class _TableOwnership {
       items: items ?? this.items,
       paymentPending: paymentPending ?? this.paymentPending,
       paid: paid ?? this.paid,
+      takingOrder: takingOrder ?? this.takingOrder,
+      orderId: orderId ?? this.orderId,
     );
   }
 }

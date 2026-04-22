@@ -1,8 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../customer_display/nearpay/nearpay_bootstrap.dart';
+import '../../customer_display/nearpay/nearpay_config_service.dart';
 import '../../customer_display/nearpay/nearpay_service.dart';
+// JWT helper (distinct from the SDK-wrapper NearPayService above) — the
+// cashier pre-warms its cache at login so the first AUTH_CHALLENGE gets
+// a token instantly. Aliased to avoid the name collision.
+import '../../services/nearpay/nearpay_service.dart' as np_jwt;
 import '../../locator.dart';
 import '../../models.dart';
 import '../../services/api/api_constants.dart';
@@ -24,6 +31,10 @@ class WaiterBillResult {
   final String? bookingId;
   final String? invoiceId;
   final String? invoiceNumber;
+  /// Backend-assigned daily order number (e.g. `#1001`). Same field the
+  /// cashier's `backendDailyOrderNumber` resolves — gets printed on the
+  /// kitchen ticket + cashier receipt as the human-facing order ref.
+  final String? dailyOrderNumber;
   final String? errorMessage;
   final String? paymentMethod;
   final String? transactionId;
@@ -33,6 +44,7 @@ class WaiterBillResult {
     required this.bookingId,
     this.invoiceId,
     this.invoiceNumber,
+    this.dailyOrderNumber,
     this.paymentMethod,
     this.transactionId,
     this.receiptPdfPath,
@@ -44,6 +56,7 @@ class WaiterBillResult {
     this.bookingId,
     this.invoiceId,
     this.invoiceNumber,
+    this.dailyOrderNumber,
   })  : success = false,
         paymentMethod = null,
         transactionId = null,
@@ -118,7 +131,89 @@ class WaiterBillingService {
   }
 
   /// Whether the current branch/profile has NearPay card payments on.
-  bool get isNearPayEnabled => _userOptions()['nearpay'] == true;
+  ///
+  /// Primary source is the user profile (`options.nearpay`) which is how
+  /// the cashier reads it. As a defensive fallback — because WAITER-role
+  /// login responses sometimes don't carry `options` — also probe the
+  /// branch settings cached by [BranchService] (populated when
+  /// [refreshPayMethods] runs). Either source saying "on" is sufficient.
+  bool get isNearPayEnabled {
+    if (_userOptions()['nearpay'] == true) return true;
+    try {
+      final settings = _branchService.cachedBranchSettings;
+      if (settings != null && _looksTruthy(settings['nearpay']) == true) {
+        return true;
+      }
+    } catch (_) {/* cache not hydrated yet */}
+    return false;
+  }
+
+  bool? _looksTruthy(dynamic v) {
+    if (v == null) return null;
+    if (v is bool) return v;
+    if (v is num) return v > 0;
+    if (v is String) {
+      final s = v.trim().toLowerCase();
+      if (s == 'true' || s == '1' || s == 'yes' || s == 'on') return true;
+      if (s == 'false' || s == '0' || s == 'no' || s == 'off' || s == '') {
+        return false;
+      }
+    }
+    return null;
+  }
+
+  /// Mirrors the cashier's NearPay login-time bootstrap (see
+  /// main_screen.session.dart). Must run once the waiter has signed in
+  /// and AuthService has the profile — without this
+  /// [NearPayBootstrap.ensureInitialized] bails at `shouldInitializeSdk`
+  /// because the global config flag is still `false` on the waiter
+  /// device, and card purchases fail with "SDK could not be initialized".
+  ///
+  /// Safe to call multiple times; calls race-safely with
+  /// [NearPayBootstrap.ensureInitialized] via its in-flight dedupe.
+  Future<void> hydrateNearPayConfig() async {
+    // Populate [BranchService.cachedBranchSettings] so the branch-level
+    // fallback in [isNearPayEnabled] has something to probe. Best-effort:
+    // a network failure here still lets us fall back to profile options.
+    try {
+      await _branchService.getBranchSettings();
+    } catch (e) {
+      debugPrint('⚠️ Waiter branch-settings prefetch failed (non-fatal): $e');
+    }
+    final enabled = isNearPayEnabled;
+    debugPrint(
+      '🔷 Waiter NearPay hydrate: enabled=$enabled '
+      '(profile=${_userOptions()['nearpay']}, '
+      'branch=${_branchService.cachedBranchSettings?['nearpay']})',
+    );
+    try {
+      NearPayConfigService().setNearPayEnabled(enabled);
+    } catch (e) {
+      debugPrint('⚠️ Waiter NearPay config set failed: $e');
+    }
+    if (!enabled) return;
+    // Pre-warm JWT cache so the first AUTH_CHALLENGE response is instant
+    // — matches the cashier's pre-warm in main_screen.session.dart.
+    unawaited(() async {
+      try {
+        await np_jwt.NearPayService().generateJwt();
+      } catch (e) {
+        debugPrint('⚠️ Waiter NearPay JWT pre-warm failed: $e');
+      }
+    }());
+    // Kick off SDK init asynchronously so the first checkout doesn't
+    // eat the bootstrap latency.
+    unawaited(() async {
+      try {
+        final ok = await NearPayBootstrap.ensureInitialized();
+        debugPrint(ok
+            ? '✅ Waiter NearPayBootstrap: SDK ready'
+            : '⚠️ Waiter NearPayBootstrap: SDK not ready (will retry on payment)');
+      } catch (e) {
+        debugPrint('⚠️ Waiter NearPayBootstrap init failed: $e');
+      }
+    }());
+  }
 
   /// Hydrate the pay-method cache + tax settings from the same sources the
   /// cashier uses. Safe to call repeatedly — subsequent calls just refresh
@@ -138,6 +233,13 @@ class WaiterBillingService {
     await _refreshTaxConfig();
     return enabledPaymentMethods();
   }
+
+  /// Public wrapper so screens (e.g. the order screen) can hydrate the
+  /// tax config before they need to display tax-inclusive prices — without
+  /// paying the cost of `refreshPayMethods` (which hits the pay-methods
+  /// endpoint). Safe to call multiple times; subsequent calls just refresh
+  /// the cached values.
+  Future<void> refreshTaxConfig() => _refreshTaxConfig();
 
   Future<void> _refreshTaxConfig() async {
     double? rate;
@@ -277,20 +379,20 @@ class WaiterBillingService {
 
   /// Payment methods the waiter's dialog should show — identical to the
   /// cashier's behavior: the source of truth is the branch settings
-  /// (`BranchService.getEnabledPayMethods`). Card methods stay visible
-  /// only when NearPay is also enabled on the profile. Pay-later is
-  /// always on so the waiter can close the table and leave the invoice
-  /// for the cashier to collect later.
+  /// (`BranchService.getEnabledPayMethods`). Card methods are NOT gated
+  /// on NearPay visibility — the cashier keeps them shown regardless,
+  /// and NearPay is invoked at execution time in `_processBillWithPayload`
+  /// (which returns a clear failure if the SDK isn't ready). Pay-later
+  /// is always on so the waiter can close the table and leave the
+  /// invoice for the cashier to collect later.
   Map<String, bool> enabledPaymentMethods() {
     final fromBranch = _payMethodsCache ?? const <String, bool>{};
-    final card = isNearPayEnabled;
-    // Start from the full set the cashier tender dialog knows about.
     final methods = <String, bool>{
       'cash': fromBranch['cash'] ?? true,
-      'card': (fromBranch['card'] ?? false) && card,
-      'mada': (fromBranch['mada'] ?? false) && card,
-      'visa': (fromBranch['visa'] ?? false) && card,
-      'benefit': (fromBranch['benefit'] ?? false) && card,
+      'card': fromBranch['card'] ?? false,
+      'mada': fromBranch['mada'] ?? false,
+      'visa': fromBranch['visa'] ?? false,
+      'benefit': fromBranch['benefit'] ?? false,
       'stc': fromBranch['stc'] ?? false,
       'bank_transfer': fromBranch['bank_transfer'] ?? false,
       'wallet': fromBranch['wallet'] ?? false,
@@ -404,6 +506,52 @@ class WaiterBillingService {
     };
   }
 
+  /// Update an existing pay-later booking in place — used by the waiter's
+  /// "Edit Order" flow so a re-submission doesn't create a duplicate
+  /// booking on the backend. Mirrors the cashier's
+  /// [OrderService.updateBookingItems] call (see edit_order_dialog.dart).
+  Future<void> updateBookingItems({
+    required String bookingId,
+    required TableItem table,
+    required List<CartItem> items,
+    String? notes,
+    int? guests,
+  }) async {
+    const orderType = 'restaurant_internal';
+    final tableName = table.number.trim().isNotEmpty
+        ? table.number.trim()
+        : table.id;
+    final payload = items.map((it) {
+      final mealIdInt = int.tryParse(it.product.id);
+      return <String, dynamic>{
+        'meal_id': mealIdInt ?? it.product.id,
+        'meal_name': it.product.name,
+        'item_name': it.product.name,
+        'quantity': it.quantity.round().clamp(1, 9999),
+        'price': it.product.price,
+        'unit_price': it.product.price,
+        if (it.notes.isNotEmpty) 'note': it.notes,
+        if (it.selectedExtras.isNotEmpty)
+          'addons': it.selectedExtras
+              .map((e) => int.tryParse(e.id) ?? e.id)
+              .toList(),
+      };
+    }).toList();
+
+    await _orderService.updateBookingItems(
+      orderId: bookingId,
+      orderType: orderType,
+      notes: notes,
+      items: payload,
+      updatedAt: null,
+      typeExtra: {
+        'table_name': tableName,
+        'table_id': table.id,
+        if (guests != null) 'guest_count': guests,
+      },
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Public flow
   // ---------------------------------------------------------------------------
@@ -479,6 +627,7 @@ class WaiterBillingService {
     String? orderId;
     String? invoiceId;
     String? invoiceNumber;
+    String? dailyOrderNumber;
     try {
       final primaryMethod = _pickPrimaryMethod(pays);
       final payLater = primaryMethod == 'pay_later';
@@ -500,9 +649,19 @@ class WaiterBillingService {
             bookingData['invoice_id'] ?? bookingData['invoice']?['id']);
         invoiceNumber = _stringify(bookingData['invoice_number'] ??
             bookingData['invoice']?['invoice_number']);
+        // Same key fallback order the cashier uses — different accounts
+        // surface the daily number under one of these names.
+        dailyOrderNumber = _stringify(bookingData['daily_order_number'] ??
+            bookingData['order']?['daily_order_number'] ??
+            bookingData['order']?['order_number'] ??
+            bookingData['order_number']);
       } else {
         debugPrint(
             '♻️ Bill retry reusing booking $existingBookingId — skipping createBooking');
+        // Edit-order re-entry — the booking already has a daily_order_number
+        // from its original creation. Fetch it so the kitchen / receipt
+        // print carries the same reference the cashier would show.
+        dailyOrderNumber = await _fetchDailyOrderNumber(bookingId);
       }
 
       // ─── 2. NearPay (card payments) ───────────────────────────────────
@@ -518,6 +677,13 @@ class WaiterBillingService {
           );
         }
         onStatus?.call('preparing_nearpay');
+        // Belt + suspenders: if the waiter module entry didn't call
+        // hydrateNearPayConfig (e.g. quick restart, deep-link into bill),
+        // flip the global config flag here so ensureInitialized's
+        // shouldInitializeSdk check doesn't bail.
+        try {
+          NearPayConfigService().setNearPayEnabled(true);
+        } catch (_) {/* non-fatal */}
         final initialized = await NearPayBootstrap.ensureInitialized();
         if (!initialized) {
           return WaiterBillResult.failure(
@@ -556,8 +722,26 @@ class WaiterBillingService {
               ?.cast<Map<String, dynamic>>() ??
           const <Map<String, dynamic>>[];
 
+      // Slim vs full: the cashier's "قسم الطلبات → إنشاء فاتورة" path
+      // (orders_screen.data.dart) posts only branch_id/booking_id/date/
+      // cash_back/pays and gets accepted cleanly. The fuller payload with
+      // order_id + items/card/meals triggers a spurious 422 on some
+      // accounts which the backend answers by *cancelling* the just-
+      // created invoice. Try slim first, fall back to full on failure.
+      var slimVariantSucceeded = false;
       if (invoiceId == null && !payLater) {
         onStatus?.call('creating_invoice');
+        Map<String, dynamic> buildSlimInvoiceData(
+            List<Map<String, dynamic>> paysToUse) {
+          return <String, dynamic>{
+            'branch_id': ApiConstants.branchId,
+            if (bookingId != null) 'booking_id': bookingId,
+            'cash_back': 0,
+            'date': dateStr,
+            'pays': paysToUse,
+          };
+        }
+
         Map<String, dynamic> buildInvoiceData(
             List<Map<String, dynamic>> paysToUse) {
           return <String, dynamic>{
@@ -573,10 +757,11 @@ class WaiterBillingService {
           };
         }
 
-        Future<Map<String, dynamic>?> attempt(
-            List<Map<String, dynamic>> paysToUse) async {
+        Future<Map<String, dynamic>?> runAttempt(
+          Map<String, dynamic> Function(List<Map<String, dynamic>>) builder,
+        ) async {
           try {
-            return await _orderService.createInvoice(buildInvoiceData(paysToUse));
+            return await _orderService.createInvoice(builder(normalizedPays));
           } on ApiException catch (e) {
             // Backend authoritative total: "...يساوي إجمالي الفاتورة (16)."
             final expected = _extractExpectedTotal(e.message);
@@ -585,8 +770,7 @@ class WaiterBillingService {
                   '♻️ Retrying createInvoice with backend total=$expected');
               final retryPays = buildUpdatePaysPayload(pays, expected);
               try {
-                return await _orderService.createInvoice(
-                    buildInvoiceData(retryPays));
+                return await _orderService.createInvoice(builder(retryPays));
               } on ApiException catch (retryError) {
                 debugPrint(
                     '⚠️ createInvoice retry still failed: ${retryError.message}');
@@ -597,24 +781,41 @@ class WaiterBillingService {
           }
         }
 
+        Map<String, dynamic>? invResp;
         try {
-          final invResp = await attempt(normalizedPays);
-          if (invResp != null) {
-            final invData = _unwrapBookingData(invResp);
-            invoiceId = _stringify(invData['id'] ??
-                invData['invoice_id'] ??
-                invData['invoice']?['id']);
-            invoiceNumber = _stringify(invData['invoice_number'] ??
-                invData['invoice']?['invoice_number'] ??
-                invoiceNumber);
+          invResp = await runAttempt(buildSlimInvoiceData);
+          if (invResp != null) slimVariantSucceeded = true;
+        } catch (slimError) {
+          debugPrint(
+              '⚠️ slim createInvoice failed — falling back to full payload: $slimError');
+          try {
+            invResp = await runAttempt(buildInvoiceData);
+          } catch (e) {
+            debugPrint(
+                '⚠️ createInvoice failed — continuing with booking only: $e');
           }
-        } catch (e) {
-          debugPrint('⚠️ createInvoice failed — continuing with booking only: $e');
+        }
+
+        if (invResp != null) {
+          final invData = _unwrapBookingData(invResp);
+          invoiceId = _stringify(invData['id'] ??
+              invData['invoice_id'] ??
+              invData['invoice']?['id']);
+          invoiceNumber = _stringify(invData['invoice_number'] ??
+              invData['invoice']?['invoice_number'] ??
+              invoiceNumber);
         }
       }
 
+      // When the slim variant succeeded the backend already has the
+      // canonical invoice — running updateInvoiceDate / updateInvoicePays
+      // on top risks a spurious 422 that the backend answers by cancelling
+      // the just-created invoice (ghost IN-N cancelled next to the real
+      // one). Matches the cashier-side skipUpdatePays set for this flow.
+      final skipPostCreateTouchups = slimVariantSucceeded;
+
       // ─── 3b. updateInvoiceDate (aligns invoice date with booking date) ─
-      if (invoiceId != null && !payLater) {
+      if (invoiceId != null && !payLater && !skipPostCreateTouchups) {
         try {
           await _orderService.updateInvoiceDate(
             invoiceId: invoiceId,
@@ -626,7 +827,7 @@ class WaiterBillingService {
       }
 
       // ─── 4. updateInvoicePays (multi-tender reconciliation) ──────────
-      if (invoiceId != null && !payLater) {
+      if (invoiceId != null && !payLater && !skipPostCreateTouchups) {
         onStatus?.call('updating_pays');
         try {
           await _orderService.updateInvoicePays(
@@ -670,6 +871,7 @@ class WaiterBillingService {
         bookingId: bookingId,
         invoiceId: invoiceId,
         invoiceNumber: invoiceNumber,
+        dailyOrderNumber: dailyOrderNumber,
         paymentMethod: primaryMethod,
         transactionId: transactionId,
         receiptPdfPath: receiptPath,
@@ -680,6 +882,30 @@ class WaiterBillingService {
       return WaiterBillResult.failure(e.toString());
     }
   }
+
+  /// Fetches the backend-assigned `daily_order_number` for a booking that
+  /// already exists (edit-order re-entry, retry path). Returns `null` on
+  /// failure so callers fall back to their placeholder format instead of
+  /// crashing.
+  Future<String?> _fetchDailyOrderNumber(String bookingId) async {
+    try {
+      final details = await _orderService.getBookingDetails(bookingId);
+      final data = _unwrapBookingData(details);
+      return _stringify(data['daily_order_number'] ??
+          data['order']?['daily_order_number'] ??
+          data['order']?['order_number'] ??
+          data['order_number']);
+    } catch (e) {
+      debugPrint('⚠️ _fetchDailyOrderNumber failed for $bookingId: $e');
+      return null;
+    }
+  }
+
+  /// Public wrapper around [_fetchDailyOrderNumber] so the order screen
+  /// can resolve the number without running the full billing flow.
+  /// Used by the kitchen-print path after an edit-order PATCH.
+  Future<String?> fetchDailyOrderNumber(String bookingId) =>
+      _fetchDailyOrderNumber(bookingId);
 
   /// Parse the backend's authoritative invoice total out of the
   /// validation-failure message, e.g.

@@ -137,6 +137,30 @@ class WaiterController extends ChangeNotifier {
   /// second set of broadcasts. They both wait on the same Future.
   Future<void>? _starting;
 
+  /// Table id the current device is *actively composing an order for*.
+  /// Set by [WaiterOrderScreen] on enter, cleared on exit. Used to gate
+  /// disruptive UI (pickup banner, incoming call sound) so the waiter's
+  /// in-progress work isn't interrupted. Only one at a time.
+  String? _activeOrderingTableId;
+
+  /// True while this waiter has the order-composition screen open for
+  /// some table. UI should treat the waiter as busy.
+  bool get isTakingOrderNow => _activeOrderingTableId != null;
+
+  String? get activeOrderingTableId => _activeOrderingTableId;
+
+  /// Mark the waiter as actively composing an order for [tableId].
+  /// Clears any previous value so a nav hop from table A → B doesn't
+  /// leak the stale id.
+  void setActiveOrderingTable(String tableId) {
+    _activeOrderingTableId = tableId;
+  }
+
+  void clearActiveOrderingTable([String? tableId]) {
+    if (tableId != null && _activeOrderingTableId != tableId) return;
+    _activeOrderingTableId = null;
+  }
+
   WaiterController({
     required this.session,
     required this.roster,
@@ -389,6 +413,10 @@ class WaiterController extends ChangeNotifier {
   }
 
   void broadcastTableEvent(TableLifecycleEvent event) {
+    // Apply locally first so our own registry is up-to-date even
+    // without a round-trip from a peer. Matches incoming semantics in
+    // _handleIncoming.
+    tableRegistry.apply(event);
     _tableEventStream
         .add(WaiterTableEventEnvelope(event: event, fromSelf: true));
     final self = session.self!;
@@ -593,10 +621,16 @@ class WaiterController extends ChangeNotifier {
   }) {
     final self = session.self;
     if (self == null) return null;
+    // Both the cashier (viewer) and the owning waiter may initiate —
+    // if a waiter initiates, enforce that they actually own the source
+    // table so one waiter can't relocate another's table.
     if (!self.isViewer) {
-      throw StateError(
-        'Only the cashier (viewer) may migrate a table.',
-      );
+      final owner = tableRegistry.ownerIdFor(oldTableId);
+      if (owner != null && owner != self.id) {
+        throw StateError(
+          'Only the owning waiter (or the cashier) may migrate this table.',
+        );
+      }
     }
     if (oldTableId == newTableId) return null;
     final event = TableMigrateEvent(
@@ -615,6 +649,14 @@ class WaiterController extends ChangeNotifier {
       branchId: self.branchId,
       data: event.toJson(),
     ));
+    // If the initiator *is* the owner of the old table (waiter-driven
+    // migrate), apply the cart/registry shuffle locally — peers only
+    // handle this when they're the owner, and the initiator's own
+    // broadcast doesn't loop back through _handleIncoming.
+    final ownerId = tableRegistry.ownerIdFor(oldTableId);
+    if (ownerId != null && ownerId == self.id) {
+      _applyMigrateAsOwner(event);
+    }
     return event;
   }
 
@@ -828,8 +870,15 @@ class WaiterController extends ChangeNotifier {
       case WireMessageType.tableUpdate:
       case WireMessageType.tablePaymentStatus:
         try {
+          final event = TableLifecycleEvent.fromJson(msg.data);
+          // Keep the registry authoritative on every device (waiter or
+          // viewer/cashier). Without this the cashier's registry stays
+          // empty and `_hydrateFromRegistry` on re-mount can't replay
+          // state. Done BEFORE the stream emit so listeners see a
+          // registry that already reflects the new event.
+          tableRegistry.apply(event);
           _tableEventStream.add(WaiterTableEventEnvelope(
-            event: TableLifecycleEvent.fromJson(msg.data),
+            event: event,
             fromSelf: false,
           ));
         } catch (_) {}
@@ -884,7 +933,13 @@ class WaiterController extends ChangeNotifier {
           if (recorded && !self.isViewer) {
             // Only a real waiter gets the audible alert — cashiers
             // watching the tables screen already see the card change.
-            notifications.playCall();
+            // Suppress the bell while the waiter is composing an order
+            // so their workflow isn't interrupted. The request is still
+            // persisted in pickupStore so it appears in the feed once
+            // they exit the order screen.
+            if (!isTakingOrderNow) {
+              notifications.playCall();
+            }
             _pickupRequestStream.add(req);
           } else if (recorded && self.isViewer) {
             _pickupRequestStream.add(req);

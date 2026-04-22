@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../locator.dart';
 import '../../services/app_themes.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/language_service.dart';
+import '../services/waiter_billing_service.dart';
 import '../services/waiter_controller.dart';
 import '../services/waiter_session_service.dart';
 import '../theme/waiter_design.dart';
@@ -55,6 +57,10 @@ class _WaiterLoginScreenState extends State<WaiterLoginScreen> {
         name: _nameCtrl.text.trim(),
         branchId: ApiConstants.branchId.toString(),
       );
+      // Hydrate NearPay config now that the profile is loaded into
+      // AuthService — otherwise the first card checkout hits a cold SDK
+      // and fails with "SDK could not be initialized".
+      unawaited(getIt<WaiterBillingService>().hydrateNearPayConfig());
       await widget.controller.start();
       unawaited(WaiterHaptics.success());
       if (!mounted) return;
