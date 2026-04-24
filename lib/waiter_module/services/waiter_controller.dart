@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../locator.dart';
+import '../../models/booking_invoice.dart';
+import '../../services/api/branch_service.dart';
+import '../../services/api/order_service.dart';
 import '../models/network_message.dart';
 import '../models/table_migrate_event.dart';
 import '../models/table_pickup_request.dart';
@@ -194,7 +197,9 @@ class WaiterController extends ChangeNotifier {
       // Previous branch's mesh state must not leak into the new one.
       // tableRegistry, messageStore, pickupStore all hold data scoped
       // to the prior branch — clear before the new identity goes live.
-      clearSessionStores();
+      // Await so the registry's disk wipe completes before the fresh
+      // identity's hydrate races against the same SharedPreferences.
+      await clearSessionStores();
     }
     debugPrint('👁️ ensureViewer starting on branch $branchId');
     await session.assignViewerIdentity(name: name, branchId: branchId);
@@ -207,13 +212,18 @@ class WaiterController extends ChangeNotifier {
   /// shift's drafts, claimed pickups, notifications, or table
   /// ownership. Config (printer list + KDS endpoint) is NOT cleared —
   /// that's the cashier's domain and survives the waiter turnover.
-  void clearSessionStores() {
+  /// Returns a future that completes only after every session-scoped
+  /// store has finished clearing — including the table registry's
+  /// disk persistence. Callers on the logout / branch-switch path MUST
+  /// await this so a fast re-login's hydrate doesn't race the disk
+  /// wipe and resurrect state the user explicitly cleared.
+  Future<void> clearSessionStores() async {
     messages.clear();
     pickupStore.clear();
-    tableRegistry.clearAll();
+    await tableRegistry.clearAll();
     roster.clear();
     try {
-      getIt<WaiterCartStore>().clearAll();
+      await getIt<WaiterCartStore>().clearAll();
     } catch (_) {}
     debugPrint('🧹 waiter session stores cleared');
   }
@@ -238,6 +248,65 @@ class WaiterController extends ChangeNotifier {
     // resources we already brought up must be released so a retry isn't
     // blocked by `_running=true` holding a dead controller.
     try {
+      // Rehydrate the table registry from disk BEFORE the network fires
+      // up. Without this, a waiter reopening the app would see an empty
+      // grid (no ownership, no pay-later bookings) until peers re-push
+      // their state — which never happens if this waiter is alone on
+      // the LAN. Scoped by waiterId so a second waiter on the same
+      // device doesn't inherit the first one's tables. Viewer sessions
+      // (cashier mirror) don't persist — only real waiters do.
+      if (!self.isViewer && self.name.trim().isNotEmpty) {
+        try {
+          // Scope by branch+name, not deviceId — a shared tablet
+          // handing off from waiter Ahmed to waiter Sara would
+          // otherwise feed Sara Ahmed's pay-later rows on her first
+          // login if Ahmed force-killed without signing out. Also
+          // skip hydrate when name is empty (partially-initialized
+          // session) — an empty-name scope would collapse two
+          // different waiters into the same persistence slot.
+          await tableRegistry.hydrate(
+            branchId: self.branchId,
+            name: self.name,
+            selfId: self.id,
+          );
+          // Rehydrate the cart store too so drafts the waiter was
+          // mid-composing when the app died come back intact. Same
+          // branch+name scoping as the registry so they can never
+          // disagree on which waiter the local state belongs to.
+          try {
+            await getIt<WaiterCartStore>().hydrate(
+              branchId: self.branchId,
+              name: self.name,
+            );
+          } catch (e) {
+            debugPrint('⚠️ cartStore.hydrate failed: $e');
+          }
+          // Backend reconcile — covers the tiny window where
+          // createBooking succeeded but the app died before the local
+          // broadcast landed. Without this the bookingId would survive
+          // on the server with no local trace, leaving the waiter
+          // unable to edit / close it. Fire-and-forget so a slow
+          // network doesn't delay the grid.
+          unawaited(_reconcileFromBackendPayLaterBookings(self));
+        } catch (e) {
+          debugPrint('⚠️ tableRegistry.hydrate failed: $e');
+        }
+      }
+
+      // Prewarm the branch receipt cache (seller nested map, tax number,
+      // commercial register, uploaded logo URL from /seller/branches) so
+      // the waiter's thermal receipt gets the same header data the
+      // cashier prints. Without this, `getInvoice` is the only source
+      // and any payload missing `branch.seller.logo` leaves the printed
+      // receipt header blank. Fire-and-forget — the dispatcher reads
+      // whatever is cached at print time and falls back gracefully if
+      // the fetch is still in flight.
+      try {
+        unawaited(getIt<BranchService>().fetchAndCacheBranchReceiptInfo());
+      } catch (e) {
+        debugPrint('⚠️ waiter: fetchAndCacheBranchReceiptInfo failed: $e');
+      }
+
       _net = WaiterNetworkService(selfProvider: () => session.self!);
       final port = await _net!.startServer();
 
@@ -265,6 +334,109 @@ class WaiterController extends ChangeNotifier {
       rethrow;
     } finally {
       _starting = null;
+    }
+  }
+
+  /// Cross-check the backend's open pay-later bookings against the
+  /// local registry and inject any we missed. Covers a narrow but real
+  /// crash window: `createBooking` succeeds on the server, but the app
+  /// dies before `broadcastTableEvent(paymentPending)` fires — leaving
+  /// the booking orphaned from the local view until this reconcile
+  /// runs on next launch.
+  ///
+  /// Only injects; never overwrites — live mesh events are always
+  /// newer than the HTTP snapshot, and `registry.apply` on new events
+  /// will naturally update the injected rows.
+  Future<void> _reconcileFromBackendPayLaterBookings(Waiter self) async {
+    try {
+      final orderService = getIt<OrderService>();
+      // Walk up to 4 pages (200 bookings total) — plenty for a single
+      // waiter's shift but bounded so a pathological result never
+      // hammers the backend. A busy fine-dining venue with long pay-
+      // later tabs might have >50 rows on page 1; one-page would miss
+      // the rest.
+      const maxPages = 4;
+      const perPage = 50;
+      var injected = 0;
+      final selfNameNormalized = self.name.trim();
+      // Guard against an API that returns overlapping pages — inject
+      // each booking id at most once even if it appears on page 2
+      // AND page 3. Without this, `broadcastTableEvent` would fire
+      // twice and the kitchen / cashier could see duplicate pending
+      // states (harmless in practice since `apply` is idempotent, but
+      // noisy in the mesh).
+      final seenBookingIds = <String>{};
+      for (var page = 1; page <= maxPages; page++) {
+        final resp = await orderService.getBookings(
+          page: page,
+          perPage: perPage,
+        );
+        final data = resp['data'];
+        if (data is! List) break;
+        if (data.isEmpty) break;
+        for (final raw in data) {
+          if (raw is! Map) continue;
+          Booking booking;
+          try {
+            booking = Booking.fromJson(
+                raw.map((k, v) => MapEntry(k.toString(), v)));
+          } catch (_) {
+            continue;
+          }
+          // Only pay-later + not paid + not cancelled — mirror the
+          // cashier's `_canCreateInvoiceForBooking` filter.
+          if (booking.isPaid) continue;
+          final statusLower = booking.status.toLowerCase();
+          if (statusLower == '8' ||
+              statusLower == 'cancelled' ||
+              statusLower == 'canceled') {
+            continue;
+          }
+          // The booking has to be OURS — backend tags the creator as
+          // `cashier_name` on the raw blob. Without this filter we'd
+          // inject every waiter's pay-later tables on this device.
+          final cashier = (booking.raw['cashier_name'] ??
+                  raw['cashier_name'])
+              ?.toString()
+              .trim();
+          if (cashier == null ||
+              cashier.isEmpty ||
+              cashier != selfNameNormalized) {
+            continue;
+          }
+          final tableId = booking.tableId?.toString();
+          if (tableId == null || tableId.isEmpty) continue;
+          final bookingIdStr = booking.id.toString();
+          if (!seenBookingIds.add(bookingIdStr)) continue;
+          // Already accounted for — whether by disk-hydrate or a live
+          // mesh broadcast between the fetch and now. Skip.
+          if (tableRegistry.lookup(tableId) != null) continue;
+          // Inject via `broadcastTableEvent` (not raw `apply`) so any
+          // online peers learn about this orphan booking immediately.
+          // Without the broadcast, peers would only converge on next
+          // HELLO or when they poll getBookings themselves — leaving
+          // the cashier's tables screen showing stale state for
+          // potentially minutes.
+          broadcastTableEvent(TableLifecycleEvent(
+            kind: TableLifecycleKind.paymentPending,
+            tableId: tableId,
+            tableNumber: booking.tableName ?? '',
+            waiterId: self.id,
+            waiterName: self.name,
+            total: booking.total,
+            itemCount: booking.meals.length,
+            orderId: booking.id.toString(),
+          ));
+          injected += 1;
+        }
+        if (data.length < perPage) break; // last page reached
+      }
+      if (injected > 0) {
+        debugPrint(
+            '🔁 backend reconcile injected $injected orphan pay-later booking(s)');
+      }
+    } catch (e) {
+      debugPrint('⚠️ backend reconcile failed (non-fatal): $e');
     }
   }
 
@@ -679,6 +851,12 @@ class WaiterController extends ChangeNotifier {
     final total = snapshot?.total;
     final itemCount = snapshot?.itemCount;
     final items = snapshot?.items;
+    // Carry the booking id over to the new table — without this, the
+    // destination's registry would lose the pay-later orderId and
+    // the next "Create Invoice" on the moved table would create a
+    // brand-new booking on the backend instead of invoicing the one
+    // the guests originally placed.
+    final carriedOrderId = snapshot?.orderId;
 
     // Release the old table so the cashier's tables screen flips it to
     // available + clears our own registry entry.
@@ -703,7 +881,26 @@ class WaiterController extends ChangeNotifier {
       total: total,
       itemCount: itemCount,
       items: items,
+      orderId: carriedOrderId,
     ));
+    // If the original booking was already past pay-later (the
+    // paymentPending flag was set), re-establish that state on the
+    // new tableId so "Edit Order" / "Create Invoice" remain reachable
+    // after the migrate.
+    if (snapshot?.paymentPending == true && carriedOrderId != null) {
+      broadcastTableEvent(TableLifecycleEvent(
+        kind: TableLifecycleKind.paymentPending,
+        tableId: event.newTableId,
+        tableNumber: event.newTableNumber,
+        waiterId: self.id,
+        waiterName: self.name,
+        guestCount: guests,
+        total: total,
+        itemCount: itemCount,
+        items: items,
+        orderId: carriedOrderId,
+      ));
+    }
   }
 
   /// Cashier-only. Dismisses a still-pending request (if a waiter

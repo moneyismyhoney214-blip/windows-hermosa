@@ -24,8 +24,8 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
                   padding: const EdgeInsets.only(bottom: 2.0),
                   child: Image.network(
                     data!.sellerLogo!,
-                    height: 52,
-                    width: 52,
+                    height: 60,
+                    width: 60,
                     fit: BoxFit.contain,
                     errorBuilder: (context, error, stackTrace) =>
                         const SizedBox(),
@@ -34,7 +34,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
               Text(
                 data!.sellerNameAr,
                 style: GoogleFonts.tajawal(
-                    fontSize: 24,
+                    fontSize: 26,
                     fontWeight: FontWeight.bold,
                     color: Colors.black),
                 textAlign: TextAlign.center,
@@ -43,20 +43,20 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
                 Text(
                   data!.sellerNameEn,
                   style: GoogleFonts.tajawal(
-                      fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold),
+                      fontSize: 21, color: Colors.black, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
               if (data!.branchAddress != null && data!.branchAddress!.isNotEmpty)
                 Text(
                   data!.branchAddress!,
-                  style: GoogleFonts.tajawal(fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+                  style: GoogleFonts.tajawal(fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
               if (data!.branchMobile != null && data!.branchMobile!.isNotEmpty)
                 Text(
                   data!.branchMobile!,
                   style: GoogleFonts.tajawal(
-                      fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold),
+                      fontSize: 21, color: Colors.black, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                   textDirection: TextDirection.ltr,
                 ),
@@ -77,11 +77,11 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
               children: [
                 Text(
                   '${_ml(ar: 'رقم الطلب اليومي', en: 'Daily Order', hi: 'दैनिक ऑर्डर', ur: 'روزانہ آرڈر', es: 'Pedido Diario', tr: 'Günlük Sipariş')}: ',
-                  style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 Text(
                   '#$resolvedDailyOrderNumber',
-                  style: GoogleFonts.tajawal(fontSize: 36, fontWeight: FontWeight.w900, height: 1.0),
+                  style: GoogleFonts.tajawal(fontSize: 40, fontWeight: FontWeight.w900, height: 1.0),
                 ),
               ],
             ),
@@ -91,7 +91,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
               padding: const EdgeInsets.only(bottom: 2),
               child: Text(
                 _sl(ar: 'رقم الطلب اليومي', en: 'Daily Order', hi: 'दैनिक ऑर्डर', ur: 'روزانہ آرڈر', es: 'Pedido Diario', tr: 'Günlük Sipariş'),
-                style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold),
+                style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -108,11 +108,11 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
                   isCreditNote
                       ? '${_ml(ar: 'رقم إشعار الدائن', en: 'Credit Note No.', hi: 'क्रेडिट नोट नं.', ur: 'کریڈٹ نوٹ نمبر', es: 'N° Nota de Crédito', tr: 'Alacak Dekontu No.')}: '
                       : '${_ml(ar: 'رقم الفاتورة', en: 'Invoice No.', hi: 'इनवॉइस नं.', ur: 'انوائس نمبر', es: 'N° Factura', tr: 'Fatura No.')}: ',
-                  style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 Text(
                   resolvedInvoiceNumber,
-                  style: GoogleFonts.tajawal(fontSize: 24, fontWeight: FontWeight.w900),
+                  style: GoogleFonts.tajawal(fontSize: 26, fontWeight: FontWeight.w900),
                 ),
               ],
             ),
@@ -127,7 +127,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
                 isCreditNote
                     ? _sl(ar: 'رقم إشعار الدائن', en: 'Credit Note No.', hi: 'क्रेडिट नोट नं.', ur: 'کریڈٹ نوٹ نمبر', es: 'N° Nota de Crédito', tr: 'Alacak Dekontu No.')
                     : _sl(ar: 'رقم الفاتورة', en: 'Invoice No.', hi: 'इनवॉइस नं.', ur: 'انوائس نمبر', es: 'N° Factura', tr: 'Fatura No.'),
-                style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold),
+                style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -207,7 +207,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
           child: Text(
             value,
             style: GoogleFonts.tajawal(
-              fontSize: 22,
+              fontSize: 24,
               fontWeight: FontWeight.bold,
               color: Colors.black,
             ),
@@ -233,7 +233,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
               Expanded(
                 child: Text(
                   labelAr,
-                  style: GoogleFonts.tajawal(fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold),
+                  style: GoogleFonts.tajawal(fontSize: 21, color: Colors.black, fontWeight: FontWeight.bold),
                 ),
               ),
               const SizedBox(width: 8),
@@ -241,7 +241,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
                 child: Text(
                   value,
                   style: GoogleFonts.tajawal(
-                    fontSize: 19,
+                    fontSize: 21,
                     fontWeight: FontWeight.bold,
                     color: Colors.black,
                   ),
@@ -254,7 +254,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
           if (labelEn.isNotEmpty)
             Text(
               labelEn,
-              style: GoogleFonts.tajawal(fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold),
+              style: GoogleFonts.tajawal(fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold),
             ),
         ],
       ),
@@ -277,13 +277,13 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
               children: [
                 Text(
                   _ml(ar: 'إشعار دائن', en: 'Credit Note', hi: 'क्रेडिट नोट', ur: 'کریڈٹ نوٹ', es: 'Nota de Crédito', tr: 'Alacak Dekontu'),
-                  style: GoogleFonts.tajawal(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white),
+                  style: GoogleFonts.tajawal(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white),
                   textAlign: TextAlign.center,
                 ),
                 if (_sl(ar: 'إشعار دائن', en: 'Credit Note', hi: 'क्रेडिट नोट', ur: 'کریڈٹ نوٹ', es: 'Nota de Crédito', tr: 'Alacak Dekontu').isNotEmpty)
                   Text(
                     _sl(ar: 'إشعار دائن', en: 'Credit Note', hi: 'क्रेडिट नोट', ur: 'کریڈٹ نوٹ', es: 'Nota de Crédito', tr: 'Alacak Dekontu'),
-                    style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                    style: GoogleFonts.tajawal(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
                     textAlign: TextAlign.center,
                   ),
               ],
@@ -303,7 +303,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
           Text(
             _ml(ar: 'فاتورة ضريبية مبسطة', en: 'Simplified Tax Invoice', hi: 'सरलीकृत कर चालान', ur: 'آسان ٹیکس انوائس', es: 'Factura Fiscal Simplificada', tr: 'Basitleştirilmiş Vergi Faturası'),
             style: GoogleFonts.tajawal(
-              fontSize: 22,
+              fontSize: 24,
               fontWeight: FontWeight.w900,
               color: Colors.black,
               letterSpacing: 0.3,
@@ -315,7 +315,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
             Text(
               _sl(ar: 'فاتورة ضريبية مبسطة', en: 'Simplified Tax Invoice', hi: 'सरलीकृत कर चालان', ur: 'آسان ٹیکس انوائس', es: 'Factura Fiscal Simplificada', tr: 'Basitleştirilmiş Vergi Faturası'),
               style: GoogleFonts.tajawal(
-                fontSize: 16,
+                fontSize: 18,
                 fontWeight: FontWeight.w800,
                 color: Colors.black,
               ),
@@ -368,7 +368,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
                 Text(
                   _ml(ar: 'معلومات السيارة', en: 'Car Info', hi: 'कार की जानकारी', ur: 'گاڑی کی معلومات', es: 'Información del Vehículo', tr: 'Araç Bilgileri'),
                   style: GoogleFonts.tajawal(
-                      fontSize: 18,
+                      fontSize: 20,
                       fontWeight: FontWeight.bold,
                       color: Colors.black),
                   textAlign: TextAlign.center,
@@ -395,7 +395,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
           ),
           child: Text(labelAr,
               style: GoogleFonts.tajawal(
-                  fontSize: 17,
+                  fontSize: 19,
                   fontWeight: FontWeight.bold,
                   color: Colors.black)),
         ),
@@ -404,7 +404,7 @@ extension InvoicePrintWidgetHeader on InvoicePrintWidget {
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
             child: Text(value,
                 style:
-                    GoogleFonts.tajawal(fontSize: 17, color: Colors.black, fontWeight: FontWeight.bold)),
+                    GoogleFonts.tajawal(fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold)),
           ),
         ),
       ],

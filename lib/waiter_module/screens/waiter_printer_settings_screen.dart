@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../locator.dart';
 import '../../models.dart';
@@ -12,27 +11,19 @@ import '../../services/kitchen_printer_route_registry.dart';
 import '../../services/print_orchestrator_service.dart';
 import '../../services/printer_role_registry.dart';
 import '../../widgets/printer_language_settings_view.dart';
-import '../../widgets/settings/display_devices_tab_view.dart';
-import '../../widgets/settings/printer_settings_view.dart';
 import '../../widgets/settings/printers_tab_view.dart';
-import '../services/waiter_device_prefs.dart';
-import '../widgets/waiter_print_behavior_view.dart';
 
-/// Waiter-module hub for every device / print / KDS / CDS setting.
+/// Waiter-module hub for per-device printer settings.
 ///
-/// We don't duplicate the printing stack — this is a thin shell that
-/// hosts the shared views from `lib/widgets/settings/` in a tabbed
-/// scaffold and owns the device fetch / add / remove lifecycle so the
-/// waiter sees identical behavior to the cashier's settings.
+/// The waiter reuses the cashier's [PrintersTabView] widget so the two
+/// modules share identical add/edit dialogs (IP, port, paper-width,
+/// role). Keeping the widget shared means any tweak to the cashier's
+/// printer form automatically reaches the waiter — the user expected
+/// "waiter printer setup looks like the cashier" is literally true.
 ///
-/// Tab layout (mirror of the cashier's Devices + Printing sub-tabs):
-///   1. الطابعات   — role binding, category routing
-///   2. الإعدادات  — per-device edit, test connection, remove
-///   3. الشاشات    — KDS / CDS display device management (reconnect,
-///                    mode switch, add/remove)
-///   4. السلوك     — device-level toggles for printing + displays
-///                    (CDS/KDS enable, auto-print flags, etc.)
-///   5. اللغة      — printer primary / secondary language
+/// Tabs:
+///   1. الإعدادات — printers list with full add/edit/test/remove
+///   2. اللغة     — primary / secondary invoice language
 class WaiterPrinterSettingsScreen extends StatefulWidget {
   const WaiterPrinterSettingsScreen({super.key});
 
@@ -51,28 +42,10 @@ class _WaiterPrinterSettingsScreenState
   bool _loading = true;
   Object? _error;
 
-  /// Surfaced on the Displays tab so KDS/CDS rows can hide modes the
-  /// waiter has disabled from the Behavior tab. Kept in sync via
-  /// [_reloadPrefs] on every tab mount.
-  bool _cdsEnabled = true;
-  bool _kdsEnabled = true;
-
   @override
   void initState() {
     super.initState();
     _loadAll();
-    _reloadPrefs();
-  }
-
-  Future<void> _reloadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _cdsEnabled =
-          prefs.getBool(WaiterDevicePrefKeys.cdsEnabled) ?? true;
-      _kdsEnabled =
-          prefs.getBool(WaiterDevicePrefKeys.kdsEnabled) ?? true;
-    });
   }
 
   Future<void> _loadAll() async {
@@ -96,6 +69,10 @@ class _WaiterPrinterSettingsScreenState
         debugPrint('⚠️ Waiter printers refresh (using cache): $e');
       }
 
+      // PrintersTabView needs the category list so the owner can route
+      // kitchen prints per category. Best-effort — a fetch failure
+      // leaves the list empty, which the widget treats as "no routing
+      // available" rather than crashing.
       List<CategoryModel> categories = const <CategoryModel>[];
       try {
         categories = await _productService.getCategories();
@@ -155,7 +132,7 @@ class _WaiterPrinterSettingsScreenState
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 5,
+      length: 2,
       child: Scaffold(
         backgroundColor: context.appBg,
         appBar: AppBar(
@@ -166,36 +143,18 @@ class _WaiterPrinterSettingsScreenState
           actions: [
             IconButton(
               tooltip: 'تحديث',
-              onPressed: _loading
-                  ? null
-                  : () {
-                      _loadAll();
-                      _reloadPrefs();
-                    },
+              onPressed: _loading ? null : _loadAll,
               icon: const Icon(LucideIcons.rotateCcw),
             ),
           ],
           bottom: TabBar(
-            isScrollable: true,
             labelColor: context.appPrimary,
             unselectedLabelColor: context.appTextMuted,
             indicatorColor: context.appPrimary,
             tabs: const [
               Tab(
-                icon: Icon(LucideIcons.printer, size: 18),
-                text: 'الطابعات',
-              ),
-              Tab(
                 icon: Icon(LucideIcons.settings, size: 18),
                 text: 'الإعدادات',
-              ),
-              Tab(
-                icon: Icon(LucideIcons.monitor, size: 18),
-                text: 'الشاشات',
-              ),
-              Tab(
-                icon: Icon(LucideIcons.slidersHorizontal, size: 18),
-                text: 'السلوك',
               ),
               Tab(
                 icon: Icon(LucideIcons.languages, size: 18),
@@ -210,36 +169,19 @@ class _WaiterPrinterSettingsScreenState
                 ? _ErrorView(error: _error!, onRetry: _loadAll)
                 : TabBarView(
                     children: [
-                      // 1. Printers — role binding, category routing.
+                      // 1. Printer management — identical to the
+                      //    cashier's PrintersTabView. Add dialog shows
+                      //    IP / port / paper-width / role; edit dialog
+                      //    shows name / IP / paper-width / role. Test
+                      //    connection, test print, and remove actions
+                      //    all inherited.
                       PrintersTabView(
                         devices: _devices,
                         categories: _categories,
                         onAddDevice: _addDevice,
                         onRemoveDevice: _removeDevice,
                       ),
-                      // 2. Per-device settings — test connection, edit,
-                      //    remove.
-                      PrinterSettingsView(
-                        devices: _devices,
-                        onAddDevice: _addDevice,
-                        onRemoveDevice: _removeDevice,
-                      ),
-                      // 3. KDS / CDS displays — pair, reconnect, remove.
-                      //    Shares the same widget the cashier's settings
-                      //    uses, fed the live cds/kds flags so rows that
-                      //    belong to a disabled mode are hidden.
-                      DisplayDevicesTabView(
-                        devices: _devices,
-                        onAddDevice: _addDevice,
-                        onRemoveDevice: _removeDevice,
-                        cdsEnabled: _cdsEnabled,
-                        kdsEnabled: _kdsEnabled,
-                      ),
-                      // 4. Device-level behaviour toggles. Writes to the
-                      //    same SharedPreferences slots the cashier reads
-                      //    on next startup so both modules stay in sync.
-                      const WaiterPrintBehaviorView(),
-                      // 5. Primary / secondary printer language toggles.
+                      // 2. Primary / secondary printer language toggles.
                       const PrinterLanguageSettingsView(),
                     ],
                   ),

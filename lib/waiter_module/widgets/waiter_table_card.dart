@@ -235,7 +235,6 @@ class WaiterTableCard extends StatelessWidget {
   }
 
   Widget _meta(BuildContext context, _Palette palette) {
-    final occupiedMinutes = table.occupiedMinutes;
     final showGuests = guestCount != null && guestCount! > 0;
     return Row(
       children: [
@@ -246,16 +245,6 @@ class WaiterTableCard extends StatelessWidget {
           showGuests ? '$guestCount' : '—',
           style: TextStyle(color: palette.meta, fontSize: 12),
         ),
-        if (occupiedMinutes > 0) ...[
-          const SizedBox(width: WaiterSpacing.md),
-          Icon(LucideIcons.timer,
-              size: WaiterSizes.iconSmall, color: palette.meta),
-          const SizedBox(width: WaiterSpacing.xs),
-          Text(
-            '$occupiedMinutes ${translationService.t('min')}',
-            style: TextStyle(color: palette.meta, fontSize: 12),
-          ),
-        ],
       ],
     );
   }
@@ -349,28 +338,11 @@ class WaiterTableCard extends StatelessWidget {
         ),
       );
     }
-    if (ownerWaiterName == null || ownerWaiterName!.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return Row(
-      children: [
-        Icon(LucideIcons.user,
-            size: WaiterSizes.iconSmall, color: palette.meta),
-        const SizedBox(width: WaiterSpacing.xs + 2),
-        Expanded(
-          child: Text(
-            ownerWaiterName!,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: palette.meta,
-              fontSize: 12,
-              fontWeight:
-                  state == _CardState.mine ? FontWeight.w700 : FontWeight.w500,
-            ),
-          ),
-        ),
-      ],
-    );
+    // Waiter-name row suppressed on occupied cards — the product
+    // decision is that other waiters / the cashier only see that a
+    // table is taken, not who has it. Keeps the card identical whether
+    // Ahmed or Sara is serving.
+    return const SizedBox.shrink();
   }
 
   Widget _statusBadge(_Palette palette, _CardState state) {
@@ -454,10 +426,8 @@ class WaiterTableCard extends StatelessWidget {
   String _semanticsLabel() {
     final baseline =
         '${translationService.t('waiter_table')} ${table.number}';
-    final owner = (ownerWaiterName?.isNotEmpty ?? false)
-        ? ' — ${ownerWaiterName!}'
-        : '';
-    return baseline + owner;
+    // Waiter-name intentionally omitted — see `_footer()` comment.
+    return baseline;
   }
 }
 

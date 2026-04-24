@@ -29,7 +29,7 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Toggles the "Forgot password?" link under the password field. Kept as
   /// a named flag (instead of deleting the code) so we can re-enable the
   /// flow in one line once the backend side is fully ready.
-  static const bool _showForgotPassword = false;
+  static const bool _showForgotPassword = true;
 
   @override
   void initState() {

@@ -1363,46 +1363,19 @@ class _NormalTableCard extends StatelessWidget {
                                   ),
                                 )
                               else ...[
-                                if (!isReservedState)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: statusBg,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          LucideIcons.clock,
-                                          size: effectiveCompact ? 11 : 12,
-                                          color: statusColor,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          '${table.occupiedMinutes} ${translationService.t('minutes_label')}',
-                                          style: TextStyle(
-                                            color: statusColor,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: statusFontSize,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
+                                // Timer + waiter-name display removed per
+                                // product decision — the cashier only needs
+                                // to know a table is occupied, not who's
+                                // serving it or for how long. "جاري اخذ
+                                // الطلب" is kept as the one informational
+                                // badge that matters for workflow.
                                 if (table.status == TableStatus.occupied)
                                   Padding(
                                     padding: EdgeInsets.only(
                                       top: isReservedState ? 0 : 8,
                                     ),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (isTakingOrder)
-                                          Container(
+                                    child: isTakingOrder
+                                        ? Container(
                                             padding: const EdgeInsets
                                                 .symmetric(
                                               horizontal: 8,
@@ -1436,21 +1409,26 @@ class _NormalTableCard extends StatelessWidget {
                                               ],
                                             ),
                                           )
-                                        else
-                                          Text(
-                                            table.waiterName ??
-                                                'Branch Manager',
-                                            style: TextStyle(
-                                              color: statusColor.withValues(
-                                                  alpha: 0.8),
-                                              fontSize: waiterFontSize,
-                                              fontWeight: FontWeight.bold,
+                                        : Container(
+                                            padding: const EdgeInsets
+                                                .symmetric(
+                                              horizontal: 10,
+                                              vertical: 4,
                                             ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
+                                            decoration: BoxDecoration(
+                                              color: statusBg,
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              translationService.t('occupied'),
+                                              style: TextStyle(
+                                                color: statusColor,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: statusFontSize,
+                                              ),
+                                            ),
                                           ),
-                                      ],
-                                    ),
                                   ),
                               ],
                             ] else if (!isDeactivated)

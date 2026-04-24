@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../models.dart';
 
@@ -24,15 +29,24 @@ class WaiterCartStore extends ChangeNotifier {
   /// successful completion or on explicit release.
   final Map<String, String> _pendingBookingIds = {};
 
+  /// Persistence scope — set by [hydrate] right after the waiter signs
+  /// in. Null means "don't write to disk" (viewer sessions / signed-out
+  /// state).
+  String? _persistScope;
+  Timer? _persistDebounce;
+
+  static const String _persistKeyPrefix = 'waiter_cart_store_v1_';
+
   String? pendingBookingIdFor(String tableId) => _pendingBookingIds[tableId];
 
   void setPendingBookingId(String tableId, String bookingId) {
     if (bookingId.isEmpty) return;
     _pendingBookingIds[tableId] = bookingId;
+    _schedulePersist();
   }
 
   void clearPendingBookingId(String tableId) {
-    _pendingBookingIds.remove(tableId);
+    if (_pendingBookingIds.remove(tableId) != null) _schedulePersist();
   }
 
   List<CartItem> itemsFor(String tableId) =>
@@ -60,11 +74,13 @@ class WaiterCartStore extends ChangeNotifier {
   void setGuests(String tableId, int count) {
     _guestCounts[tableId] = count;
     notifyListeners();
+    _schedulePersist();
   }
 
   void addItem(String tableId, CartItem item) {
     _carts.putIfAbsent(tableId, () => <CartItem>[]).add(item);
     notifyListeners();
+    _schedulePersist();
   }
 
   void updateItem(String tableId, int index, CartItem newItem) {
@@ -72,6 +88,7 @@ class WaiterCartStore extends ChangeNotifier {
     if (list == null || index < 0 || index >= list.length) return;
     list[index] = newItem;
     notifyListeners();
+    _schedulePersist();
   }
 
   void removeItem(String tableId, int index) {
@@ -80,6 +97,7 @@ class WaiterCartStore extends ChangeNotifier {
     list.removeAt(index);
     if (list.isEmpty) _carts.remove(tableId);
     notifyListeners();
+    _schedulePersist();
   }
 
   /// Promote the current draft to "sent" — called after successfully
@@ -90,6 +108,25 @@ class WaiterCartStore extends ChangeNotifier {
     _sent.putIfAbsent(tableId, () => <CartItem>[]).addAll(draft);
     _carts.remove(tableId);
     notifyListeners();
+    _schedulePersist();
+  }
+
+  /// Replace the table's "sent" list with the given items. Used after
+  /// an external edit (EditOrderDialog) so the local cart stays in
+  /// sync with the backend — otherwise the next pay-later PATCH would
+  /// overwrite the edited booking with stale local state. Passing an
+  /// empty list removes the sent bucket entirely.
+  void setSentItems(String tableId, List<CartItem> items) {
+    if (items.isEmpty) {
+      if (_sent.remove(tableId) != null) {
+        notifyListeners();
+        _schedulePersist();
+      }
+      return;
+    }
+    _sent[tableId] = List<CartItem>.from(items);
+    notifyListeners();
+    _schedulePersist();
   }
 
   void clearTable(String tableId) {
@@ -99,23 +136,26 @@ class WaiterCartStore extends ChangeNotifier {
     final removedPending = _pendingBookingIds.remove(tableId) != null;
     if (removed || removedSent || removedGuests || removedPending) {
       notifyListeners();
+      _schedulePersist();
     }
   }
 
   /// Wipe every table's draft + sent cart + guest count. Used when a
   /// waiter ends their shift or a cashier switches branch — the next
   /// user of the device shouldn't see the previous session's in-flight
-  /// orders.
-  void clearAll() {
-    if (_carts.isEmpty &&
-        _sent.isEmpty &&
-        _guestCounts.isEmpty &&
-        _pendingBookingIds.isEmpty) return;
+  /// orders. Awaits the disk wipe so a fast re-login's hydrate doesn't
+  /// race the remove.
+  Future<void> clearAll() async {
+    final hadAny = _carts.isNotEmpty ||
+        _sent.isNotEmpty ||
+        _guestCounts.isNotEmpty ||
+        _pendingBookingIds.isNotEmpty;
     _carts.clear();
     _sent.clear();
     _guestCounts.clear();
     _pendingBookingIds.clear();
-    notifyListeners();
+    if (hadAny) notifyListeners();
+    await clearPersisted();
   }
 
   /// Carry the entire per-table cart (drafts + sent + guest count) over
@@ -149,7 +189,281 @@ class WaiterCartStore extends ChangeNotifier {
       _guestCounts[newTableId] = _guestCounts[newTableId] ?? guests;
     }
     notifyListeners();
+    _schedulePersist();
     return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Persistence
+  // ---------------------------------------------------------------------------
+
+  /// Load drafts + sent + guests + pending-booking-ids saved for this
+  /// waiter on this device. Called by [WaiterController.start]
+  /// immediately after [WaiterTableRegistry.hydrate] so a waiter
+  /// reopening the app lands on the same draft they were mid-composing.
+  ///
+  /// Scope mirrors the registry's: `branchId + name` — a shared device
+  /// handing off between waiters won't cross-pollute carts.
+  Future<void> hydrate({
+    required String branchId,
+    required String name,
+  }) async {
+    _persistScope = _scopeFor(branchId: branchId, name: name);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final primaryKey = '$_persistKeyPrefix$_persistScope';
+      final backupKey = '$primaryKey.bak';
+      // Same dual-slot read pattern as the registry — fall back to the
+      // backup slot if the primary is corrupt (power-loss mid-write).
+      Map? decoded;
+      for (final key in [primaryKey, backupKey]) {
+        final raw = prefs.getString(key);
+        if (raw == null || raw.isEmpty) continue;
+        try {
+          final parsed = jsonDecode(raw);
+          if (parsed is Map) {
+            decoded = parsed;
+            break;
+          }
+        } catch (e) {
+          debugPrint('⚠️ WaiterCartStore: slot "$key" corrupt ($e)');
+        }
+      }
+      if (decoded == null) return;
+      _carts.clear();
+      _sent.clear();
+      _guestCounts.clear();
+      _pendingBookingIds.clear();
+      decoded.forEach((tableId, blob) {
+        if (tableId is! String || blob is! Map) return;
+        try {
+          final draft = _decodeItemList(blob['drafts']);
+          final sent = _decodeItemList(blob['sent']);
+          final guests = (blob['guests'] as num?)?.toInt();
+          final pendingId = blob['pending_booking_id']?.toString();
+          if (draft.isNotEmpty) _carts[tableId] = draft;
+          if (sent.isNotEmpty) _sent[tableId] = sent;
+          if (guests != null) _guestCounts[tableId] = guests;
+          if (pendingId != null && pendingId.isNotEmpty) {
+            _pendingBookingIds[tableId] = pendingId;
+          }
+        } catch (e) {
+          debugPrint(
+              '⚠️ WaiterCartStore.hydrate: skipped bad row $tableId ($e)');
+        }
+      });
+      if (_carts.isNotEmpty ||
+          _sent.isNotEmpty ||
+          _guestCounts.isNotEmpty ||
+          _pendingBookingIds.isNotEmpty) {
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('⚠️ WaiterCartStore.hydrate failed: $e');
+    }
+  }
+
+  List<CartItem> _decodeItemList(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <CartItem>[];
+    for (final entry in raw) {
+      if (entry is Map) {
+        try {
+          out.add(_decodeCartItem(
+              entry.map((k, v) => MapEntry(k.toString(), v))));
+        } catch (_) {
+          // Drop the malformed item — better a partial cart than no
+          // cart at all.
+        }
+      }
+    }
+    return out;
+  }
+
+  CartItem _decodeCartItem(Map<String, dynamic> j) {
+    double toDouble(Object? v) {
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v.trim()) ?? 0.0;
+      return 0.0;
+    }
+
+    Map<String, String> readMap(dynamic raw) {
+      if (raw is! Map) return const {};
+      final out = <String, String>{};
+      raw.forEach((k, v) {
+        final key = k.toString().trim().toLowerCase();
+        final val = v?.toString().trim() ?? '';
+        if (key.isNotEmpty && val.isNotEmpty) out[key] = val;
+      });
+      return out;
+    }
+
+    final extrasRaw = j['extras'];
+    final extras = <Extra>[];
+    if (extrasRaw is List) {
+      for (final e in extrasRaw) {
+        if (e is Map) {
+          final optionTr = readMap(e['optionTranslations']);
+          final attributeTr = readMap(e['attributeTranslations']);
+          extras.add(Extra(
+            id: (e['id'] ?? '').toString(),
+            name: (e['name'] ?? '').toString(),
+            price: toDouble(e['price']),
+            // Reconstruct the per-language addon labels so the kitchen
+            // change-ticket renderer + the cashier receipt can print
+            // the addon bilingual. Persisting only id/name/price here
+            // was the bug: after app restart, kitchen tickets lost the
+            // addon's Arabic/English pair and fell back to whichever
+            // `name` we serialized.
+            optionTranslations: optionTr,
+            attributeTranslations: attributeTr,
+          ));
+        }
+      }
+    }
+
+    final localizedNames = readMap(j['localizedNames']);
+    final nameAr = j['nameAr']?.toString() ?? '';
+    final nameEn = j['nameEn']?.toString() ?? '';
+
+    final product = Product(
+      id: (j['meal_id'] ?? '').toString(),
+      name: (j['name'] ?? '').toString(),
+      nameAr: nameAr,
+      nameEn: nameEn,
+      price: toDouble(j['unit_price']),
+      category: '',
+      categoryId: j['category_id']?.toString(),
+      localizedNames: localizedNames,
+    );
+
+    return CartItem(
+      cartId: (j['cart_id']?.toString().isNotEmpty == true)
+          ? j['cart_id']!.toString()
+          : const Uuid().v4(),
+      product: product,
+      quantity: toDouble(j['quantity']) == 0 ? 1.0 : toDouble(j['quantity']),
+      selectedExtras: extras,
+      discount: toDouble(j['discount']),
+      discountType: j['discount_type'] == 'percentage'
+          ? DiscountType.percentage
+          : DiscountType.amount,
+      isFree: j['is_free'] == true,
+      notes: (j['notes'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> _encodeCartItem(CartItem item) {
+    return {
+      'cart_id': item.cartId,
+      'meal_id': item.product.id,
+      'name': item.product.name,
+      // Persist every translation field the Product was built with —
+      // without these, the kitchen/receipt template can't render
+      // bilingual items after an app restart. `localizedNames` is the
+      // complete map (all 6 supported codes); `nameAr` / `nameEn` are
+      // the canonical pair the template falls back to when
+      // localizedNames is empty for a given language.
+      if (item.product.nameAr.isNotEmpty) 'nameAr': item.product.nameAr,
+      if (item.product.nameEn.isNotEmpty) 'nameEn': item.product.nameEn,
+      if (item.product.localizedNames.isNotEmpty)
+        'localizedNames': item.product.localizedNames,
+      'unit_price': item.product.price,
+      if (item.product.categoryId != null)
+        'category_id': item.product.categoryId,
+      'quantity': item.quantity,
+      'notes': item.notes,
+      'discount': item.discount,
+      'discount_type':
+          item.discountType == DiscountType.percentage ? 'percentage' : 'amount',
+      'is_free': item.isFree,
+      if (item.selectedExtras.isNotEmpty)
+        'extras': item.selectedExtras
+            .map((e) => {
+                  'id': e.id,
+                  'name': e.name,
+                  'price': e.price,
+                  if (e.optionTranslations.isNotEmpty)
+                    'optionTranslations': e.optionTranslations,
+                  if (e.attributeTranslations.isNotEmpty)
+                    'attributeTranslations': e.attributeTranslations,
+                })
+            .toList(),
+    };
+  }
+
+  void _schedulePersist() {
+    if (_persistScope == null) return;
+    _persistDebounce?.cancel();
+    _persistDebounce = Timer(const Duration(milliseconds: 300), _flushPersist);
+  }
+
+  Future<void> _flushPersist() async {
+    final scope = _persistScope;
+    if (scope == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final tables = <String>{
+        ..._carts.keys,
+        ..._sent.keys,
+        ..._guestCounts.keys,
+        ..._pendingBookingIds.keys,
+      };
+      final blob = <String, dynamic>{};
+      for (final tableId in tables) {
+        final row = <String, dynamic>{};
+        final drafts = _carts[tableId];
+        if (drafts != null && drafts.isNotEmpty) {
+          row['drafts'] = drafts.map(_encodeCartItem).toList();
+        }
+        final sent = _sent[tableId];
+        if (sent != null && sent.isNotEmpty) {
+          row['sent'] = sent.map(_encodeCartItem).toList();
+        }
+        final guests = _guestCounts[tableId];
+        if (guests != null) row['guests'] = guests;
+        final pid = _pendingBookingIds[tableId];
+        if (pid != null && pid.isNotEmpty) row['pending_booking_id'] = pid;
+        if (row.isNotEmpty) blob[tableId] = row;
+      }
+      final encoded = jsonEncode(blob);
+      final primaryKey = '$_persistKeyPrefix$scope';
+      final backupKey = '$primaryKey.bak';
+      // Write backup first, then primary — same two-phase pattern the
+      // registry uses so a crash between the two leaves the backup
+      // coherent.
+      await prefs.setString(backupKey, encoded);
+      await prefs.setString(primaryKey, encoded);
+    } catch (e) {
+      debugPrint('⚠️ WaiterCartStore persist failed: $e');
+    }
+  }
+
+  /// Drop the on-disk snapshot. Called on sign-out so the next user of
+  /// this device starts with a clean slate.
+  Future<void> clearPersisted() async {
+    final scope = _persistScope;
+    _persistDebounce?.cancel();
+    _persistScope = null;
+    if (scope == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final primaryKey = '$_persistKeyPrefix$scope';
+      await prefs.remove(primaryKey);
+      await prefs.remove('$primaryKey.bak');
+    } catch (e) {
+      debugPrint('⚠️ WaiterCartStore clearPersisted failed: $e');
+    }
+  }
+
+  /// Deliberately mirror the registry's scope logic — must produce an
+  /// identical key for the same (branchId, name) so both stores agree
+  /// on which waiter owns which slot. `Uri.encodeComponent` guarantees
+  /// whitespace variants of a name can't collide on a shared tablet.
+  static String _scopeFor({required String branchId, required String name}) {
+    final safeBranch = Uri.encodeComponent(branchId.trim());
+    final safeName = Uri.encodeComponent(name.trim());
+    return '${safeBranch}_$safeName';
   }
 
   double draftSubtotalFor(String tableId) =>

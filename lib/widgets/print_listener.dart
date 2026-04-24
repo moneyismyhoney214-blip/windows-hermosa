@@ -264,7 +264,7 @@ class _PrintListenerState extends State<PrintListener> {
       final escBytes = await NetworkPrintHelper.encodeImageToEscPos(
         imageBytes: pngBytes,
         paperWidthMm: device.paperWidthMm,
-        addFeeds: 4,
+        addFeeds: 1,
       );
       await fbp.FlutterBluetoothPrinter.printBytes(
         address: address,
@@ -287,7 +287,7 @@ class _PrintListenerState extends State<PrintListener> {
         ip: device.ip,
         port: port,
         paperWidthMm: device.paperWidthMm,
-        addFeeds: 4,
+        addFeeds: 1,
       );
     }
   }

@@ -58,14 +58,17 @@ extension MainScreenTax on _MainScreenState {
     return subtotal * _taxRate;
   }
 
-  double _subtotalFromTaxInclusiveTotal(double total) {
-    if (!_isTaxEnabled || _taxRate <= 0 || total <= 0) return total;
-    return total / (1.0 + _taxRate);
-  }
+  double _subtotalFromTaxInclusiveTotal(double total) =>
+      ReceiptBuilderService.subtotalFromTaxInclusiveTotal(
+        total,
+        isTaxEnabled: _isTaxEnabled,
+        taxRate: _taxRate,
+      );
 
-  double _taxFromTaxInclusiveTotal(double total) {
-    if (!_isTaxEnabled || _taxRate <= 0 || total <= 0) return 0.0;
-    final subtotal = _subtotalFromTaxInclusiveTotal(total);
-    return total - subtotal;
-  }
+  double _taxFromTaxInclusiveTotal(double total) =>
+      ReceiptBuilderService.taxFromTaxInclusiveTotal(
+        total,
+        isTaxEnabled: _isTaxEnabled,
+        taxRate: _taxRate,
+      );
 }

@@ -181,7 +181,11 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
       debugPrint('⚠️ Waiter logout stop failed: $e');
     }
     try {
-      widget.controller.clearSessionStores();
+      // Await so the registry persistence is wiped to disk before the
+      // login screen lets the user sign back in; otherwise a fast
+      // re-login could hydrate the in-flight key the wipe didn't
+      // finish clearing yet.
+      await widget.controller.clearSessionStores();
     } catch (e) {
       debugPrint('⚠️ Waiter logout store clear failed: $e');
     }

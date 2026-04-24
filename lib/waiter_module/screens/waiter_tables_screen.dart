@@ -2,16 +2,23 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:uuid/uuid.dart';
 
+import '../../dialogs/edit_order_dialog.dart';
 import '../../locator.dart';
 import '../../models.dart';
+import '../../models/booking_invoice.dart';
+import '../../services/api/order_service.dart';
 import '../../services/api/table_service.dart';
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../../utils/order_status.dart';
+import '../models/table_migrate_event.dart';
 import '../models/waiter_table_event.dart';
 import '../services/waiter_billing_service.dart';
 import '../services/waiter_cart_store.dart';
 import '../services/waiter_controller.dart';
+import '../services/waiter_print_dispatcher.dart';
 import '../services/waiter_table_registry.dart';
 import '../theme/waiter_design.dart';
 import '../widgets/skeleton_grid.dart';
@@ -36,22 +43,108 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
   List<TableItem> _tables = const [];
   bool _loading = true;
   Object? _error;
+  StreamSubscription<TableMigrateEvent>? _migrateSub;
+  StreamSubscription<WaiterTableEventEnvelope>? _lifecycleSub;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // Prime the tax config so an Edit Order dialog opened directly
+    // from the grid (without visiting the order screen first) renders
+    // tax-inclusive prices instead of the raw pre-tax numbers. The
+    // order screen hydrates tax itself on its own init, so the
+    // double-hydrate on that path is a no-op short-circuited by the
+    // billing service's internal caching.
+    unawaited(getIt<WaiterBillingService>().refreshTaxConfig());
     _registry.addListener(_onRegistry);
     // Registry application now lives in WaiterController (for both
     // incoming and self-broadcast paths) so every device stays in
     // sync. We only need to listen for the ChangeNotifier signal
     // above to trigger a rebuild; no need to apply here.
+    //
+    // We do have to listen to migrate + lifecycle events separately,
+    // though: the registry's release/assign broadcast removes/adds an
+    // entry cleanly, but the local `_tables[id].status` still reads
+    // from the last getTables() snapshot. Without an optimistic flip,
+    // a freshly-released table keeps showing "مشغول" until the grid
+    // reloads — same optimistic pattern the cashier applies.
+    _migrateSub = widget.controller.onTableMigrate.listen(_onMigrate);
+    _lifecycleSub =
+        widget.controller.onTableEvent.listen(_onLifecycle);
   }
 
   @override
   void dispose() {
     _registry.removeListener(_onRegistry);
+    _migrateSub?.cancel();
+    _lifecycleSub?.cancel();
     super.dispose();
+  }
+
+  void _onLifecycle(WaiterTableEventEnvelope envelope) {
+    if (!mounted) return;
+    final event = envelope.event;
+    // Same deferred-setState pattern as _onRegistry — lifecycle events
+    // often fire from initState of another screen (e.g. WaiterOrderScreen
+    // announcing `takingOrder`), which would otherwise land setState
+    // inside the parent's build pass.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final idx = _tables.indexWhere((t) => t.id == event.tableId);
+      if (idx < 0) return;
+      setState(() {
+        switch (event.kind) {
+          case TableLifecycleKind.released:
+            // The owning waiter tapped "تحرير الطاولة" (or a full-cancel
+            // in Edit Order fired release). Flip local backend-status to
+            // available so the overlay's fallback path (`ownerId==null
+            // ? occupied : t.status`) renders the card as free now,
+            // instead of waiting for the next getTables() poll.
+            _tables[idx].status = TableStatus.available;
+            _tables[idx].waiterName = null;
+            _tables[idx].isPaid = false;
+            break;
+          case TableLifecycleKind.assigned:
+          case TableLifecycleKind.takingOrder:
+          case TableLifecycleKind.paymentPending:
+          case TableLifecycleKind.paid:
+          case TableLifecycleKind.updated:
+            // Registry overlay already forces occupied when ownerId is
+            // set, but mirroring it onto t.status keeps behaviour
+            // identical after getTables() reloads.
+            _tables[idx].status = TableStatus.occupied;
+            break;
+        }
+      });
+    });
+  }
+
+  void _onMigrate(TableMigrateEvent event) {
+    if (!mounted) return;
+    // Deferred to post-frame for the same reason _onRegistry is — the
+    // event may fire mid-build when the owning waiter initiates the
+    // migrate and WaiterController.migrateTable synchronously
+    // broadcasts down the stream.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        final srcIdx =
+            _tables.indexWhere((t) => t.id == event.oldTableId);
+        if (srcIdx >= 0) {
+          // Registry already knows there's no owner; mirror that onto
+          // the backend-reported status so the overlay renders
+          // "available" instead of stale "occupied".
+          _tables[srcIdx].status = TableStatus.available;
+          _tables[srcIdx].waiterName = null;
+        }
+        final dstIdx =
+            _tables.indexWhere((t) => t.id == event.newTableId);
+        if (dstIdx >= 0) {
+          _tables[dstIdx].status = TableStatus.occupied;
+        }
+      });
+    });
   }
 
   void _onRegistry() {
@@ -107,6 +200,15 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
     try {
       final tables = await _tableService.getTables();
       if (!mounted) return;
+      // Reconcile the persisted registry with the authoritative backend
+      // list: if a table comes back as available (e.g. the cashier
+      // closed a pay-later booking while this waiter was offline),
+      // drop the stale registry row so the card doesn't keep showing
+      // an Edit Order button for a booking that no longer exists.
+      final availableIds = tables
+          .where((t) => t.isActive && t.status == TableStatus.available)
+          .map((t) => t.id);
+      _registry.reconcileWithBackend(availableIds);
       setState(() {
         _tables = tables
             .where((t) => t.isActive)
@@ -289,12 +391,449 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
       return;
     }
 
+    // Fire the kitchen "نقل طاولة" ticket only if we actually moved a
+    // booking on the backend. Without this guard, a waiter claiming a
+    // table then moving it before taking any order would send the
+    // kitchen a FROM/TO ticket for food that doesn't exist.
+    if (backendMoved) {
+      unawaited(
+        getIt<WaiterPrintDispatcher>().printMigrationTicket(
+          sourceTableNumber: source.number,
+          destinationTableNumber: picked.number,
+          waiterName: me.name,
+        ),
+      );
+    }
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           'تم نقل الطاولة ${source.number} إلى ${picked.number}',
         ),
+        backgroundColor: const Color(0xFF10B981),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Mirror of the cashier's `_enrichBookingDetailsForDialog`. Without
+  /// this, a response shape of `{data: {booking: {...}, meals: [...]}}`
+  /// leaves the dialog reading `widget.bookingData['data']['type']` as
+  /// null (the real `type` is nested inside `booking`), and items that
+  /// carry no price at the top level stay priceless in the edit UI.
+  /// Applied once on dialog open.
+  Map<String, dynamic> _enrichBookingDetailsForDialog({
+    required int orderId,
+    required Map<String, dynamic> rawDetails,
+  }) {
+    var payload = rawDetails['data'] is Map
+        ? Map<String, dynamic>.from(rawDetails['data'] as Map)
+        : Map<String, dynamic>.from(rawDetails);
+    // Flatten the `booking` sub-map so id / daily_order_number /
+    // type / notes / updated_at surface at the top level where the
+    // dialog's _seedItems + _saveChanges read them.
+    if (payload['booking'] is Map && payload['id'] == null) {
+      final inner = Map<String, dynamic>.from(payload['booking'] as Map);
+      for (final e in payload.entries) {
+        if (e.key != 'booking') inner.putIfAbsent(e.key, () => e.value);
+      }
+      payload = inner;
+    }
+    payload['id'] ??= orderId;
+
+    // Build a meal-id → row index for price enrichment. Some item
+    // arrays (especially `meals`/`items`) come back without prices;
+    // `booking_meals` is the canonical source.
+    final lookup = <String, Map<String, dynamic>>{};
+    for (final key in ['booking_meals', 'meals', 'items']) {
+      final raw = payload[key];
+      if (raw is! List) continue;
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final row = item.map((k, v) => MapEntry(k.toString(), v));
+        final id = (row['id'] ?? row['meal_id'])?.toString();
+        if (id != null && id.isNotEmpty) lookup[id] = row;
+      }
+    }
+    for (final key in ['meals', 'items', 'card']) {
+      final raw = payload[key];
+      if (raw is! List) continue;
+      for (final item in raw) {
+        if (item is! Map) continue;
+        if (item['price'] != null ||
+            item['unit_price'] != null ||
+            item['total'] != null) {
+          continue;
+        }
+        final mealId = (item['meal_id'] ?? item['id'])?.toString();
+        if (mealId == null || !lookup.containsKey(mealId)) continue;
+        final src = lookup[mealId]!;
+        // In-place mutation — payload holds references to the original
+        // list entries, so this enriches the same objects the dialog
+        // will render.
+        item['price'] ??= src['price'];
+        item['unit_price'] ??= src['unit_price'] ?? src['price'];
+        item['total'] ??= src['total'] ?? src['price'];
+      }
+    }
+    return payload;
+  }
+
+  /// Byte-for-byte port of the cashier's private `_bookingHasInvoice`
+  /// helper (orders_screen.helpers.dart:69). An affirmative answer
+  /// means the booking has already been invoiced (and therefore
+  /// editing it would either fail on the backend or silently leave
+  /// the invoice out of sync with the items).
+  bool _bookingHasInvoice(Booking booking) {
+    final raw = booking.raw;
+    bool hasValue(dynamic value) {
+      final text = value?.toString().trim().toLowerCase() ?? '';
+      return text.isNotEmpty && text != 'null' && text != '0';
+    }
+
+    final hasInvoiceFlag = raw['has_invoice'] == true ||
+        raw['has_invoice'] == 1 ||
+        raw['has_invoice'] == '1';
+    final hasInvoiceId =
+        hasValue(raw['invoice_id']) || hasValue(raw['invoice_number']);
+    final hasBookingInvoiceId =
+        hasValue(raw['invoice'] is Map ? (raw['invoice'] as Map)['id'] : null);
+    return hasInvoiceFlag || hasInvoiceId || hasBookingInvoiceId;
+  }
+
+  bool _isBookingCancelled(Booking booking) {
+    final normalized = booking.status.trim().toLowerCase();
+    return normalized == '8' ||
+        normalized == 'cancelled' ||
+        normalized == 'canceled';
+  }
+
+  /// Waiter-side mirror of the cashier's `_canCreateInvoiceForBooking`
+  /// (orders_screen.helpers.dart:93) — the same rule gates opening
+  /// the Edit Order dialog on both sides so the two clients never
+  /// disagree on which bookings are editable.
+  bool _canEditBooking(Booking booking) {
+    if (_isBookingCancelled(booking)) return false;
+    if (booking.isPaid) return false;
+    if (_bookingHasInvoice(booking)) return false;
+    return true;
+  }
+
+  /// Extract the meals array from an enriched booking-details payload.
+  /// Tries the same keys the cashier's dialog walks so we surface
+  /// whichever field the account's API happens to populate.
+  List<Map<String, dynamic>> _extractMealsFromPayload(
+      Map<String, dynamic> payload) {
+    const keys = [
+      'meals',
+      'booking_meals',
+      'booking_products',
+      'booking_items',
+      'items',
+      'invoice_items',
+      'sales_meals',
+      'card',
+      'cart',
+    ];
+    for (final key in keys) {
+      final raw = payload[key];
+      if (raw is! List) continue;
+      final rows = raw
+          .whereType<Map>()
+          .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
+          .toList();
+      if (rows.isNotEmpty) return rows;
+    }
+    return const [];
+  }
+
+  /// Build a [CartItem] from a raw backend meal map. Used to rehydrate
+  /// the local "sent" cart after the EditOrderDialog so the next
+  /// pay-later PATCH includes the items the dialog preserved (not just
+  /// whatever new drafts the waiter added on top).
+  ///
+  /// The `Product` is a STUB — we populate only the fields
+  /// `WaiterBillingService.updateBookingItems` reads when rebuilding
+  /// the payload: `id`, `name`, `price`. Extras ARE parsed from the
+  /// meal's `addons`/`extras` sub-list so a subsequent pay-later PATCH
+  /// doesn't drop add-ons on a previously-ordered line.
+  CartItem _cartItemFromRawMeal(Map<String, dynamic> row) {
+    final mealIdRaw = row['meal_id'] ?? row['id'];
+    final mealId = mealIdRaw?.toString() ?? '';
+    final name = (row['meal_name'] ??
+            row['item_name'] ??
+            row['name'] ??
+            '')
+        .toString();
+    final qty = _toDouble(row['quantity']) ?? 1.0;
+    // Backend returns either `unit_price` or `price`; `price` is often
+    // the LINE total so derive unit price when only total is present.
+    final unitPrice = _toDouble(row['unit_price']) ??
+        (_toDouble(row['price'])! / (qty == 0 ? 1 : qty));
+
+    // Harvest translations from the backend meal row. The booking
+    // details endpoint serves `meal_name_translations` (sometimes
+    // `name_translations` or `translations` on older accounts). We
+    // also accept separate `name_ar`/`name_en` columns. Without this,
+    // the rehydrated Product stub has empty localizedNames and the
+    // kitchen ticket / cashier receipt renders the item in one
+    // language only — the bug the user hit on edit-order re-entry.
+    final localizedNames = <String, String>{};
+    for (final key in const [
+      'meal_name_translations',
+      'name_translations',
+      'translations',
+      'localizedNames',
+      'localized_names',
+      'names',
+    ]) {
+      final src = row[key];
+      if (src is Map) {
+        src.forEach((k, v) {
+          final code = k.toString().trim().toLowerCase();
+          final value = v?.toString().trim() ?? '';
+          if (code.isNotEmpty && value.isNotEmpty) {
+            localizedNames.putIfAbsent(code, () => value);
+          }
+        });
+      }
+    }
+    // Also mine dedicated per-language columns (name_ar, name_en, …)
+    for (final code in const ['ar', 'en', 'es', 'tr', 'hi', 'ur']) {
+      final v = (row['name_$code'] ?? row['meal_name_$code'])
+          ?.toString()
+          .trim();
+      if (v != null && v.isNotEmpty) {
+        localizedNames.putIfAbsent(code, () => v);
+      }
+    }
+    final nameAr = (row['name_ar'] ??
+                row['meal_name_ar'] ??
+                row['nameAr'] ??
+                localizedNames['ar'] ??
+                '')
+            .toString();
+    final nameEn = (row['name_en'] ??
+                row['meal_name_en'] ??
+                row['nameEn'] ??
+                localizedNames['en'] ??
+                '')
+            .toString();
+
+    final extras = <Extra>[];
+    final addonsRaw = row['addons'] ?? row['extras'];
+    if (addonsRaw is List) {
+      for (final entry in addonsRaw) {
+        if (entry is Map) {
+          try {
+            extras.add(Extra.fromJson(
+                entry.map((k, v) => MapEntry(k.toString(), v))));
+          } catch (_) {
+            // Malformed extra — skip rather than crash the rehydrate.
+          }
+        }
+      }
+    }
+
+    final stubProduct = Product(
+      id: mealId,
+      name: name,
+      nameAr: nameAr,
+      nameEn: nameEn,
+      price: unitPrice,
+      category: '',
+      categoryId: row['category_id']?.toString(),
+      localizedNames: localizedNames,
+    );
+    return CartItem(
+      cartId: const Uuid().v4(),
+      product: stubProduct,
+      quantity: qty,
+      selectedExtras: extras,
+      notes: (row['note'] ?? row['notes'] ?? '').toString(),
+    );
+  }
+
+  double? _toDouble(Object? v) {
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v.trim());
+    return null;
+  }
+
+  /// Opens the cashier's EditOrderDialog against this table's live
+  /// pay-later booking. The dialog owns the diff engine + the
+  /// updateBookingItems / updateBookingStatus API calls; we only wire
+  /// the `onPrintChanges` callback to the waiter's
+  /// [WaiterPrintDispatcher] so the kitchen gets an identical change
+  /// ticket. After a successful edit we clear the local cart + emit a
+  /// released event if the dialog issued a full cancel, so peers see
+  /// the table flip back to available without a reload.
+  Future<void> _openEditOrderDialog(TableItem table) async {
+    final me = widget.controller.session.self;
+    if (me == null) return;
+    final bookingId = _registry.bookingIdFor(table.id);
+    if (bookingId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(translationService.t('waiter_no_active_booking')),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    Map<String, dynamic> details;
+    Booking booking;
+    try {
+      final rawDetails =
+          await getIt<OrderService>().getBookingDetails(bookingId);
+      details = _enrichBookingDetailsForDialog(
+        orderId: int.tryParse(bookingId) ?? 0,
+        rawDetails: rawDetails,
+      );
+      // Unwrap `data` if still wrapped after enrichment (enrichment
+      // already flattens it, but keep this belt-and-suspenders for
+      // shapes we didn't anticipate).
+      final inner = (details['data'] is Map)
+          ? Map<String, dynamic>.from(details['data'] as Map)
+          : Map<String, dynamic>.from(details);
+      booking = Booking.fromJson(inner);
+      if (booking.id == 0) {
+        throw StateError(
+            'booking id missing in details response for $bookingId');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${translationService.t('waiter_retry')}: $e'),
+          backgroundColor: const Color(0xFFDC2626),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    // Cashier-parity edit guards. Two separate checks:
+    //   1. _canEditBooking — blocks cancelled / paid / already-invoiced
+    //      bookings. Same rule the cashier's orders screen uses before
+    //      offering the "تعديل الطلب" button.
+    //   2. isOrderLockedValue — blocks status codes 3/5/6/7/8 (closed
+    //      / delivered / cancelled). A booking can be locked without
+    //      being invoiced (e.g. status=5 "delivered") so the two
+    //      guards are not redundant.
+    // Without these, the waiter could open Edit Order on a closed
+    // booking and the backend would either accept a nonsensical edit
+    // or reject with a raw ApiException surfaced as an unhelpful toast.
+    if (!_canEditBooking(booking)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(translationService.t('waiter_edit_not_allowed')),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+    if (isOrderLockedValue(booking.status) ||
+        isOrderLockedValue(booking.raw['status'])) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(translationService.t('waiter_edit_locked')),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    final dispatcher = getIt<WaiterPrintDispatcher>();
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (_) => EditOrderDialog(
+        booking: booking,
+        bookingData: details,
+        // Hand the branch tax rate through so prices in the dialog
+        // render tax-inclusive, matching what the waiter sees on the
+        // order screen + on the cashier receipt. Without this the
+        // dialog would show pre-tax numbers only, confusing the
+        // waiter into thinking items were cheaper than they are.
+        taxRate: getIt<WaiterBillingService>().taxRate,
+        onPrintChanges: (changes, orderNumber, {bool isFullCancel = false}) {
+          // Fire-and-forget. The dispatcher already swallows printer
+          // errors so a down printer never blocks the edit save.
+          unawaited(dispatcher.printKitchenChangeTicket(
+            changes: changes,
+            orderNumber: orderNumber,
+            isFullCancel: isFullCancel,
+          ));
+        },
+      ),
+    );
+    if (updated != true) return;
+
+    // The dialog PATCHed the backend. We now need to re-sync the local
+    // "sent" cart with the backend's authoritative state — if we just
+    // wipe it, a subsequent pay-later from the order screen would
+    // overwrite the edited booking with only whatever fresh drafts the
+    // waiter adds, losing the items the dialog kept.
+    //
+    // Also detect the full-cancel case (meals empty or status=8) and
+    // broadcast a `released` event so peers see the table flip to
+    // available immediately instead of waiting for the next
+    // getTables() poll.
+    try {
+      final after =
+          await getIt<OrderService>().getBookingDetails(bookingId);
+      final innerAfter = (after['data'] is Map)
+          ? Map<String, dynamic>.from(after['data'] as Map)
+          : Map<String, dynamic>.from(after);
+      final refreshed = Booking.fromJson(innerAfter);
+      final cart = getIt<WaiterCartStore>();
+      // Drafts don't survive an external edit; clear them so the
+      // waiter's next entry to the order screen starts from a clean
+      // slate on top of the backend's items.
+      cart.clearTable(table.id);
+      final isFullyCancelled = refreshed.meals.isEmpty ||
+          refreshed.status.toString() == '8' ||
+          refreshed.status.toLowerCase() == 'cancelled' ||
+          refreshed.status.toLowerCase() == 'canceled';
+      if (!isFullyCancelled) {
+        // Rebuild sent-items from the RAW meal rows (so add-ons and
+        // per-item notes survive) rather than from the stripped-down
+        // `Booking.meals` list which drops extras. A subsequent
+        // updateBookingItems PATCH from the order screen now includes
+        // everything the dialog kept, preserving the full server state.
+        final rawMeals = _extractMealsFromPayload(innerAfter);
+        cart.setSentItems(
+          table.id,
+          rawMeals.map(_cartItemFromRawMeal).toList(),
+        );
+      } else {
+        widget.controller.broadcastTableEvent(TableLifecycleEvent(
+          kind: TableLifecycleKind.released,
+          tableId: table.id,
+          tableNumber: table.number,
+          waiterId: me.id,
+          waiterName: me.name,
+        ));
+      }
+    } catch (_) {
+      // Non-fatal — the backend edit already happened. On the next
+      // getTables() refresh the state will reconcile; the worst case
+      // is the waiter sees a stale `sent` list until they pull the
+      // tables grid or release the table.
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(translationService.t('waiter_bill_success')),
         backgroundColor: const Color(0xFF10B981),
         duration: const Duration(seconds: 2),
       ),
@@ -454,11 +993,13 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
               // migrating a paid bill is a backend-hostile no-op.
               onMigrate: (isMine && !t.isPaid) ? () => _migrateTable(t) : null,
               // Edit Order surfaces only on tables this waiter owns AND
-              // that have an active pay-later booking. Tapping reopens
-              // the order screen so the waiter can add/modify items —
-              // same semantics as the cashier's "تعديل الطلب" button.
+              // that have an active pay-later booking. Opens the same
+              // `EditOrderDialog` the cashier uses — so add/qty/delete
+              // operations run through the same diff engine and fire
+              // the same kitchen change ticket (ملغى / إلغاء جزئي /
+              // تعديل كمية / جديد).
               onEditOrder: (isMine && paymentPending)
-                  ? () => _openTable(t)
+                  ? () => _openEditOrderDialog(t)
                   : null,
               // Release Table: any table owned by me that's occupied
               // (including paid-but-still-seated). Lets the waiter

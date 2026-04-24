@@ -58,13 +58,13 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                     children: [
                       Text(_ml(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam'),
                           style: GoogleFonts.tajawal(
-                              fontSize: 20,
+                              fontSize: 22,
                               fontWeight: FontWeight.w900,
                               color: Colors.black)),
                       if (_sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam').isNotEmpty)
                         Text(_sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam'),
                             style: GoogleFonts.tajawal(
-                                fontSize: 15,
+                                fontSize: 17,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black)),
                     ],
@@ -78,7 +78,7 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                       '${(data?.totalInclVat ?? 0.0).toStringAsFixed(2)} ${_ml(ar: 'ريال', en: 'SAR', hi: 'SAR', ur: 'SAR', es: 'SAR', tr: 'SAR')}',
                       style: const TextStyle(
                           fontFamily: 'monospace',
-                          fontSize: 24,
+                          fontSize: 26,
                           fontWeight: FontWeight.w900,
                           color: Colors.black),
                     ),
@@ -106,11 +106,11 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                       children: [
                         Text(_ml(ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान के तरीके', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri'),
                             style: GoogleFonts.tajawal(
-                                fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold)),
+                                fontSize: 21, color: Colors.black, fontWeight: FontWeight.bold)),
                         if (_sl(ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान के तरीके', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri').isNotEmpty)
                           Text(_sl(ar: 'طرق الدفع', en: 'Payment Methods', hi: 'भुगतान के तरीके', ur: 'ادائیگی کے طریقے', es: 'Métodos de Pago', tr: 'Ödeme Yöntemleri'),
                               style: GoogleFonts.tajawal(
-                                  fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold)),
+                                  fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
                       ],
                     ),
                   ),
@@ -118,7 +118,7 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                     child: Text(
                       _translatePayMethod(data?.paymentMethod ?? ''),
                       style: GoogleFonts.tajawal(
-                          fontSize: 18,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: Colors.black),
                       textAlign: TextAlign.left,
@@ -145,11 +145,11 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
               children: [
                 Text(labelAr,
                     style: GoogleFonts.tajawal(
-                        fontSize: 19, color: Colors.black, fontWeight: FontWeight.bold)),
+                        fontSize: 21, color: Colors.black, fontWeight: FontWeight.bold)),
                 if (labelEn.isNotEmpty)
                   Text(labelEn,
                       style: GoogleFonts.tajawal(
-                          fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold)),
+                          fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -164,14 +164,14 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                     amount.toStringAsFixed(2),
                     style: const TextStyle(
                         fontFamily: 'monospace',
-                        fontSize: 19,
+                        fontSize: 21,
                         fontWeight: FontWeight.bold,
                         color: Colors.black),
                   ),
                   const SizedBox(width: 4),
                   Text(_translateCurrency(ApiConstants.currency),
                       style: GoogleFonts.tajawal(
-                          fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
+                          fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -199,14 +199,14 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                       child: Text(labelAr,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.tajawal(
-                              fontSize: 19,
+                              fontSize: 21,
                               fontWeight: FontWeight.bold,
                               color: Colors.black)),
                     ),
                     if (percentage != null)
                       Text(' (${percentage.toStringAsFixed(0)}%)',
                           style: GoogleFonts.tajawal(
-                              fontSize: 17,
+                              fontSize: 19,
                               fontWeight: FontWeight.bold,
                               color: Colors.black)),
                   ],
@@ -214,7 +214,7 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                 if (labelEn.isNotEmpty)
                   Text(labelEn,
                       style: GoogleFonts.tajawal(
-                          fontSize: 14, color: Colors.black, fontWeight: FontWeight.bold)),
+                          fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -229,14 +229,14 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                     '-${amount.toStringAsFixed(2)}',
                     style: const TextStyle(
                         fontFamily: 'monospace',
-                        fontSize: 19,
+                        fontSize: 21,
                         fontWeight: FontWeight.bold,
                         color: Colors.black),
                   ),
                   const SizedBox(width: 4),
                   Text(_translateCurrency(ApiConstants.currency),
                       style: GoogleFonts.tajawal(
-                          fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
+                          fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),

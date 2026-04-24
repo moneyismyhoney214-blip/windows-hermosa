@@ -22,12 +22,12 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                       children: [
                         Text(_ml(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün'),
                             style: GoogleFonts.tajawal(
-                                fontSize: 19,
+                                fontSize: 21,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black)),
                         if (_sl(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün').isNotEmpty)
                           Text(_sl(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün'),
-                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                              style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
                       ],
                     ),
                   ),
@@ -42,12 +42,12 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                       children: [
                         Text(_ml(ar: 'كمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet'),
                             style: GoogleFonts.tajawal(
-                                fontSize: 19,
+                                fontSize: 21,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black)),
                         if (_sl(ar: 'كمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet').isNotEmpty)
                           Text(_sl(ar: 'كمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet'),
-                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                              style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
                       ],
                     ),
                   ),
@@ -62,12 +62,12 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                       children: [
                         Text(_ml(ar: 'سعر', en: 'Price', hi: 'कीमत', ur: 'قیمت', es: 'Precio', tr: 'Fiyat'),
                             style: GoogleFonts.tajawal(
-                                fontSize: 19,
+                                fontSize: 21,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black)),
                         if (_sl(ar: 'سعر', en: 'Price', hi: 'कीमत', ur: 'قیمت', es: 'Precio', tr: 'Fiyat').isNotEmpty)
                           Text(_sl(ar: 'سعر', en: 'Price', hi: 'कीमत', ur: 'قیمت', es: 'Precio', tr: 'Fiyat'),
-                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                              style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
                       ],
                     ),
                   ),
@@ -82,12 +82,12 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                       children: [
                         Text(_ml(ar: 'مجموع', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam'),
                             style: GoogleFonts.tajawal(
-                                fontSize: 19,
+                                fontSize: 21,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black)),
                         if (_sl(ar: 'مجموع', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam').isNotEmpty)
                           Text(_sl(ar: 'مجموع', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam'),
-                              style: GoogleFonts.tajawal(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                              style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
                       ],
                     ),
                   ),
@@ -128,7 +128,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                               Text(
                                 item.nameAr,
                                 style: GoogleFonts.tajawal(
-                                    fontSize: 20,
+                                    fontSize: 22,
                                     fontWeight: FontWeight.bold,
                                     color: Colors.black),
                               ),
@@ -136,7 +136,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                                 Text(
                                   item.nameEn,
                                   style: GoogleFonts.tajawal(
-                                      fontSize: 16,
+                                      fontSize: 18,
                                       fontWeight: FontWeight.bold,
                                       color: Colors.black),
                                 ),
@@ -173,7 +173,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                                               child: Text(
                                                 format(primaryName),
                                                 style: GoogleFonts.tajawal(
-                                                    fontSize: 15,
+                                                    fontSize: 17,
                                                     color: Colors.black54,
                                                     fontWeight: FontWeight.bold),
                                               ),
@@ -182,7 +182,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                                               (addon.price * qty)
                                                   .toStringAsFixed(2),
                                               style: GoogleFonts.tajawal(
-                                                  fontSize: 15,
+                                                  fontSize: 17,
                                                   color: Colors.black54,
                                                   fontWeight: FontWeight.bold),
                                             ),
@@ -193,7 +193,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                                           Text(
                                             format(secondaryName),
                                             style: GoogleFonts.tajawal(
-                                                fontSize: 13,
+                                                fontSize: 15,
                                                 color: Colors.black54,
                                                 fontWeight: FontWeight.bold),
                                           ),
@@ -214,7 +214,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                           child: Text(
                             item.quantity % 1 == 0 ? item.quantity.toStringAsFixed(0) : item.quantity.toString(),
                             style: GoogleFonts.tajawal(
-                                fontSize: 19,
+                                fontSize: 21,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black),
                           ),
@@ -229,7 +229,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                           child: Text(
                             itemPrice.toStringAsFixed(2),
                             style: GoogleFonts.tajawal(
-                                fontSize: 18,
+                                fontSize: 20,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black),
                           ),
@@ -245,7 +245,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                             item.total.toStringAsFixed(2),
                             style: const TextStyle(
                               fontFamily: 'monospace',
-                              fontSize: 19,
+                              fontSize: 21,
                               fontWeight: FontWeight.bold,
                               color: Colors.black,
                             ),
@@ -269,12 +269,12 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                       Text(
                         '${item.discountName ?? _ml(ar: 'خصم', en: 'Discount', hi: 'छूट', ur: 'ڈسکاؤنٹ', es: 'Descuento', tr: 'İndirim')}${item.discountPercentage != null ? ' (${item.discountPercentage!.toStringAsFixed(0)}%)' : ''}',
                         style: GoogleFonts.tajawal(
-                            fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+                            fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
                       ),
                       Text(
                         '-${item.discountAmount!.toStringAsFixed(2)}',
                         style: GoogleFonts.tajawal(
-                            fontSize: 18, color: Colors.black, fontWeight: FontWeight.bold),
+                            fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),

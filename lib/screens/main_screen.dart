@@ -31,6 +31,7 @@ import '../dialogs/payment_success_view.dart';
 import '../services/print_job_cache_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/printer_language_settings_service.dart';
+import '../services/receipt_builder_service.dart';
 import '../services/nearpay/nearpay_service.dart';
 import '../services/app_themes.dart';
 import '../services/cashier_mesh_bootstrap.dart';

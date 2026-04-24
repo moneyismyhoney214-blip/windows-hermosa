@@ -597,6 +597,11 @@ final Map<String, String> _arTranslations = {
     'waiter_tables_load_failed': 'تعذر تحميل الطاولات',
     'waiter_tables_empty': 'لا توجد طاولات مفعّلة',
     'waiter_retry': 'إعادة المحاولة',
+    'waiter_no_active_booking': 'لا يوجد حجز نشط للتعديل على هذه الطاولة.',
+    'waiter_bill_success': 'تم تحديث الطلب.',
+    'waiter_edit_not_allowed':
+        'التعديل مسموح فقط لطلبات الدفع لاحقاً وغير مدفوعة.',
+    'waiter_edit_locked': 'لا يمكن تعديل الطلب بعد إغلاقه.',
     'waiter_guests': 'عدد الضيوف',
     'waiter_cart_empty': 'السلة فارغة',
     'waiter_subtotal': 'الإجمالي',

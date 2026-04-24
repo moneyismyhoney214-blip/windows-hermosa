@@ -441,131 +441,108 @@ class AuthService {
   }
 
   // ──────────────────────────── Forgot password ────────────────────────────
+  //
+  // Three-step mobile-based flow backed by `api.hermosaapp.com`:
+  //   1. POST /seller/forgot           body: mobile=...           → signed_route for step 2
+  //   2. POST <signed_route from 1>    body: otp=...              → signed_route for step 3
+  //   3. POST <signed_route from 2>    body: password, password_confirmation
+  //
+  // Each response nests `data.signed_route` holding the exact path (with
+  // expires + signature + account id) the next call must hit. Callers
+  // pass that string back in unchanged — we don't re-sign anything.
 
-  /// Cookies captured from the forgot-password session so step 3 can reuse
-  /// the same browser-style session the server hands out after step 2.
-  /// Flutter's `http` package doesn't persist cookies on its own, so we
-  /// thread them manually between the three calls.
-  String? _forgotSessionCookie;
+  Map<String, String> _forgotHeaders() => {
+        'Accept': 'application/json',
+        'Accept-Language': ApiConstants.acceptLanguage,
+      };
 
-  Map<String, String> _forgotHeaders({bool withCookie = false}) {
-    final headers = <String, String>{
-      'Accept': 'application/json',
-      'Accept-Language': ApiConstants.acceptLanguage,
-      'Accept-Platform': 'dashboard',
-      'Accept-ISO': 'SAU',
-    };
-    if (withCookie && _forgotSessionCookie != null) {
-      headers['Cookie'] = _forgotSessionCookie!;
+  Map<String, dynamic> _parseJsonBody(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        return decoded.map((k, v) => MapEntry(k.toString(), v));
+      }
+    } catch (_) {}
+    return const {};
+  }
+
+  String? _extractSignedRoute(Map<String, dynamic> payload) {
+    final data = payload['data'];
+    if (data is Map) {
+      final route = data['signed_route']?.toString();
+      if (route != null && route.isNotEmpty) return route;
     }
-    return headers;
+    final flat = payload['signed_route']?.toString();
+    if (flat != null && flat.isNotEmpty) return flat;
+    return null;
   }
 
-  void _captureSessionCookie(http.Response response) {
-    final raw = response.headers['set-cookie'];
-    if (raw == null || raw.trim().isEmpty) return;
-    // Keep just the `name=value` pairs; drop Path/Expires/HttpOnly attrs that
-    // shouldn't be echoed back in a `Cookie:` request header.
-    final cookiePairs = raw.split(',').map((chunk) {
-      final primary = chunk.split(';').first.trim();
-      return primary;
-    }).where((c) => c.isNotEmpty && c.contains('=')).toList();
-    if (cookiePairs.isEmpty) return;
-    _forgotSessionCookie = cookiePairs.join('; ');
-  }
-
-  /// Step 1 — request a reset code for [email]. The server emails a code
-  /// and responds with the `expires` + `signature` pair needed to verify
-  /// the code in step 2 (both are bundled in the signed URL the server
-  /// sends by email; the app also gets them in the JSON response so the
-  /// cashier can type the code in-app without clicking the email link).
-  Future<Map<String, dynamic>> sendForgotPasswordCode(String email) async {
+  /// Step 1 — request an OTP for [mobile]. Returns the `signed_route` the
+  /// caller must pass to [checkResetCode] once the user types the code.
+  Future<String> sendForgotPasswordCode(String mobile) async {
     final uri = Uri.parse(
-        '${ApiConstants.authBaseUrl}${ApiConstants.forgotEndpoint}');
+        '${ApiConstants.forgotBaseUrl}${ApiConstants.forgotEndpoint}');
     final request = http.MultipartRequest('POST', uri)
       ..headers.addAll(_forgotHeaders())
-      ..fields['email'] = email.trim();
+      ..fields['mobile'] = mobile.trim();
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);
-    _captureSessionCookie(response);
-    final body = response.body.trim();
-    Map<String, dynamic> parsed = const {};
-    if (body.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(body);
-        if (decoded is Map) {
-          parsed = decoded.map((k, v) => MapEntry(k.toString(), v));
-        }
-      } catch (_) {}
-    }
+    final parsed = _parseJsonBody(response.body);
     if (response.statusCode == 200 || response.statusCode == 201) {
-      return parsed;
+      final route = _extractSignedRoute(parsed);
+      if (route == null) {
+        throw Exception(parsed['message']?.toString() ??
+            'Forgot password: missing signed_route in response');
+      }
+      return route;
     }
     throw Exception(parsed['message']?.toString() ??
         'Forgot password failed: ${response.statusCode}');
   }
 
-  /// Step 2 — validate the [code] the cashier typed against the signed
-  /// `expires` + `signature` the server issued in step 1. Preserves the
-  /// session cookie so step 3 can reset the password without re-proving
-  /// identity.
-  Future<Map<String, dynamic>> checkResetCode({
-    required String email,
-    required String expires,
-    required String signature,
-    required String code,
+  /// Step 2 — POST the [otp] to the [signedRoute] returned by step 1.
+  /// Returns the next `signed_route` to feed into [resetForgottenPassword].
+  Future<String> checkResetCode({
+    required String signedRoute,
+    required String otp,
   }) async {
-    final uri = Uri.parse('${ApiConstants.authBaseUrl}'
-        '${ApiConstants.forgotCheckEndpoint(email: email, expires: expires, signature: signature)}');
+    final uri = Uri.parse('${ApiConstants.forgotBaseUrl}$signedRoute');
     final request = http.MultipartRequest('POST', uri)
-      ..headers.addAll(_forgotHeaders(withCookie: true))
-      ..fields['code'] = code.trim();
+      ..headers.addAll(_forgotHeaders())
+      ..fields['otp'] = otp.trim();
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);
-    _captureSessionCookie(response);
-    final body = response.body.trim();
-    Map<String, dynamic> parsed = const {};
-    if (body.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(body);
-        if (decoded is Map) {
-          parsed = decoded.map((k, v) => MapEntry(k.toString(), v));
-        }
-      } catch (_) {}
-    }
+    final parsed = _parseJsonBody(response.body);
     if (response.statusCode == 200 || response.statusCode == 201) {
-      return parsed;
+      final route = _extractSignedRoute(parsed);
+      if (route == null) {
+        throw Exception(parsed['message']?.toString() ??
+            'Invalid reset code: missing signed_route in response');
+      }
+      return route;
     }
     throw Exception(parsed['message']?.toString() ??
         'Invalid reset code: ${response.statusCode}');
   }
 
-  /// Step 3 — commit the new [password]. Relies on the forgot-flow session
-  /// cookie captured in step 2 so the server knows which account is being
-  /// reset. Clears the local cookie after success.
-  Future<Map<String, dynamic>> resetForgottenPassword(String password) async {
-    final uri = Uri.parse(
-        '${ApiConstants.authBaseUrl}${ApiConstants.forgotResetEndpoint}');
+  /// Step 3 — POST the new [password] to the [signedRoute] returned by
+  /// step 2. Server identifies the account via `employee_id` embedded in
+  /// the signed path, so no auth token is required.
+  Future<Map<String, dynamic>> resetForgottenPassword({
+    required String signedRoute,
+    required String password,
+  }) async {
+    final uri = Uri.parse('${ApiConstants.forgotBaseUrl}$signedRoute');
     final request = http.MultipartRequest('POST', uri)
-      ..headers.addAll(_forgotHeaders(withCookie: true))
+      ..headers.addAll(_forgotHeaders())
       ..fields['password'] = password
       ..fields['password_confirmation'] = password;
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);
-    final body = response.body.trim();
-    Map<String, dynamic> parsed = const {};
-    if (body.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(body);
-        if (decoded is Map) {
-          parsed = decoded.map((k, v) => MapEntry(k.toString(), v));
-        }
-      } catch (_) {}
-    }
+    final parsed = _parseJsonBody(response.body);
     if (response.statusCode == 200 || response.statusCode == 201) {
-      // Reset successful — flush the temporary session so the next forgot
-      // run starts clean.
-      _forgotSessionCookie = null;
       return parsed;
     }
     throw Exception(parsed['message']?.toString() ??

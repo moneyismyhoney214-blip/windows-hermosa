@@ -89,65 +89,21 @@ extension MainScreenCart on _MainScreenState {
     return 'services';
   }
 
-  String _normalizeOrderTypeValue(String value) {
-    final normalized = value.trim().toLowerCase();
-    if (normalized.isEmpty || normalized == 'null') {
-      return 'restaurant_pickup';
-    }
-    switch (normalized) {
-      case 'pickup':
-      case 'takeaway':
-      case 'take_away':
-      case 'restaurant_takeaway':
-      case 'restaurant_take_away':
-        return 'restaurant_pickup';
-      case 'dine_in':
-      case 'dinein':
-      case 'internal':
-      case 'inside':
-      case 'restaurant_table':
-      case 'table':
-        return 'restaurant_internal';
-      case 'delivery':
-      case 'home_delivery':
-      case 'restaurant_home_delivery':
-        return 'restaurant_delivery';
-      case 'restaurant_parking':
-      case 'parking':
-      case 'drive_through':
-      case 'drive-through':
-      case 'cars':
-      case 'car':
-        return 'restaurant_parking';
-      case 'services':
-      case 'service':
-      case 'restaurant_services':
-        return 'services';
-      default:
-        return normalized;
-    }
-  }
+  String _normalizeOrderTypeValue(String value) =>
+      ReceiptBuilderService.normalizeOrderTypeValue(value);
 
   /// If the active menu list is a known delivery provider
   /// (HungerStation, Talabat, Jahez), return a canonical order-type code
   /// like `hungerstation_delivery` / `hungerstation_pickup` based on
   /// `_menuListPriceType`. Returns null if no known provider matches.
-  String? _resolveDeliveryProviderTypeCode() {
-    if (!_isMenuListActive) return null;
-    final rawName = _activeMenuListName.trim();
-    if (rawName.isEmpty) return null;
-    final lower = rawName.toLowerCase();
-    final suffix = _menuListPriceType == 'pickup' ? 'pickup' : 'delivery';
-    String? base;
-    if (lower.contains('hunger') || rawName.contains('هنقر') || rawName.contains('هنجر')) {
-      base = 'hungerstation';
-    } else if (lower.contains('talabat') || rawName.contains('طلبات')) {
-      base = 'talabat';
-    } else if (lower.contains('jahez') || lower.contains('gahez') || rawName.contains('جاهز')) {
-      base = 'jahez';
-    }
-    return base == null ? null : '${base}_$suffix';
-  }
+  /// Logic lives in [ReceiptBuilderService] so the waiter module stays
+  /// byte-identical.
+  String? _resolveDeliveryProviderTypeCode() =>
+      ReceiptBuilderService.resolveDeliveryProviderTypeCode(
+        isMenuListActive: _isMenuListActive,
+        activeMenuListName: _activeMenuListName,
+        menuListPriceType: _menuListPriceType,
+      );
 
   String _resolveOrderTypeForBooking(TableItem? selectedTable) {
     // Use the selected type as-is – the dropdown already holds the exact

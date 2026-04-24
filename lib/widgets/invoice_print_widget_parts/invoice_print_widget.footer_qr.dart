@@ -20,7 +20,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
                   Text(
                     _ml(ar: 'سياسة الاسترجاع والاستبدال', en: 'Return Policy', hi: 'वापसी नीति', ur: 'واپسی پالیسی', es: 'Política de Devolución', tr: 'İade Politikası'),
                     style: GoogleFonts.tajawal(
-                        fontSize: 16,
+                        fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: Colors.black),
                     textAlign: TextAlign.center,
@@ -29,13 +29,13 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
                     Text(
                       _sl(ar: 'سياسة الاسترجاع والاستبدال', en: 'Return Policy', hi: 'वापसी नीति', ur: 'واپسی پالیسی', es: 'Política de Devolución', tr: 'İade Politikası'),
                       style: GoogleFonts.tajawal(
-                          fontSize: 13, color: Colors.black, fontWeight: FontWeight.bold),
+                          fontSize: 15, color: Colors.black, fontWeight: FontWeight.bold),
                       textAlign: TextAlign.center,
                     ),
                   Text(
                     returnPolicy!,
                     style: GoogleFonts.tajawal(
-                        fontSize: 15, color: Colors.black, fontWeight: FontWeight.bold),
+                        fontSize: 17, color: Colors.black, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -48,7 +48,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
                 Text(
                   _ml(ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर भरोसा करने के लिए धन्यवाद', ur: 'ہم پر بھروسہ کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güvendiğiniz için teşekkürler'),
                   style: GoogleFonts.tajawal(
-                      fontSize: 17,
+                      fontSize: 19,
                       fontWeight: FontWeight.bold,
                       color: Colors.black),
                   textAlign: TextAlign.center,
@@ -57,7 +57,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
                   Text(
                     _sl(ar: 'شكرا لثقتكم بنا', en: 'Thank you for trusting us', hi: 'हम पर भरोसा करने के लिए धन्यवाद', ur: 'ہم پر بھروسہ کرنے کا شکریہ', es: 'Gracias por confiar en nosotros', tr: 'Bize güvendiğiniz için teşekkürler'),
                     style: GoogleFonts.tajawal(
-                        fontSize: 14,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
                         color: Colors.black),
                     textAlign: TextAlign.center,
@@ -74,7 +74,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
                       Text(
                         _ml(ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Hermosa Accounting Software', hi: 'हरमोसा लेखा सॉफ्टवेयर', ur: 'ہرموسا اکاؤنٹنگ سافٹ ویئر', es: 'Hermosa Contable', tr: 'Hermosa Muhasebe'),
                         style: GoogleFonts.tajawal(
-                            fontSize: 15,
+                            fontSize: 17,
                             fontWeight: FontWeight.bold,
                             color: Colors.black),
                         textAlign: TextAlign.center,
@@ -83,7 +83,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
                         Text(
                           _sl(ar: 'برنامج هيرموسا المحاسبي المتكامل', en: 'Hermosa Accounting Software', hi: 'हरमोसा लेखा सॉफ्टवेयर', ur: 'ہرموسا اکاؤنٹنگ سافٹ ویئر', es: 'Hermosa Contable', tr: 'Hermosa Muhasebe'),
                           style: GoogleFonts.tajawal(
-                              fontSize: 12,
+                              fontSize: 14,
                               fontWeight: FontWeight.bold,
                               color: Colors.black),
                           textAlign: TextAlign.center,
@@ -91,7 +91,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
                       Text(
                         'hermosaapp.com',
                         style: GoogleFonts.tajawal(
-                            fontSize: 15,
+                            fontSize: 17,
                             fontWeight: FontWeight.bold,
                             color: Colors.black),
                         textAlign: TextAlign.center,
@@ -121,7 +121,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
         qrWidget = QrImageView(
           data: tlvString,
           version: QrVersions.auto,
-          size: 150,
+          size: 170,
           gapless: true,
           backgroundColor: Colors.white,
         );
@@ -129,7 +129,7 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
         qrWidget = QrImageView(
           data: rawQr,
           version: QrVersions.auto,
-          size: 150,
+          size: 170,
           gapless: true,
           backgroundColor: Colors.white,
         );
@@ -143,8 +143,8 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
           final bytes = base64Decode(base64Part);
           qrWidget = Image.memory(
             bytes,
-            width: 150,
-            height: 150,
+            width: 170,
+            height: 170,
             fit: BoxFit.contain,
             gaplessPlayback: true,
           );
@@ -156,16 +156,16 @@ extension InvoicePrintWidgetFooterQr on InvoicePrintWidget {
       // Fallback: network image (risks being missed by screenshot if slow)
       qrWidget = Image.network(
         zatcaImage,
-        width: 150,
-        height: 150,
+        width: 170,
+        height: 170,
         fit: BoxFit.contain,
         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
       );
     } else if (rawQr.startsWith('http')) {
       qrWidget = Image.network(
         rawQr,
-        width: 150,
-        height: 150,
+        width: 170,
+        height: 170,
         fit: BoxFit.contain,
         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
       );

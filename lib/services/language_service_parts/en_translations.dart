@@ -583,6 +583,11 @@ final Map<String, String> _enTranslations = {
     'waiter_tables_load_failed': 'Could not load tables',
     'waiter_tables_empty': 'No active tables',
     'waiter_retry': 'Retry',
+    'waiter_no_active_booking': 'No active booking to edit on this table.',
+    'waiter_bill_success': 'Order updated.',
+    'waiter_edit_not_allowed':
+        'Editing is allowed only for unpaid pay-later orders.',
+    'waiter_edit_locked': 'Order can no longer be edited.',
     'waiter_guests': 'Guests',
     'waiter_cart_empty': 'Cart is empty',
     'waiter_subtotal': 'Subtotal',

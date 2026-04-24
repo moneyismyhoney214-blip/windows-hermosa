@@ -4,6 +4,8 @@ class ApiConstants {
   static const String baseUrl = 'https://portal.hermosaapp.com';
   static const String testBaseUrl = 'https://portal.hermosaapp.com';
   static const String customersBaseUrl = 'https://portal.hermosaapp.com';
+  // Forgot-password flow lives on the public API host (see HAR capture).
+  static const String forgotBaseUrl = 'https://api.hermosaapp.com';
 
   // API Headers
   static const String _defaultAcceptLanguage = 'ar';
@@ -44,21 +46,11 @@ class ApiConstants {
   static const String logoutEndpoint = '/seller/logout';
   static const String profileEndpoint = '/seller/profile';
 
-  // Forgot-password flow — 3 steps:
-  // 1. `forgotEndpoint` sends the reset code to the user's email.
-  // 2. `forgotCheckEndpoint(...)` verifies the code with the signed email link.
-  // 3. `forgotResetEndpoint` sets the new password (session-bound to step 2).
+  // Forgot-password flow — 3 steps. Each step's response returns a
+  // `signed_route` (`/seller/forgot/check?...` then `/seller/forgot/reset?...`)
+  // that the next call must use verbatim — the signature + expires + account
+  // id are baked into that path.
   static const String forgotEndpoint = '/seller/forgot';
-  static String forgotCheckEndpoint({
-    required String email,
-    required String expires,
-    required String signature,
-  }) =>
-      '/seller/forgot/check'
-      '?email=${Uri.encodeQueryComponent(email)}'
-      '&expires=${Uri.encodeQueryComponent(expires)}'
-      '&signature=${Uri.encodeQueryComponent(signature)}';
-  static const String forgotResetEndpoint = '/seller/forgot/reset';
   static String get branchesEndpoint => '/seller/branches';
   static String get profileBranchesEndpoint => '/seller/profile/branches';
   static String get branchSettingEndpoint => '/seller/branch-setting/$branchId';

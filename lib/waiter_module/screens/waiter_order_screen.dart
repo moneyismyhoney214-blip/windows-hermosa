@@ -5,8 +5,10 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../dialogs/payment_tender_dialog.dart';
+import '../../dialogs/product_customization_dialog.dart';
 import '../../locator.dart';
 import '../../models.dart';
+import '../../services/api/order_service.dart';
 import '../../services/api/product_service.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/app_themes.dart';
@@ -57,6 +59,10 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   bool _loadingCategories = true;
   bool _loadingProducts = false;
   bool _sending = false;
+  /// True while we're rebuilding `_sent` from the backend after an app
+  /// restart. Pay-later / pay-now must not fire during this window — the
+  /// cart would look empty and a PATCH would wipe the booking.
+  bool _rehydrating = false;
 
   int _guests = 1;
   StreamSubscription<WaiterTableEventEnvelope>? _eventSub;
@@ -104,6 +110,169 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
     // first frame (matches the cashier's behaviour). Non-blocking — the
     // UI shows raw prices until the first build after the fetch lands.
     unawaited(_hydrateTaxConfig());
+    // Rehydrate the local `_sent` cart from the backend when we open a
+    // paymentPending table with an empty cart — the typical case right
+    // after an app restart: the registry is persisted (so the card
+    // shows paymentPending) but the cart store isn't, so `allItemsFor`
+    // returns []. Without this fetch, tapping "Pay Later" after adding
+    // a new item would PATCH the booking with just the new drafts and
+    // silently delete everything on the backend. Matches the
+    // rehydration we run after the Edit Order dialog closes.
+    //
+    // Deferred through `Future.microtask` so the first `setState` (for
+    // the `_rehydrating = true` spinner) doesn't fire while we're
+    // still inside initState — Flutter tolerates it in practice but
+    // the contract is "setState after initState returns".
+    Future.microtask(_rehydrateSentFromBackendIfNeeded);
+  }
+
+  Future<void> _rehydrateSentFromBackendIfNeeded() async {
+    if (!_registry.paymentPendingFor(widget.table.id)) return;
+    if (_cart.allItemsFor(widget.table.id).isNotEmpty) return;
+    final bookingId = _registry.bookingIdFor(widget.table.id);
+    if (bookingId == null || bookingId.isEmpty) return;
+    if (mounted) setState(() => _rehydrating = true);
+    try {
+      final rawDetails =
+          await getIt<OrderService>().getBookingDetails(bookingId);
+      final inner = (rawDetails['data'] is Map)
+          ? Map<String, dynamic>.from(rawDetails['data'] as Map)
+          : Map<String, dynamic>.from(rawDetails);
+      final items = _extractMealsFromResponse(inner)
+          .map(_cartItemFromRawMeal)
+          .toList();
+      if (items.isEmpty) return;
+      _cart.setSentItems(widget.table.id, items);
+    } catch (e) {
+      debugPrint('⚠️ _rehydrateSentFromBackendIfNeeded failed: $e');
+    } finally {
+      if (mounted) setState(() => _rehydrating = false);
+    }
+  }
+
+  List<Map<String, dynamic>> _extractMealsFromResponse(
+      Map<String, dynamic> payload) {
+    // Flatten `booking` sub-map if present — same shape handling as
+    // the tables screen's enrichment.
+    Map<String, dynamic> flat = payload;
+    if (payload['booking'] is Map && payload['id'] == null) {
+      final inner = Map<String, dynamic>.from(payload['booking'] as Map);
+      for (final e in payload.entries) {
+        if (e.key != 'booking') inner.putIfAbsent(e.key, () => e.value);
+      }
+      flat = inner;
+    }
+    const keys = [
+      'meals',
+      'booking_meals',
+      'booking_products',
+      'booking_items',
+      'items',
+      'invoice_items',
+      'sales_meals',
+      'card',
+      'cart',
+    ];
+    for (final key in keys) {
+      final raw = flat[key];
+      if (raw is! List) continue;
+      final rows = raw
+          .whereType<Map>()
+          .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
+          .toList();
+      if (rows.isNotEmpty) return rows;
+    }
+    return const [];
+  }
+
+  CartItem _cartItemFromRawMeal(Map<String, dynamic> row) {
+    final mealId = (row['meal_id'] ?? row['id'])?.toString() ?? '';
+    final name =
+        (row['meal_name'] ?? row['item_name'] ?? row['name'] ?? '').toString();
+    double toDouble(Object? v) {
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v.trim()) ?? 0.0;
+      return 0.0;
+    }
+
+    final qty = toDouble(row['quantity']);
+    final unitPrice = (row['unit_price'] != null)
+        ? toDouble(row['unit_price'])
+        : (toDouble(row['price']) / (qty == 0 ? 1 : qty));
+
+    // Harvest every translation field the backend may ship so the
+    // rehydrated Product stub carries localizedNames end-to-end and
+    // kitchen/receipt printing can render bilingual. Mirror of
+    // waiter_tables_screen's `_cartItemFromRawMeal`.
+    final localizedNames = <String, String>{};
+    for (final key in const [
+      'meal_name_translations',
+      'name_translations',
+      'translations',
+      'localizedNames',
+      'localized_names',
+      'names',
+    ]) {
+      final src = row[key];
+      if (src is Map) {
+        src.forEach((k, v) {
+          final code = k.toString().trim().toLowerCase();
+          final value = v?.toString().trim() ?? '';
+          if (code.isNotEmpty && value.isNotEmpty) {
+            localizedNames.putIfAbsent(code, () => value);
+          }
+        });
+      }
+    }
+    for (final code in const ['ar', 'en', 'es', 'tr', 'hi', 'ur']) {
+      final v = (row['name_$code'] ?? row['meal_name_$code'])
+          ?.toString()
+          .trim();
+      if (v != null && v.isNotEmpty) {
+        localizedNames.putIfAbsent(code, () => v);
+      }
+    }
+    final nameAr = (row['name_ar'] ??
+                row['meal_name_ar'] ??
+                row['nameAr'] ??
+                localizedNames['ar'] ??
+                '')
+            .toString();
+    final nameEn = (row['name_en'] ??
+                row['meal_name_en'] ??
+                row['nameEn'] ??
+                localizedNames['en'] ??
+                '')
+            .toString();
+
+    final extras = <Extra>[];
+    final addonsRaw = row['addons'] ?? row['extras'];
+    if (addonsRaw is List) {
+      for (final entry in addonsRaw) {
+        if (entry is Map) {
+          try {
+            extras.add(Extra.fromJson(
+                entry.map((k, v) => MapEntry(k.toString(), v))));
+          } catch (_) {}
+        }
+      }
+    }
+    return CartItem(
+      cartId: const Uuid().v4(),
+      product: Product(
+        id: mealId,
+        name: name,
+        nameAr: nameAr,
+        nameEn: nameEn,
+        price: unitPrice,
+        category: '',
+        categoryId: row['category_id']?.toString(),
+        localizedNames: localizedNames,
+      ),
+      quantity: qty == 0 ? 1.0 : qty,
+      selectedExtras: extras,
+      notes: (row['note'] ?? row['notes'] ?? '').toString(),
+    );
   }
 
   Future<void> _hydrateTaxConfig() async {
@@ -265,13 +434,57 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         .toList(growable: false);
   }
 
-  void _addProductToCart(Product product) {
+  /// Matches the cashier's _onProductTap: if the product has extras
+  /// declared on the model, or the backend reports addons via
+  /// meal-has-addons, open the ProductCustomizationDialog so the waiter
+  /// picks extras + qty + notes before adding. Otherwise add it straight
+  /// to the cart. The dialog itself is MainScreen-independent — reused
+  /// here verbatim so cashier and waiter stay UI-identical.
+  Future<void> _addProductToCart(Product product) async {
+    if (product.extras.isNotEmpty) {
+      _openCustomizationDialog(product);
+      return;
+    }
+    bool hasAddons = false;
+    try {
+      hasAddons = await _productService.mealHasAddons(product.id);
+    } catch (_) {
+      // Network failure — fall back to direct add so the waiter isn't
+      // blocked from taking an order during a connectivity blip.
+    }
+    if (!mounted) return;
+    if (hasAddons) {
+      _openCustomizationDialog(product);
+    } else {
+      _addProductDirect(product, const <Extra>[], 1.0, '');
+    }
+  }
+
+  void _openCustomizationDialog(Product product) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => ProductCustomizationDialog(
+        product: product,
+        taxRate: _billing.taxRate,
+        onConfirm: _addProductDirect,
+      ),
+    );
+  }
+
+  void _addProductDirect(
+    Product product,
+    List<Extra> extras,
+    double quantity,
+    String notes,
+  ) {
     _cart.addItem(
       widget.table.id,
       CartItem(
         cartId: const Uuid().v4(),
         product: product,
-        quantity: 1,
+        quantity: quantity,
+        selectedExtras: extras,
+        notes: notes,
       ),
     );
     _cart.setGuests(widget.table.id, _guests);
@@ -339,9 +552,16 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   /// the cashier sees the pending bill), and pops back to the tables
   /// list. The waiter can later re-enter the table via "Edit Order" to
   /// add/modify items.
+  /// Surfaced on the UI so the Pay Later / Create Invoice buttons
+  /// stay disabled while we're rebuilding `_sent` from the backend.
+  /// Without this gate, a fast waiter could tap Pay Later during the
+  /// post-restart rehydrate and PATCH the booking with an empty item
+  /// list — silently deleting everything on the server.
+  bool get _canSubmit => !_sending && !_rehydrating;
+
   Future<void> _payLater() async {
     if (!_cart.hasItems(widget.table.id)) return;
-    if (_sending) return; // single-flight guard
+    if (!_canSubmit) return; // single-flight + post-restart rehydrate guard
     setState(() => _sending = true);
     final me = widget.controller.session.self!;
     final allItems = _cart.allItemsFor(widget.table.id);
@@ -454,16 +674,17 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       //     a screen, not an action). Respects the printKitchenInvoices
       //     toggle in the device behaviour tab.
       try {
-        // Prefer the backend-assigned daily_order_number so the ticket
-        // carries the same human-facing ref the cashier would print.
-        // On edit-order re-entries it came from getBookingDetails; on
-        // first submission from the createBooking response. Only fall
-        // back to the placeholder if both paths failed.
-        final fallback =
-            'T${widget.table.number}-${broadcastId.substring(0, broadcastId.length < 4 ? broadcastId.length : 4).toUpperCase()}';
+        // Prefer the backend-assigned daily_order_number — same human
+        // ref the cashier prints. Fall back to `#<bookingId>` (not a
+        // UUID-suffix placeholder) so the kitchen ticket matches the
+        // booking the backend actually knows about. A UUID substring
+        // like `T1-G1D5` is useless to kitchen staff trying to
+        // correlate with an order ledger; `#123` is the booking PK.
         final base = (dailyOrderNumber != null && dailyOrderNumber.isNotEmpty)
             ? dailyOrderNumber
-            : fallback;
+            : (bookingId != null && bookingId.isNotEmpty
+                ? '#$bookingId'
+                : '#$broadcastId');
         final orderNumber = isEdit ? '$base-EDIT' : base;
         await _printDispatcher.printKitchenTicket(
           bookingId: broadcastId,
@@ -544,12 +765,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         title: Text(
           '${translationService.t('waiter_table')} ${widget.table.number}',
         ),
-        actions: [
-          Padding(
-            padding: const EdgeInsetsDirectional.only(end: 12),
-            child: Center(child: _kdsStatusChip(context)),
-          ),
-        ],
+        actions: const [],
       ),
       body: SafeArea(
         child: LayoutBuilder(builder: (_, constraints) {
@@ -794,6 +1010,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   }
 
   Future<void> _printBill() async {
+    if (!_canSubmit) return;
     // Match the cashier: pull enabled-pay-methods + tax config from the
     // branch settings right before showing the tender dialog.
     await _billing.refreshPayMethods();
@@ -1002,14 +1219,27 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       final bookingIdForKitchen =
           result.bookingId ?? existingBookingId ?? '';
       if (bookingIdForKitchen.isNotEmpty && allItems.isNotEmpty) {
-        // Prefer the backend daily_order_number (e.g. "#1023") over the
-        // invoice number or the UUID-suffix placeholder, so the kitchen
-        // ticket matches the reference on the cashier-side receipt.
-        final fallback =
-            'T${widget.table.number}-${bookingIdForKitchen.substring(0, bookingIdForKitchen.length < 4 ? bookingIdForKitchen.length : 4).toUpperCase()}';
+        // Prefer the backend daily_order_number (e.g. "1023") > invoice
+        // number > `#<bookingId>`. The `#<bookingId>` fallback is the
+        // backend's primary-key view so a kitchen staff member can
+        // always correlate the ticket with the order ledger. Avoids
+        // the useless `T1-G1D5` UUID-prefix placeholder.
         final orderNumber = result.dailyOrderNumber?.isNotEmpty == true
             ? result.dailyOrderNumber!
-            : (result.invoiceNumber ?? fallback);
+            : (result.invoiceNumber?.isNotEmpty == true
+                ? result.invoiceNumber!
+                : '#$bookingIdForKitchen');
+        // Pay-now paths in the waiter do NOT consistently dispatch to
+        // KDS (fresh submission skips, retry-after-partial-failure
+        // skips, edit-branch dispatches only new drafts). The
+        // cashier's `skip paper when KDS has it` rule only makes
+        // sense when dispatch is 100% reliable — it isn't here.
+        // Always paper-print on pay-now and let the user opt out via
+        // the `printKitchenInvoices` toggle (which the dispatcher
+        // honours). Missed tickets are the one failure mode we can't
+        // tolerate; a redundant paper when KDS is also showing the
+        // order is fine.
+        const kdsHasIt = false;
         unawaited(
           _printDispatcher.printKitchenTicket(
             bookingId: bookingIdForKitchen,
@@ -1018,10 +1248,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
             tableNumber: widget.table.number,
             waiterName: me.name,
             invoiceNumber: result.invoiceNumber,
-            // Pay-now path: KDS has already seen the order via the mesh
-            // broadcast, so feed the flag through and let allowPrintWithKds
-            // decide whether to print the paper ticket too.
-            kdsAlreadyDispatched: true,
+            kdsAlreadyDispatched: kdsHasIt,
           ),
         );
       }
@@ -1070,36 +1297,6 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       _cart.clearTable(widget.table.id);
       if (mounted) Navigator.of(context).pop();
     }
-  }
-
-  Widget _kdsStatusChip(BuildContext context) {
-    final connected = _bridge.isConnected;
-    final color = connected ? context.appSuccess : context.appDanger;
-    final label = connected
-        ? translationService.t('waiter_kds_connected')
-        : translationService.t('waiter_kds_offline');
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(connected ? LucideIcons.wifi : LucideIcons.wifiOff,
-              size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(
-                color: color,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              )),
-        ],
-      ),
-    );
   }
 
   void _openCartSheet(BuildContext context) {
@@ -1405,14 +1602,14 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                       child: SizedBox(
                         height: 48,
                         child: FilledButton.icon(
-                          onPressed: (_sending || items.isEmpty)
+                          onPressed: (!_canSubmit || items.isEmpty)
                               ? null
                               : _payLater,
                           style: FilledButton.styleFrom(
                             backgroundColor: context.appPrimary,
                             foregroundColor: Colors.white,
                           ),
-                          icon: _sending
+                          icon: (_sending || _rehydrating)
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
@@ -1436,7 +1633,8 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                     SizedBox(
                       height: 48,
                       child: OutlinedButton.icon(
-                        onPressed: (sent.isEmpty && items.isEmpty)
+                        onPressed: (!_canSubmit ||
+                                (sent.isEmpty && items.isEmpty))
                             ? null
                             : _printBill,
                         style: OutlinedButton.styleFrom(
