@@ -57,8 +57,8 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   StreamSubscription<TablePickupRequest>? _pickupUpdateSub;
   StreamSubscription<WaiterTableEventEnvelope>? _tableEventSub;
 
-  static const double _tableCardWidth = 250;
-  static const double _tableCardHeight = 200;
+  static const double _tableCardWidth = 140;
+  static const double _tableCardHeight = 140;
 
   @override
   void initState() {
@@ -855,12 +855,12 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
 
     if (isCompact) {
       return GridView.builder(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(8),
         gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: screenSize.width < 430 ? 220 : 260,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: screenSize.width < 430 ? 0.92 : 1.0,
+          maxCrossAxisExtent: screenSize.width < 430 ? 110 : 130,
+          mainAxisSpacing: 6,
+          crossAxisSpacing: 6,
+          childAspectRatio: 1.0,
         ),
         itemCount: tables.length,
         itemBuilder: (context, index) {
@@ -1027,8 +1027,8 @@ class _DraggableTableCard extends StatefulWidget {
 }
 
 class _DraggableTableCardState extends State<_DraggableTableCard> {
-  static const double _cardWidth = 250;
-  static const double _cardHeight = 200;
+  static const double _cardWidth = 140;
+  static const double _cardHeight = 140;
 
   late Offset _currentPosition;
 
@@ -1175,520 +1175,225 @@ class _NormalTableCard extends StatelessWidget {
     this.guestCount,
   });
 
-  Color _getStatusColor(TableStatus status) {
-    if (isDeactivated) return Colors.grey;
-    switch (status) {
-      case TableStatus.available:
-        return const Color(0xFF10B981);
-      case TableStatus.occupied:
-        return const Color(0xFFEF4444);
-      case TableStatus.printed:
-        return const Color(0xFFF59E0B);
+  _TablePalette _paletteFor() {
+    if (isDeactivated) {
+      return const _TablePalette(
+        background: Color(0xFFF1F5F9),
+        border: Color(0xFFCBD5E1),
+        accent: Color(0xFF64748B),
+      );
     }
-  }
-
-  Color _getStatusBg(TableStatus status) {
-    if (isDeactivated) return Colors.grey.shade100;
-    switch (status) {
+    switch (table.status) {
       case TableStatus.available:
-        return const Color(0xFFECFDF5);
+        return const _TablePalette(
+          background: Color(0xFFDCFCE7),
+          border: Color(0xFF16A34A),
+          accent: Color(0xFF16A34A),
+        );
       case TableStatus.occupied:
-        return const Color(0xFFFEF2F2);
+        return const _TablePalette(
+          background: Color(0xFFFFFFFF),
+          border: Color(0xFFDC2626),
+          accent: Color(0xFFDC2626),
+        );
       case TableStatus.printed:
-        return const Color(0xFFFFFBEB);
+        return const _TablePalette(
+          background: Color(0xFFFEF3C7),
+          border: Color(0xFFF59E0B),
+          accent: Color(0xFFB45309),
+        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = _getStatusColor(table.status);
-    final statusBg = _getStatusBg(table.status);
-    final waiterLabel = table.waiterName?.trim() ?? '';
-    final isReservedState =
-        table.status == TableStatus.occupied && waiterLabel.contains('محجوز');
+    final palette = _paletteFor();
+    final subtitle = _subtitleLabel();
 
     return SizedBox(
-      width: width ?? 250,
-      height: height ?? 200,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final ultraCompact =
-              constraints.maxWidth < 170 || constraints.maxHeight < 130;
-          final effectiveCompact = compact ||
-              ultraCompact ||
-              constraints.maxWidth < 220 ||
-              constraints.maxHeight < 170;
-
-          final borderRadius = effectiveCompact ? 16.0 : 20.0;
-          final outerPadding =
-              ultraCompact ? 8.0 : (effectiveCompact ? 12.0 : 20.0);
-          final headerHeight = effectiveCompact ? 5.0 : 6.0;
-          final usersIconSize =
-              ultraCompact ? 14.0 : (effectiveCompact ? 16.0 : 18.0);
-          final seatsFontSize =
-              ultraCompact ? 11.0 : (effectiveCompact ? 12.0 : 14.0);
-          final tableNumberFontSize =
-              ultraCompact ? 24.0 : (effectiveCompact ? 30.0 : 36.0);
-          final statusFontSize =
-              ultraCompact ? 10.0 : (effectiveCompact ? 11.0 : 12.0);
-          final waiterFontSize =
-              ultraCompact ? 10.0 : (effectiveCompact ? 11.0 : 12.0);
-          final stateFontSize =
-              ultraCompact ? 11.0 : (effectiveCompact ? 13.0 : 14.0);
-
-          return RepaintBoundary(
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: isDeactivated ? null : onTap,
-                borderRadius: BorderRadius.circular(borderRadius),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  decoration: BoxDecoration(
-                    color: context.appCardBg,
-                    borderRadius: BorderRadius.circular(borderRadius),
-                    border: Border.all(
-                      color: isDeactivated
-                          ? Colors.grey.shade300
-                          : table.status == TableStatus.available
-                              ? Colors.grey.withValues(alpha: 0.1)
-                              : statusColor.withValues(alpha: 0.3),
-                      width: 2,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.04),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    children: [
-                      Container(
-                        height: headerHeight,
-                        decoration: BoxDecoration(
-                          color: statusColor,
-                          borderRadius: BorderRadius.vertical(
-                            top: Radius.circular(borderRadius),
+      width: width ?? 140,
+      height: height ?? 140,
+      child: RepaintBoundary(
+        child: Material(
+          color: palette.background,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            onTap: isDeactivated ? null : onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Ink(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: palette.border, width: 1.4),
+              ),
+              child: Stack(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          table.number,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isDeactivated
+                                ? palette.accent
+                                : const Color(0xFF0F172A),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                      ),
-                      Padding(
-                        padding: EdgeInsets.all(outerPadding),
-                        child: Column(
-                          mainAxisAlignment: ultraCompact
-                              ? MainAxisAlignment.spaceEvenly
-                              : MainAxisAlignment.center,
-                          children: [
-                            if (!ultraCompact)
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    LucideIcons.users,
-                                    size: usersIconSize,
-                                    color: Colors.grey[400],
-                                  ),
-                                  const SizedBox(width: 6),
-                                  // Actual-guests-at-the-table (from the
-                                  // waiter mesh) takes priority over the
-                                  // table's capacity; capacity is shown in
-                                  // parentheses when both are known so the
-                                  // cashier can spot an over-booked card.
-                                  Text(
-                                    (guestCount != null && guestCount! > 0)
-                                        ? '$guestCount / ${table.seats}'
-                                        : translationService.t(
-                                            'persons_count',
-                                            args: {'count': table.seats},
-                                          ),
-                                    style: TextStyle(
-                                      fontSize: seatsFontSize,
-                                      fontWeight: FontWeight.bold,
-                                      color: (guestCount != null &&
-                                              guestCount! > 0)
-                                          ? const Color(0xFF0F172A)
-                                          : Colors.grey[500],
-                                    ),
-                                  ),
-                                  if (table.qrImage != null) ...[
-                                    const SizedBox(width: 8),
-                                    Icon(
-                                      LucideIcons.qrCode,
-                                      size: effectiveCompact ? 14 : 16,
-                                      color: const Color(0xFFF58220),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            if (!ultraCompact)
-                              SizedBox(height: effectiveCompact ? 8 : 12),
-                            Flexible(
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Text(
-                                  table.number,
-                                  style: TextStyle(
-                                    fontSize: tableNumberFontSize,
-                                    fontWeight: FontWeight.w900,
-                                    // Match the reference palette: dark ink
-                                    // when available, status tint otherwise,
-                                    // grey when disabled.
-                                    color: isDeactivated
-                                        ? Colors.grey
-                                        : table.status == TableStatus.available
-                                            ? const Color(0xFF1E293B)
-                                            : statusColor,
-                                    height: 1,
-                                  ),
-                                ),
+                        if (subtitle != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.accent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                            SizedBox(
-                                height: ultraCompact
-                                    ? 4
-                                    : (effectiveCompact ? 8 : 12)),
-                            if (!isDeactivated &&
-                                table.status != TableStatus.available) ...[
-                              if (ultraCompact)
-                                Text(
-                                  table.status == TableStatus.printed
-                                      ? translationService.t('printed')
-                                      : translationService.t('occupied'),
-                                  style: TextStyle(
-                                    color: statusColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: stateFontSize,
-                                  ),
-                                )
-                              else ...[
-                                // Timer + waiter-name display removed per
-                                // product decision — the cashier only needs
-                                // to know a table is occupied, not who's
-                                // serving it or for how long. "جاري اخذ
-                                // الطلب" is kept as the one informational
-                                // badge that matters for workflow.
-                                if (table.status == TableStatus.occupied)
-                                  Padding(
-                                    padding: EdgeInsets.only(
-                                      top: isReservedState ? 0 : 8,
-                                    ),
-                                    child: isTakingOrder
-                                        ? Container(
-                                            padding: const EdgeInsets
-                                                .symmetric(
-                                              horizontal: 8,
-                                              vertical: 3,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: const Color(0xFFF59E0B)
-                                                  .withValues(alpha: 0.15),
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(
-                                                  LucideIcons.pencil,
-                                                  size: 12,
-                                                  color: Color(0xFFB45309),
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'جاري اخذ الطلب',
-                                                  style: TextStyle(
-                                                    color: const Color(
-                                                        0xFFB45309),
-                                                    fontSize: waiterFontSize,
-                                                    fontWeight:
-                                                        FontWeight.w800,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          )
-                                        : Container(
-                                            padding: const EdgeInsets
-                                                .symmetric(
-                                              horizontal: 10,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: statusBg,
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              translationService.t('occupied'),
-                                              style: TextStyle(
-                                                color: statusColor,
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: statusFontSize,
-                                              ),
-                                            ),
-                                          ),
-                                  ),
-                              ],
-                            ] else if (!isDeactivated)
+                          ),
+                        const Spacer(),
+                        Align(
+                          alignment: AlignmentDirectional.bottomEnd,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(LucideIcons.user,
+                                  size: 12, color: palette.accent),
+                              const SizedBox(width: 2),
                               Text(
-                                translationService.t('available'),
+                                '${(guestCount != null && guestCount! > 0) ? guestCount : table.seats}',
                                 style: TextStyle(
-                                  color: Colors.grey[400],
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: stateFontSize,
+                                  color: palette.accent,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                          ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (table.isPaid && !isDeactivated)
+                    const PositionedDirectional(
+                      bottom: 4,
+                      start: 6,
+                      child: Icon(
+                        LucideIcons.dollarSign,
+                        size: 12,
+                        color: Color(0xFFB45309),
+                      ),
+                    ),
+                  if (!isDeactivated &&
+                      (onMigrate != null ||
+                          onReleaseTable != null ||
+                          (activePickup == null &&
+                              table.status == TableStatus.available &&
+                              onRequestPickup != null) ||
+                          (activePickup != null &&
+                              activePickup!.isPending &&
+                              onCancelPickup != null)))
+                    PositionedDirectional(
+                      top: -2,
+                      end: -2,
+                      child: _buildActionsMenu(
+                        context,
+                        ultraCompact: true,
+                      ),
+                    ),
+                  if (!isDeactivated && _showPickupHint())
+                    PositionedDirectional(
+                      bottom: 4,
+                      start: table.isPaid ? 20 : 6,
+                      child: _buildPickupHint(),
+                    ),
+                  if (isDeactivated)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(LucideIcons.ban,
+                                  color: Colors.white, size: 22),
+                              const SizedBox(height: 4),
+                              Text(
+                                translationService.t('disabled'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      if (table.isPaid && !isDeactivated)
-                        Positioned(
-                          top: effectiveCompact ? 10 : 16,
-                          left: effectiveCompact ? 10 : 16,
-                          child: Container(
-                            padding: EdgeInsets.all(effectiveCompact ? 5 : 6),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFDCFCE7),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              LucideIcons.check,
-                              color: const Color(0xFF15803D),
-                              size: effectiveCompact ? 14 : 16,
-                            ),
-                          ),
-                        ),
-                      if (isDeactivated)
-                        Positioned.fill(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.6),
-                              borderRadius: BorderRadius.circular(borderRadius),
-                            ),
-                            child: Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    LucideIcons.ban,
-                                    color: Colors.white,
-                                    size: ultraCompact
-                                        ? 22
-                                        : (effectiveCompact ? 26 : 32),
-                                  ),
-                                  SizedBox(height: ultraCompact ? 4 : 8),
-                                  Text(
-                                    translationService.t('disabled'),
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: ultraCompact
-                                          ? 12
-                                          : (effectiveCompact ? 14 : 16),
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  if (!ultraCompact) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      translationService
-                                          .t('disabled_by_management'),
-                                      style: TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: effectiveCompact ? 11 : 12,
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (!isDeactivated)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: _buildPickupStrip(
-                            context,
-                            compact: effectiveCompact,
-                            ultraCompact: ultraCompact,
-                            borderRadius: borderRadius,
-                          ),
-                        ),
-                      // Compact actions menu for an occupied table: keeps the
-                      // grid uncluttered while still exposing migrate +
-                      // force-release actions behind a 3-dots button.
-                      if (!isDeactivated &&
-                          activePickup == null &&
-                          table.status != TableStatus.available &&
-                          (onMigrate != null || onReleaseTable != null))
-                        PositionedDirectional(
-                          top: effectiveCompact ? 6 : 10,
-                          start: effectiveCompact ? 6 : 10,
-                          child: _buildActionsMenu(
-                            context,
-                            ultraCompact: ultraCompact,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+                    ),
+                ],
               ),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildPickupStrip(
-    BuildContext context, {
-    required bool compact,
-    required bool ultraCompact,
-    required double borderRadius,
-  }) {
+  String? _subtitleLabel() {
+    if (isDeactivated) return null;
+    if (table.status == TableStatus.occupied && isTakingOrder) {
+      return 'جاري اخذ الطلب';
+    }
+    if (table.status == TableStatus.printed) {
+      return translationService.t('printed');
+    }
+    if (table.status == TableStatus.occupied) {
+      final pickup = activePickup;
+      if (pickup != null && pickup.isClaimed) {
+        return pickup.claimedByWaiterName;
+      }
+      final name = table.waiterName?.trim() ?? '';
+      if (name.isNotEmpty) return name;
+      return translationService.t('occupied');
+    }
     final pickup = activePickup;
-    // Occupied table with no pending pickup → migration is now exposed
-    // via the 3-dots menu overlay on the card body (see build()). The
-    // bottom strip stays empty so the tables grid doesn't feel crowded.
-    if (pickup == null && table.status != TableStatus.available) {
-      return const SizedBox.shrink();
-    }
-    if (pickup != null && pickup.cancelled) {
-      return const SizedBox.shrink();
-    }
-
-    final vPad = ultraCompact ? 4.0 : (compact ? 6.0 : 8.0);
-    final hPad = ultraCompact ? 6.0 : (compact ? 8.0 : 10.0);
-    final fontSize = ultraCompact ? 11.0 : (compact ? 12.0 : 13.0);
-
-    // Just-claimed: show a success pill with the waiter name.
+    if (pickup != null && pickup.isPending) return 'بانتظار نادل...';
     if (pickup != null && pickup.isClaimed) {
-      return Container(
-        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
-        decoration: BoxDecoration(
-          color: const Color(0xFF10B981).withValues(alpha: 0.12),
-          borderRadius: BorderRadius.vertical(
-            bottom: Radius.circular(borderRadius),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(LucideIcons.checkCircle,
-                size: 14, color: Color(0xFF059669)),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                '${pickup.claimedByWaiterName ?? '—'} استلم الطاولة',
-                style: TextStyle(
-                  color: const Color(0xFF059669),
-                  fontSize: fontSize,
-                  fontWeight: FontWeight.w700,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-      );
+      return '${pickup.claimedByWaiterName ?? ''} استلم';
     }
+    return null;
+  }
 
-    // Pending broadcast: show "waiting" + cancel.
-    if (pickup != null && pickup.isPending) {
-      if (onCancelPickup == null) return const SizedBox.shrink();
-      return Container(
-        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF58220).withValues(alpha: 0.12),
-          borderRadius: BorderRadius.vertical(
-            bottom: Radius.circular(borderRadius),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(Color(0xFFF58220)),
-                  ),
-                ),
-                SizedBox(width: 6),
-                Text(
-                  'بانتظار نادل...',
-                  style: TextStyle(
-                    color: Color(0xFFF58220),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-            InkWell(
-              onTap: onCancelPickup,
-              borderRadius: BorderRadius.circular(999),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 2,
-                ),
-                child: Text(
-                  'إلغاء',
-                  style: TextStyle(
-                    color: Colors.red.shade700,
-                    fontWeight: FontWeight.w700,
-                    fontSize: fontSize,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+  bool _showPickupHint() {
+    final pickup = activePickup;
+    if (pickup != null && pickup.isPending) return true;
+    return false;
+  }
 
-    // Table is available and no pickup yet — show the invitation button.
-    if (onRequestPickup == null) return const SizedBox.shrink();
-    return InkWell(
-      onTap: onRequestPickup,
-      borderRadius: BorderRadius.vertical(
-        bottom: Radius.circular(borderRadius),
+  Widget _buildPickupHint() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF58220).withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(999),
       ),
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad + 2),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF58220),
-          borderRadius: BorderRadius.vertical(
-            bottom: Radius.circular(borderRadius),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(LucideIcons.handMetal,
-                size: ultraCompact ? 13 : 15, color: Colors.white),
-            const SizedBox(width: 6),
-            Text(
-              'استلام',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: fontSize + 1,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
+      child: const SizedBox(
+        width: 10,
+        height: 10,
+        child: CircularProgressIndicator(
+          strokeWidth: 1.5,
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF58220)),
         ),
       ),
     );
@@ -1716,10 +1421,56 @@ class _NormalTableCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
         ),
         onSelected: (value) {
+          if (value == 'pickup' && onRequestPickup != null) onRequestPickup!();
+          if (value == 'cancel_pickup' && onCancelPickup != null) {
+            onCancelPickup!();
+          }
           if (value == 'migrate' && onMigrate != null) onMigrate!();
           if (value == 'release' && onReleaseTable != null) onReleaseTable!();
         },
         itemBuilder: (_) => [
+          if (activePickup == null &&
+              table.status == TableStatus.available &&
+              onRequestPickup != null)
+            const PopupMenuItem<String>(
+              value: 'pickup',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.handMetal,
+                      size: 16, color: Color(0xFFF58220)),
+                  SizedBox(width: 8),
+                  Text(
+                    'استلام',
+                    style: TextStyle(
+                      color: Color(0xFFF58220),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (activePickup != null &&
+              activePickup!.isPending &&
+              onCancelPickup != null)
+            const PopupMenuItem<String>(
+              value: 'cancel_pickup',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.x,
+                      size: 16, color: Color(0xFFDC2626)),
+                  SizedBox(width: 8),
+                  Text(
+                    'إلغاء الاستلام',
+                    style: TextStyle(
+                      color: Color(0xFFDC2626),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (onMigrate != null)
             const PopupMenuItem<String>(
               value: 'migrate',
@@ -1762,6 +1513,18 @@ class _NormalTableCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TablePalette {
+  final Color background;
+  final Color border;
+  final Color accent;
+
+  const _TablePalette({
+    required this.background,
+    required this.border,
+    required this.accent,
+  });
 }
 
 class _HeaderActionBtn extends StatelessWidget {

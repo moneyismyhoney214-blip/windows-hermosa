@@ -923,30 +923,17 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
       color: context.appPrimary,
       onRefresh: _load,
       child: LayoutBuilder(builder: (_, constraints) {
-        // Pick card size based on viewport:
-        //   phone (<420)  → 1 column, shorter card so the content fits
-        //   tablet / split → 2+ columns of ~220dp
-        //   expanded → 240dp cards, slightly wider aspect
+        // Uniform compact tiles — matches the reference layout where many
+        // tables fit per row on a tablet landscape.
         final w = constraints.maxWidth;
-        final double maxExtent;
-        final double aspect;
-        if (w < 420) {
-          maxExtent = w;
-          aspect = 1.6;
-        } else if (w < 900) {
-          maxExtent = 220;
-          aspect = 1.35;
-        } else {
-          maxExtent = 240;
-          aspect = 1.3;
-        }
+        final double maxExtent = w < 420 ? 110 : 130;
         return GridView.builder(
-          padding: const EdgeInsets.all(WaiterSpacing.md),
+          padding: const EdgeInsets.all(WaiterSpacing.sm),
           gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: maxExtent,
-            mainAxisSpacing: WaiterSpacing.sm + 2,
-            crossAxisSpacing: WaiterSpacing.sm + 2,
-            childAspectRatio: aspect,
+            mainAxisSpacing: WaiterSpacing.xs + 2,
+            crossAxisSpacing: WaiterSpacing.xs + 2,
+            childAspectRatio: 1.0,
           ),
           // Owner-hide rule: a waiter who has already submitted a
           // "Pay Later" order shouldn't still see that table in their
