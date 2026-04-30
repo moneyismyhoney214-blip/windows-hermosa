@@ -135,13 +135,16 @@ workflows:
             openssl genrsa -out "$CERT_KEY" 2048
           fi
 
+          # The codemagic CLI accepts the private key inline OR via the
+          # @file: prefix to load it from disk. The flag is
+          # `--certificate-key`; an earlier `--certificate-key-path`
+          # variant was removed.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
               --type IOS_APP_STORE \
-              --certificate-key-path="$CERT_KEY" \
-              --create \
-              --verbose
+              --certificate-key=@file:"$CERT_KEY" \
+              --create
 
-          keychain add-certificates --certificate-key-path="$CERT_KEY"
+          keychain add-certificates
           xcode-project use-profiles
           echo "✅ Code signing ready."
 
