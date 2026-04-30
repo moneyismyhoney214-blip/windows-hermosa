@@ -122,35 +122,22 @@ workflows:
           set -e
           keychain initialize
 
-          # ---- Step 1: Ensure bundle ID is registered to this team ----
-          echo "═══ Step 1: Bundle ID registration ═══"
-          if ! app-store-connect bundle-ids list --filter-identifier "$BUNDLE_ID" --json | grep -q "$BUNDLE_ID"; then
-            echo "Bundle ID not found — registering."
-            app-store-connect bundle-ids register "$BUNDLE_ID" --name "Hermosa POS"
-          else
-            echo "✅ Bundle ID already registered."
-          fi
-
-          # ---- Step 2: Ensure a Distribution certificate exists ----
-          echo "═══ Step 2: Distribution certificate ═══"
-          CERT_COUNT=$(app-store-connect certificates list --type IOS_DISTRIBUTION --json | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)")
-          echo "Existing IOS_DISTRIBUTION certificates: $CERT_COUNT"
-          if [ "$CERT_COUNT" -eq 0 ]; then
-            echo "No Distribution cert — creating one."
-            app-store-connect certificates create --type IOS_DISTRIBUTION --save
-          else
-            echo "✅ Distribution cert exists. Saving to working directory."
-            app-store-connect certificates list --type IOS_DISTRIBUTION --save
-          fi
-
-          # ---- Step 3: Fetch (or create) provisioning profile ----
-          echo "═══ Step 3: Fetch / create provisioning profile ═══"
+          # `fetch-signing-files --create` is the canonical Codemagic
+          # one-liner. With our App Store Connect API integration in
+          # `integrations:` above, it:
+          #   - registers the bundle ID if missing,
+          #   - creates an IOS_DISTRIBUTION certificate if none exists,
+          #   - creates an App Store provisioning profile,
+          #   - downloads cert + profile into the working directory,
+          # all in one call. Failed earlier when the implicit
+          # `environment.ios_signing` block tried to fetch a profile
+          # BEFORE this step ran; with that block removed (see comment
+          # in `environment:`), this command runs first and succeeds.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
               --type IOS_APP_STORE \
-              --create
+              --create \
+              --verbose
 
-          # ---- Step 4: Wire everything into keychain + Xcode ----
-          echo "═══ Step 4: Wire into keychain + Xcode project ═══"
           keychain add-certificates
           xcode-project use-profiles
           echo "✅ Code signing ready."
