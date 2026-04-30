@@ -95,12 +95,14 @@ workflows:
       flutter: 3.41.1
       xcode: 16.2
       cocoapods: default
-      # NOTE: `ios_signing` block intentionally OMITTED. When that block
-      # is present, Codemagic tries to auto-fetch a provisioning profile
-      # BEFORE our `Set up code signing` script runs — and if no profile
-      # exists yet (first build for this bundle), the auto-fetch fails
-      # with "No matching profiles found" before our script can create
-      # one. We handle the full create-or-fetch flow manually below.
+      # Codemagic-managed signing. Codemagic stores the Distribution
+      # certificate's private key in its own signing-certificate DB and
+      # reuses it across builds, so we don't have to ship a private key
+      # in env vars or regenerate one per build (which orphans the cert
+      # at Apple — that bit us in build #12 → #13).
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: p.cash.hermosaapp.com
       vars:
         BUNDLE_ID: "p.cash.hermosaapp.com"
         APP_STORE_APPLE_ID: $APP_STORE_APPLE_ID
@@ -117,37 +119,6 @@ workflows:
           source: true
 
     scripts:
-      - name: Set up code signing (App Store)
-        script: |
-          set -e
-          keychain initialize
-
-          # Apple's Distribution certificate is generated from a CSR
-          # signed by a private key that *we* must own. Codemagic does
-          # not auto-generate it: when `fetch-signing-files --create`
-          # decides it needs to register a new certificate, it requires
-          # the private key to be passed explicitly. We generate a
-          # 2048-bit RSA key once per build (acceptable because we never
-          # ship the private key — Apple only stores the cert it signs).
-          CERT_KEY=/tmp/cert_private_key.pem
-          if [ ! -f "$CERT_KEY" ]; then
-            echo "Generating per-build RSA private key for the Distribution certificate."
-            openssl genrsa -out "$CERT_KEY" 2048
-          fi
-
-          # The codemagic CLI accepts the private key inline OR via the
-          # @file: prefix to load it from disk. The flag is
-          # `--certificate-key`; an earlier `--certificate-key-path`
-          # variant was removed.
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-              --type IOS_APP_STORE \
-              --certificate-key=@file:"$CERT_KEY" \
-              --create
-
-          keychain add-certificates
-          xcode-project use-profiles
-          echo "✅ Code signing ready."
-
       - name: Bump build number from App Store Connect
         script: |
           set -e
