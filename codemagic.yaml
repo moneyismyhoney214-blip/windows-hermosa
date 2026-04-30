@@ -183,9 +183,14 @@ workflows:
           # Pull the highest build number across TestFlight + App Store
           # for this app, then increment by 1. Keeps Codemagic builds
           # monotonic without us having to bump pubspec.yaml every time.
-          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo "0")
+          #
+          # Use `get-latest-build-number` (not `get-latest-app-store-...`)
+          # because the App Store-only variant ignores TestFlight builds
+          # that are still processing — that gave us a duplicate build #1
+          # collision in build #20 right after #19 had just uploaded.
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo "0")
           NEXT_BUILD=$(( LATEST_BUILD_NUMBER + 1 ))
-          echo "Latest App Store build: $LATEST_BUILD_NUMBER → using $NEXT_BUILD"
+          echo "Latest build across TestFlight+AppStore: $LATEST_BUILD_NUMBER → using $NEXT_BUILD"
           echo "BUILD_NUMBER=$NEXT_BUILD" >> $CM_ENV
 
       - name: Restore NearPay developer cert (optional)
