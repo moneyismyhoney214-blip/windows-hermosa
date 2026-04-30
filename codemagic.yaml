@@ -95,14 +95,14 @@ workflows:
       flutter: 3.41.1
       xcode: 16.2
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: p.cash.hermosaapp.com
+      # NOTE: `ios_signing` block intentionally OMITTED. When that block
+      # is present, Codemagic tries to auto-fetch a provisioning profile
+      # BEFORE our `Set up code signing` script runs — and if no profile
+      # exists yet (first build for this bundle), the auto-fetch fails
+      # with "No matching profiles found" before our script can create
+      # one. We handle the full create-or-fetch flow manually below.
       vars:
         BUNDLE_ID: "p.cash.hermosaapp.com"
-        # Set this in Codemagic UI as a *secret* variable. Read by the
-        # publishing block below to attach the build to the correct
-        # App Store Connect record. Numeric value, e.g. 6745123456.
         APP_STORE_APPLE_ID: $APP_STORE_APPLE_ID
 
     triggering:
