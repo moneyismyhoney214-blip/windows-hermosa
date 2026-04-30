@@ -62,7 +62,10 @@ class OrderPanel extends StatefulWidget {
   final bool requireCustomerSelection;
   final bool cdsEnabled;
   final bool kdsEnabled;
-  final double taxRate;
+  /// Optional override; null falls through to the active branch's VAT
+  /// config (`ApiConstants.effectiveTaxRate`) which yields 0 when the
+  /// branch has tax disabled.
+  final double? taxRate;
 
   /// When true, the panel operates in salon mode:
   /// - Order type dropdown is hidden (type is always "services")
@@ -117,7 +120,7 @@ class OrderPanel extends StatefulWidget {
     this.requireCustomerSelection = true,
     this.cdsEnabled = true,
     this.kdsEnabled = true,
-    this.taxRate = 0.15,
+    this.taxRate,
     this.isSalonMode = false,
     this.availableDeposits = const [],
     this.selectedDepositId,
@@ -179,9 +182,26 @@ class _OrderPanelState extends State<OrderPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final subtotal =
+    final cartSum =
         widget.cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
-    final tax = subtotal * widget.taxRate.clamp(0.0, 1.0);
+    // Caller override wins; otherwise the branch-level VAT config decides
+    // (returns 0 when the branch has tax off, suppressing the tax line).
+    final effectiveTaxRate =
+        (widget.taxRate ?? ApiConstants.effectiveTaxRate)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    // Salon services come back from the API tax-inclusive — extract the
+    // pre-tax portion so the footer rows reconcile to the displayed total
+    // (e.g. 350 → subtotal 304.35 + tax 45.65) instead of adding VAT on top.
+    final double subtotal;
+    final double tax;
+    if (widget.isSalonMode && effectiveTaxRate > 0) {
+      subtotal = cartSum / (1 + effectiveTaxRate);
+      tax = cartSum - subtotal;
+    } else {
+      subtotal = cartSum;
+      tax = subtotal * effectiveTaxRate;
+    }
     final hasItems = widget.cart.isNotEmpty;
     final displayIntegrationEnabled = widget.cdsEnabled || widget.kdsEnabled;
 
@@ -291,16 +311,16 @@ class _OrderPanelState extends State<OrderPanel> {
                               prefixIcon: const Icon(LucideIcons.car),
                               suffixIcon: const Icon(Icons.dialpad_outlined),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: context.appSurfaceAlt,
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
                                 borderSide:
-                                    const BorderSide(color: Color(0xFFE2E8F0)),
+                                    BorderSide(color: context.appBorder),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
                                 borderSide:
-                                    const BorderSide(color: Color(0xFFE2E8F0)),
+                                    BorderSide(color: context.appBorder),
                               ),
                             ),
                           ),

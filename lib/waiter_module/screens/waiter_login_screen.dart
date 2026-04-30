@@ -7,6 +7,8 @@ import '../../locator.dart';
 import '../../services/app_themes.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/language_service.dart';
+import '../../services/waitlist_mesh_bridge.dart';
+import '../../services/waitlist_service.dart';
 import '../services/waiter_billing_service.dart';
 import '../services/waiter_controller.dart';
 import '../services/waiter_session_service.dart';
@@ -62,6 +64,8 @@ class _WaiterLoginScreenState extends State<WaiterLoginScreen> {
       // and fails with "SDK could not be initialized".
       unawaited(getIt<WaiterBillingService>().hydrateNearPayConfig());
       await widget.controller.start();
+      unawaited(waitlistService.initialize());
+      waitlistMeshBridge.attach(widget.controller);
       unawaited(WaiterHaptics.success());
       if (!mounted) return;
       Navigator.of(context).pushReplacement(

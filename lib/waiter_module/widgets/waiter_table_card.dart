@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../models.dart';
+import '../../services/language_service.dart';
 
 /// Visual card representing one table in the waiter's grid.
 ///
@@ -20,6 +21,11 @@ class WaiterTableCard extends StatelessWidget {
   final VoidCallback? onMigrate;
   final VoidCallback? onEditOrder;
   final VoidCallback? onReleaseTable;
+  /// When non-null, the table was assigned to this waitlist party but
+  /// they haven't arrived yet. We overlay a small orange "holding"
+  /// pill so the host doesn't accidentally give the table to someone
+  /// else who walks in.
+  final String? holdingForName;
 
   const WaiterTableCard({
     super.key,
@@ -34,6 +40,7 @@ class WaiterTableCard extends StatelessWidget {
     this.onMigrate,
     this.onEditOrder,
     this.onReleaseTable,
+    this.holdingForName,
   });
 
   @override
@@ -146,6 +153,12 @@ class WaiterTableCard extends StatelessWidget {
     final hasOwner =
         ownerWaiterId != null && ownerWaiterId!.trim().isNotEmpty;
     if (!hasOwner && table.status == TableStatus.available) {
+      // Holding-for-waitlist always wins over the plain "free" state —
+      // otherwise the host sees a green card that looks like a fresh
+      // table to hand to the next walk-in.
+      if (holdingForName != null && holdingForName!.trim().isNotEmpty) {
+        return _CardState.waitlistHold;
+      }
       return _CardState.free;
     }
     if (isTakingOrder && hasOwner) return _CardState.takingOrder;
@@ -154,6 +167,12 @@ class WaiterTableCard extends StatelessWidget {
   }
 
   String? _subtitle(_CardState state) {
+    if (state == _CardState.waitlistHold) {
+      return translationService.t(
+        'waitlist_table_pill_waiting_for',
+        args: {'name': holdingForName!},
+      );
+    }
     if (state == _CardState.takingOrder) return 'جاري اخذ الطلب';
     if (state == _CardState.paymentPending) return 'تم أخذ الطلب';
     if (state == _CardState.mine &&
@@ -257,6 +276,16 @@ class WaiterTableCard extends StatelessWidget {
           title: Color(0xFF0F172A),
           meta: Color(0xFF16A34A),
         );
+      case _CardState.waitlistHold:
+        // Warm amber — same visual language as the assign banner so
+        // the host links the card to the pending notification.
+        return const _Palette(
+          accent: Color(0xFFB45309),
+          background: Color(0xFFFEF3C7),
+          border: Color(0xFFF59E0B),
+          title: Color(0xFF0F172A),
+          meta: Color(0xFFB45309),
+        );
       case _CardState.mine:
       case _CardState.takingOrder:
       case _CardState.otherWaiter:
@@ -282,7 +311,15 @@ class WaiterTableCard extends StatelessWidget {
   String _semanticsLabel() => table.number;
 }
 
-enum _CardState { free, mine, takingOrder, otherWaiter, paid, paymentPending }
+enum _CardState {
+  free,
+  mine,
+  takingOrder,
+  otherWaiter,
+  paid,
+  paymentPending,
+  waitlistHold,
+}
 
 class _Palette {
   final Color accent;

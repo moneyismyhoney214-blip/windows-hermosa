@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../services/api/api_constants.dart';
 import '../services/api/invoice_service.dart';
 import '../services/display_app_service.dart';
 
@@ -214,10 +215,14 @@ class InvoiceItemConverter {
     }).toList();
   }
 
-  /// Calculate invoice totals from items
+  /// Calculate invoice totals from items.
+  ///
+  /// `taxRate` defaults to the active branch's VAT rate (yields 0 when the
+  /// branch has tax disabled). Callers can still pass an explicit override
+  /// for one-off computations (e.g. previewing an alternate rate).
   static Map<String, double> calculateTotals(
     List<Map<String, dynamic>> items, {
-    double taxRate = 0.15, // 15% VAT
+    double? taxRate,
   }) {
     double subtotal = 0.0;
 
@@ -227,7 +232,9 @@ class InvoiceItemConverter {
       subtotal += price * quantity;
     }
 
-    final tax = subtotal * taxRate;
+    final effectiveRate =
+        (taxRate ?? ApiConstants.effectiveTaxRate).clamp(0.0, 1.0).toDouble();
+    final tax = subtotal * effectiveRate;
     final total = subtotal + tax;
 
     return {

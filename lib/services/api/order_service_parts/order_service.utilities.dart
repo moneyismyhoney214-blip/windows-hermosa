@@ -88,7 +88,7 @@ extension OrderServiceUtilities on OrderService {
       );
       if (name.isNotEmpty) {
         signatures
-            .add('name:$name|qty:$quantity|total:${total.toStringAsFixed(2)}');
+            .add('name:$name|qty:$quantity|total:${total.toStringAsFixed(ApiConstants.digitsNumber)}');
       }
     }
 
@@ -100,8 +100,8 @@ extension OrderServiceUtilities on OrderService {
     final quantityRaw =
         normalized['quantity'] ?? normalized['qty'] ?? normalized['count'];
     final quantity = quantityRaw is num
-        ? quantityRaw.toInt()
-        : int.tryParse(quantityRaw?.toString() ?? '') ?? 1;
+        ? quantityRaw.toDouble()
+        : double.tryParse(quantityRaw?.toString() ?? '') ?? 1.0;
     final unitPrice = _parseFlexibleDouble(
       normalized['unit_price'] ??
           normalized['unitPrice'] ??

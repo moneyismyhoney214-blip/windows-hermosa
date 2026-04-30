@@ -6,6 +6,7 @@ import '../models.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/device_service.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 import '../services/zatca_printer_service.dart';
 import '../locator.dart';
 import '../widgets/daily_closing_report_html_template.dart';
@@ -104,7 +105,7 @@ class _ClosingReportPreviewScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.appBg,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 1,

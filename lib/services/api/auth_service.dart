@@ -6,6 +6,7 @@ import 'api_constants.dart';
 import 'base_client.dart';
 import '../../models/branch.dart';
 import '../nearpay/nearpay_service.dart';
+import '../whatsapp_service.dart';
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
@@ -13,6 +14,12 @@ class AuthService {
   static const String _branchIdKey = 'branch_id';
   static const String _sellerIdKey = 'seller_id';
   static const String _currencyKey = 'currency';
+  static const String _hasTaxKey = 'has_tax';
+  static const String _taxPercentageKey = 'tax_percentage';
+  static const String _digitsNumberKey = 'digits_number';
+  static const String _haveWaitersKey = 'have_waiters';
+  static const String _whatsappEnabledKey = 'whatsapp_enabled';
+  static const String _branchCountryIdKey = 'branch_country_id';
   String? _cachedToken;
   Map<String, dynamic>? _cachedUser;
   List<Map<String, dynamic>> _cachedLoginBranches = [];
@@ -150,13 +157,23 @@ class AuthService {
         if (id == null || id <= 0) continue;
         final existing = byId[id];
         if (existing == null) {
-          byId[id] = branch;
-        } else {
-          // Prefer the version that has more data (e.g. module field from profile/branches)
-          if (!existing.containsKey('module') && branch.containsKey('module')) {
-            byId[id] = branch;
-          }
+          byId[id] = Map<String, dynamic>.from(branch);
+          continue;
         }
+        // Fill missing keys from later sources. Login response is missing
+        // `module` + `have_waiters`; `/seller/branches` carries them
+        // (module nested under `type.module`). Don't clobber values that
+        // are already present and non-null on the first source.
+        branch.forEach((key, value) {
+          final cur = existing[key];
+          final curIsEmpty = cur == null ||
+              (cur is String && cur.isEmpty) ||
+              (cur is Map && cur.isEmpty) ||
+              (cur is List && cur.isEmpty);
+          if (curIsEmpty && value != null) {
+            existing[key] = value;
+          }
+        });
       }
     }
     return byId.values.toList();
@@ -172,12 +189,7 @@ class AuthService {
       if (resolved <= 0) return 0;
 
       if (first['taxObject'] is Map) {
-        final taxObject = (first['taxObject'] as Map)
-            .map((k, v) => MapEntry(k.toString(), v));
-        final currency = taxObject['currency']?.toString().trim();
-        if (currency != null && currency.isNotEmpty) {
-          ApiConstants.currency = currency;
-        }
+        _applyTaxObject(first['taxObject']);
       }
 
       return resolved;
@@ -185,6 +197,93 @@ class AuthService {
       print('⚠️ Failed to resolve branch from profile branches: $e');
       return 0;
     }
+  }
+
+  /// Mirror a backend `taxObject` payload onto the global ApiConstants.
+  /// Accepts either the canonical shape returned by `/seller/login` and
+  /// `/seller/filters/branches/{id}/getTax`:
+  ///
+  /// ```json
+  /// { "has_tax": true, "tax_percentage": 15,
+  ///   "digits_number": 2, "currency": "ر.س" }
+  /// ```
+  ///
+  /// or any subset of those keys. Missing fields keep the existing
+  /// values. Returns true when at least one field was updated, so
+  /// callers can decide whether to persist.
+  bool _applyTaxObject(dynamic raw) {
+    if (raw is! Map) return false;
+    final tax = raw.map((k, v) => MapEntry(k.toString(), v));
+    var changed = false;
+
+    final hasTaxRaw = tax['has_tax'] ?? tax['hasTax'];
+    if (hasTaxRaw != null) {
+      final parsed = _coerceBool(hasTaxRaw);
+      if (parsed != null) {
+        ApiConstants.hasTax = parsed;
+        changed = true;
+      }
+    }
+
+    final percentageRaw = tax['tax_percentage'] ?? tax['taxPercentage'];
+    if (percentageRaw != null) {
+      final pct = _coerceNum(percentageRaw);
+      if (pct != null) {
+        // Backend may send 15 (percent) or 0.15 (rate). Normalize both.
+        final percent = pct > 1.0 ? pct : pct * 100.0;
+        ApiConstants.taxPercentage = percent.round();
+        ApiConstants.taxRate = (percent / 100.0).clamp(0.0, 1.0).toDouble();
+        changed = true;
+      }
+    }
+
+    final digitsRaw = tax['digits_number'] ?? tax['digitsNumber'];
+    if (digitsRaw != null) {
+      final digits = _coerceNum(digitsRaw);
+      if (digits != null) {
+        ApiConstants.digitsNumber = digits.round();
+        changed = true;
+      }
+    }
+
+    final currencyRaw = tax['currency']?.toString().trim();
+    if (currencyRaw != null && currencyRaw.isNotEmpty) {
+      ApiConstants.currency = currencyRaw;
+      changed = true;
+    }
+
+    if (changed) {
+      print(
+          '🏷️ Tax config applied → hasTax=${ApiConstants.hasTax}, '
+          'percentage=${ApiConstants.taxPercentage}%, '
+          'rate=${ApiConstants.taxRate}, currency=${ApiConstants.currency}');
+    }
+    return changed;
+  }
+
+  bool? _coerceBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final s = value.trim().toLowerCase();
+      if (['1', 'true', 'yes', 'on', 'active'].contains(s)) return true;
+      if (['0', 'false', 'no', 'off', 'inactive'].contains(s)) return false;
+    }
+    return null;
+  }
+
+  num? _coerceNum(dynamic value) {
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value.trim());
+    return null;
+  }
+
+  /// Persist the current tax config alongside the active session.
+  Future<void> _persistTaxConfig(SharedPreferences prefs) async {
+    await prefs.setBool(_hasTaxKey, ApiConstants.hasTax);
+    await prefs.setInt(_taxPercentageKey, ApiConstants.taxPercentage);
+    await prefs.setInt(_digitsNumberKey, ApiConstants.digitsNumber);
+    await prefs.setString(_currencyKey, ApiConstants.currency);
   }
 
   /// Initialize the auth service - must be called before using
@@ -250,11 +349,41 @@ class AuthService {
       ApiConstants.currency = savedCurrency;
       print('💰 Currency loaded from storage: $savedCurrency');
     }
+    // Load tax config — keeps cashier math correct on cold start before
+    // the first network call. Defaults stay in place when prefs are missing.
+    final savedHasTax = prefs.getBool(_hasTaxKey);
+    if (savedHasTax != null) ApiConstants.hasTax = savedHasTax;
+    final savedTaxPct = prefs.getInt(_taxPercentageKey);
+    if (savedTaxPct != null) {
+      ApiConstants.taxPercentage = savedTaxPct;
+      ApiConstants.taxRate = (savedTaxPct / 100.0).clamp(0.0, 1.0).toDouble();
+    }
+    final savedDigits = prefs.getInt(_digitsNumberKey);
+    if (savedDigits != null) ApiConstants.digitsNumber = savedDigits;
+    if (savedHasTax != null || savedTaxPct != null) {
+      print(
+          '🏷️ Tax loaded from storage → hasTax=${ApiConstants.hasTax}, '
+          'percentage=${ApiConstants.taxPercentage}%');
+    }
     // Load Branch Module
     final savedModule = prefs.getString('branch_module');
     if (savedModule != null) {
       ApiConstants.branchModule = savedModule;
       print('🏷️ Branch module loaded from storage: $savedModule');
+    }
+    final savedHaveWaiters = prefs.getBool(_haveWaitersKey);
+    if (savedHaveWaiters != null) {
+      ApiConstants.haveWaiters = savedHaveWaiters;
+      print('🏷️ haveWaiters loaded from storage: $savedHaveWaiters');
+    }
+    final savedWhatsapp = prefs.getBool(_whatsappEnabledKey);
+    if (savedWhatsapp != null) {
+      ApiConstants.whatsappEnabled = savedWhatsapp;
+      print('🏷️ whatsappEnabled loaded from storage: $savedWhatsapp');
+    }
+    final savedCountryId = prefs.getInt(_branchCountryIdKey);
+    if (savedCountryId != null && savedCountryId > 0) {
+      ApiConstants.branchCountryId = savedCountryId;
     }
     if (_cachedToken != null) {
       BaseClient().setToken(_cachedToken!);
@@ -272,14 +401,14 @@ class AuthService {
     if (user != null) {
       await prefs.setString(_userKey, jsonEncode(user));
     }
-    // Save branch ID, Seller ID, Currency & Module
+    // Save branch ID, Seller ID, Currency, Tax & Module
     await prefs.setInt(_branchIdKey, ApiConstants.branchId);
     await prefs.setInt(_sellerIdKey, ApiConstants.sellerId);
-    await prefs.setString(_currencyKey, ApiConstants.currency);
+    await _persistTaxConfig(prefs);
     if (ApiConstants.branchModule.isNotEmpty) {
       await prefs.setString('branch_module', ApiConstants.branchModule);
     }
-    print('💾 Branch, Seller ID, Currency & Module saved to storage');
+    print('💾 Branch, Seller ID, Currency, Tax & Module saved to storage');
   }
 
   /// Clear token from SharedPreferences
@@ -290,12 +419,30 @@ class AuthService {
     await prefs.remove(_branchIdKey);
     await prefs.remove(_sellerIdKey);
     await prefs.remove(_currencyKey);
+    await prefs.remove(_hasTaxKey);
+    await prefs.remove(_taxPercentageKey);
+    await prefs.remove(_digitsNumberKey);
     await prefs.remove('branch_module');
+    await prefs.remove(_haveWaitersKey);
+    await prefs.remove(_whatsappEnabledKey);
+    await prefs.remove(_branchCountryIdKey);
     // Reset defaults
     ApiConstants.branchId = 0;
     ApiConstants.sellerId = 1;
     ApiConstants.currency = 'ر.س';
+    ApiConstants.hasTax = true;
+    ApiConstants.taxPercentage = 15;
+    ApiConstants.taxRate = 0.15;
+    ApiConstants.digitsNumber = 2;
     ApiConstants.branchModule = '';
+    ApiConstants.haveWaiters = true;
+    ApiConstants.whatsappEnabled = true;
+    ApiConstants.branchCountryId = 1;
+    // Drop the previous branch's WAWP creds so the next session starts
+    // clean. Without this, the old `instance_id` + `access_token` would
+    // sit in memory until the new branch's `/seller/branches/{id}/settings`
+    // call returns.
+    whatsAppService.clearBackendCredentials();
     print('🗑️ Session data cleared from storage');
   }
 
@@ -383,20 +530,29 @@ class AuthService {
               '⚠️ No valid branch_id in login payload. Branch remains unset (0).');
         }
 
-        // Extract currency from first branch if available
+        // Extract tax/currency config from the active branch's `taxObject`.
+        // Prefer the branch we just resolved (`resolvedBranchId`) so that
+        // multi-branch accounts pick up the right VAT % per branch instead
+        // of always inheriting the first branch's settings.
         if (jsonData is Map &&
             jsonData['data'] is Map &&
             jsonData['data']['branches'] is List) {
           final branches = jsonData['data']['branches'] as List;
-          if (branches.isNotEmpty && branches.first is Map) {
-            final branchData = branches.first as Map;
-            if (branchData['taxObject'] is Map &&
-                branchData['taxObject']['currency'] != null) {
-              ApiConstants.currency =
-                  branchData['taxObject']['currency'].toString();
-              print(
-                  '💰 Currency set to: ${ApiConstants.currency} from login response');
+          Map? matchedBranch;
+          for (final entry in branches) {
+            if (entry is! Map) continue;
+            final id = _toInt(entry['id'] ?? entry['branch_id']);
+            if (id != null && id == resolvedBranchId) {
+              matchedBranch = entry;
+              break;
             }
+          }
+          matchedBranch ??=
+              (branches.isNotEmpty && branches.first is Map)
+                  ? branches.first as Map
+                  : null;
+          if (matchedBranch != null && matchedBranch['taxObject'] is Map) {
+            _applyTaxObject(matchedBranch['taxObject']);
           }
         }
 
@@ -442,9 +598,11 @@ class AuthService {
 
   // ──────────────────────────── Forgot password ────────────────────────────
   //
-  // Three-step mobile-based flow backed by `api.hermosaapp.com`:
-  //   1. POST /seller/forgot           body: mobile=...           → signed_route for step 2
-  //   2. POST <signed_route from 1>    body: otp=...              → signed_route for step 3
+  // Three-step flow backed by `api.hermosaapp.com`. The first step accepts
+  // either a mobile number or an email — the backend keys both into the
+  // same signed-route response so steps 2/3 are identical regardless:
+  //   1. POST /seller/forgot           body: mobile=... | email=... → signed_route for step 2
+  //   2. POST <signed_route from 1>    body: otp=...                → signed_route for step 3
   //   3. POST <signed_route from 2>    body: password, password_confirmation
   //
   // Each response nests `data.signed_route` holding the exact path (with
@@ -479,14 +637,22 @@ class AuthService {
     return null;
   }
 
-  /// Step 1 — request an OTP for [mobile]. Returns the `signed_route` the
-  /// caller must pass to [checkResetCode] once the user types the code.
-  Future<String> sendForgotPasswordCode(String mobile) async {
+  /// Step 1 — request an OTP for [identifier] (mobile number OR email).
+  /// Returns the `signed_route` the caller must pass to [checkResetCode]
+  /// once the user types the code.
+  ///
+  /// The backend uses two different form fields depending on the
+  /// identifier shape: `mobile` for phone numbers, `email` for anything
+  /// containing an `@`. We auto-detect so callers don't have to thread
+  /// a flag through their UI.
+  Future<String> sendForgotPasswordCode(String identifier) async {
     final uri = Uri.parse(
         '${ApiConstants.forgotBaseUrl}${ApiConstants.forgotEndpoint}');
+    final trimmed = identifier.trim();
+    final fieldName = trimmed.contains('@') ? 'email' : 'mobile';
     final request = http.MultipartRequest('POST', uri)
       ..headers.addAll(_forgotHeaders())
-      ..fields['mobile'] = mobile.trim();
+      ..fields[fieldName] = trimmed;
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);
     final parsed = _parseJsonBody(response.body);
@@ -738,17 +904,57 @@ class AuthService {
     return null;
   }
 
-  /// Update the active branch and persist it
+  /// Refresh the cached `have_waiters` flag for the active branch and
+  /// persist it. Used at session bootstrap to pick up changes the
+  /// backend made between app runs without forcing the user to reselect
+  /// the branch.
+  Future<void> persistHaveWaiters(bool value) async {
+    ApiConstants.haveWaiters = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_haveWaitersKey, value);
+  }
+
+  /// Same flow as [persistHaveWaiters] but for the `whatsapp_status` flag.
+  Future<void> persistWhatsappEnabled(bool value) async {
+    ApiConstants.whatsappEnabled = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_whatsappEnabledKey, value);
+  }
+
+  /// Update the active branch and persist it. Pulls VAT/currency from
+  /// the branch's `taxObject` so the global state stays consistent with
+  /// the branch the user is operating in.
   Future<void> updateActiveBranch(Branch branch) async {
     ApiConstants.branchId = branch.id;
-    ApiConstants.currency = branch.taxObject.currency;
     ApiConstants.branchModule = branch.module;
+    ApiConstants.haveWaiters = branch.haveWaiters;
+    ApiConstants.whatsappEnabled = branch.whatsappStatus;
+    if (branch.countryId > 0) {
+      ApiConstants.branchCountryId = branch.countryId;
+    }
+
+    // Apply taxObject (currency + has_tax + percentage + digits).
+    final tax = branch.taxObject;
+    ApiConstants.hasTax = tax.hasTax;
+    ApiConstants.taxPercentage = tax.taxPercentage;
+    ApiConstants.taxRate =
+        (tax.taxPercentage / 100.0).clamp(0.0, 1.0).toDouble();
+    ApiConstants.digitsNumber = tax.digitsNumber;
+    if (tax.currency.trim().isNotEmpty) {
+      ApiConstants.currency = tax.currency;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_branchIdKey, ApiConstants.branchId);
-    await prefs.setString(_currencyKey, ApiConstants.currency);
+    await _persistTaxConfig(prefs);
     await prefs.setString('branch_module', branch.module);
+    await prefs.setBool(_haveWaitersKey, branch.haveWaiters);
+    await prefs.setBool(_whatsappEnabledKey, branch.whatsappStatus);
+    if (branch.countryId > 0) {
+      await prefs.setInt(_branchCountryIdKey, branch.countryId);
+    }
 
-    print('🔄 Active Branch updated to: ${branch.name} (ID: ${branch.id}, module: ${branch.module})');
+    print(
+        '🔄 Active Branch updated to: ${branch.name} (ID: ${branch.id}, module: ${branch.module}, hasTax=${ApiConstants.hasTax}, taxPercentage=${ApiConstants.taxPercentage}%, haveWaiters=${branch.haveWaiters}, whatsappEnabled=${branch.whatsappStatus}, country=${branch.countryId})');
   }
 }

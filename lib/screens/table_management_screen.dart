@@ -1,9 +1,12 @@
 import 'dart:async';
-import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../dialogs/waitlist_notify_dialog.dart';
 import '../models.dart';
+import '../models/waitlist_entry.dart';
+import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/table_service.dart';
@@ -11,11 +14,16 @@ import '../services/language_service.dart';
 import '../services/app_themes.dart';
 import '../services/print_orchestrator_service.dart';
 import '../services/printer_role_registry.dart';
+import '../services/waitlist_assign_controller.dart';
+import '../services/waitlist_service.dart';
+import '../services/whatsapp_service.dart';
 import '../locator.dart';
 import '../waiter_module/dialogs/send_cashier_message_dialog.dart';
 import '../waiter_module/models/table_pickup_request.dart';
 import '../waiter_module/models/waiter_table_event.dart';
 import '../waiter_module/services/waiter_controller.dart';
+import '../widgets/waitlist_assign_banner.dart';
+import '../widgets/waitlist_sheet.dart';
 
 class TableManagementScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -40,8 +48,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   List<TableItem> _tables = [];
 
   final Map<String, bool> _deactivatedTables = {};
-  final Map<String, Offset> _tablePositions = {};
-  final GlobalKey _gridCanvasKey = GlobalKey();
+  String? _selectedSectionKey;
 
   /// Latest pickup request per table id. A table with an entry here has
   /// either an outstanding broadcast or a just-claimed/cancelled one
@@ -57,9 +64,6 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   StreamSubscription<TablePickupRequest>? _pickupUpdateSub;
   StreamSubscription<WaiterTableEventEnvelope>? _tableEventSub;
 
-  static const double _tableCardWidth = 140;
-  static const double _tableCardHeight = 140;
-
   @override
   void initState() {
     super.initState();
@@ -67,6 +71,13 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     _pickupUpdateSub = _waiter.onPickupUpdate.listen(_onPickupUpdate);
     _tableEventSub = _waiter.onTableEvent.listen(_onTableEvent);
     _waiter.pickupStore.addListener(_onPickupStoreChanged);
+    // Waitlist: hydrate the stores and re-render when active entries
+    // change (badge count + "waiting for" pill) or when the host enters
+    // table-assign mode.
+    unawaited(waitlistService.initialize());
+    unawaited(whatsAppService.initialize());
+    waitlistService.addListener(_onWaitlistChanged);
+    waitlistAssignController.addListener(_onAssignModeChanged);
     _loadTables();
   }
 
@@ -76,7 +87,17 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     _pickupUpdateSub?.cancel();
     _tableEventSub?.cancel();
     _waiter.pickupStore.removeListener(_onPickupStoreChanged);
+    waitlistService.removeListener(_onWaitlistChanged);
+    waitlistAssignController.removeListener(_onAssignModeChanged);
     super.dispose();
+  }
+
+  void _onWaitlistChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onAssignModeChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onPickupStoreChanged() {
@@ -532,7 +553,6 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
       if (mounted) {
         setState(() {
           _tables = tables;
-          _initializeTablePositions();
           _isLoading = false;
         });
       }
@@ -578,33 +598,56 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     }
   }
 
-  void _initializeTablePositions() {
-    final filteredTables = _tables;
-    final screenWidth = MediaQuery.of(context).size.width;
-
-    const columns = 3;
-    final spacingX = screenWidth / columns;
-    const spacingY = 220.0;
-    final startX = spacingX / 2 - 125;
-    const startY = 50.0;
-
-    for (int i = 0; i < filteredTables.length; i++) {
-      final table = filteredTables[i];
-      if (_tablePositions[table.id] == null) {
-        final col = i % columns;
-        final row = i ~/ columns;
-        _tablePositions[table.id] = Offset(
-          startX + col * spacingX,
-          startY + row * spacingY,
-        );
-      }
+  /// Single entry point for every tap on a table card. Routes through
+  /// the waitlist assign flow first, then falls back to the default
+  /// "open table" behaviour.
+  Future<void> _handleTableTap(TableItem table) async {
+    final pending = waitlistAssignController.pending;
+    if (pending != null) {
+      await _tryAssignWaitlistEntry(pending, table);
+      return;
+    }
+    // If this table is already "holding" a notified party, open the
+    // normal flow — the cashier is about to seat them.
+    final linked = waitlistService.entryForTable(table.id);
+    await _checkTableStatus(table);
+    // Best-effort cleanup: after the cashier opens the table (order
+    // screen), we mark the party as seated. If onTableTap didn't
+    // actually open anything (e.g. a lock dialog showed instead) the
+    // UI is still correct — the party stays "notified" until manually
+    // resolved.
+    if (linked != null && table.status == TableStatus.available) {
+      unawaited(waitlistService.markSeated(linked.id));
     }
   }
 
-  void _updateTablePosition(String tableId, Offset newPosition) {
-    setState(() {
-      _tablePositions[tableId] = newPosition;
-    });
+  Future<void> _tryAssignWaitlistEntry(
+    WaitlistEntry entry,
+    TableItem table,
+  ) async {
+    if (table.status != TableStatus.available) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFDC2626),
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            translationService.t('waitlist_assign_table_unavailable'),
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      );
+      return;
+    }
+    await WaitlistNotifyDialog.show(
+      context,
+      entry: entry,
+      tableId: table.id,
+      tableNumber: table.number,
+    );
+  }
+
+  Future<void> _openWaitlistSheet() async {
+    await WaitlistSheet.show(context);
   }
 
   Future<void> _checkTableStatus(TableItem table) async {
@@ -727,19 +770,25 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                             textAlign: TextAlign.center,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w900,
-                              color: Color(0xFF1E293B),
+                              color: context.appText,
                             ),
                           ),
                         ),
-                        IconButton(
-                          onPressed: _openSendMessageDialog,
-                          tooltip: 'إرسال رسالة للنوادل',
-                          icon: const Icon(LucideIcons.messageSquare),
-                          color: const Color(0xFFF58220),
-                        ),
+                        if (ApiConstants.whatsappEnabled)
+                          _WaitlistHeaderIconButton(
+                            count: waitlistService.activeCount,
+                            onPressed: _openWaitlistSheet,
+                          ),
+                        if (ApiConstants.haveWaiters)
+                          IconButton(
+                            onPressed: _openSendMessageDialog,
+                            tooltip: 'إرسال رسالة للنوادل',
+                            icon: const Icon(LucideIcons.messageSquare),
+                            color: const Color(0xFFF58220),
+                          ),
                         IconButton(
                           onPressed: _loadTables,
                           icon: const Icon(LucideIcons.refreshCw),
@@ -763,18 +812,26 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                           ),
                         ),
                         Text(translationService.t('tables_management'),
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 24,
                                 fontWeight: FontWeight.w900,
-                                color: Color(0xFF1E293B))),
+                                color: context.appText)),
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            _HeaderActionBtn(
-                              icon: LucideIcons.messageSquare,
-                              label: 'رسالة للنوادل',
-                              onTap: _openSendMessageDialog,
-                            ),
+                            if (ApiConstants.whatsappEnabled)
+                              _WaitlistHeaderActionBtn(
+                                count: waitlistService.activeCount,
+                                onTap: _openWaitlistSheet,
+                              ),
+                            if (ApiConstants.haveWaiters) ...[
+                              const SizedBox(width: 8),
+                              _HeaderActionBtn(
+                                icon: LucideIcons.messageSquare,
+                                label: 'رسالة للنوادل',
+                                onTap: _openSendMessageDialog,
+                              ),
+                            ],
                             const SizedBox(width: 8),
                             _HeaderActionBtn(
                               icon: LucideIcons.refreshCw,
@@ -787,6 +844,10 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                     ),
             ),
 
+            // Waitlist assign banner — collapses to zero height when
+            // the host isn't in assign mode.
+            const WaitlistAssignBanner(),
+
             // Content Area
             Expanded(
               child: _isLoading
@@ -795,9 +856,14 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                       ? _buildErrorView()
                       : filteredTables.isEmpty
                           ? _buildEmptyView()
-                          : _buildTableGrid(filteredTables),
+                          : _buildTableGrid(_tablesForSelectedSection()),
             ),
 
+            // Bottom tabs — one per category, mirrors the reference layout
+            // where switching DINE IN / BAR TABLE / VIP TABLE filters the
+            // grid above.
+            if (!_isLoading && _error == null && _tables.isNotEmpty)
+              _buildSectionTabBar(),
           ],
         ),
       ),
@@ -850,14 +916,21 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   }
 
   Widget _buildTableGrid(List<TableItem> tables) {
-    final screenSize = MediaQuery.of(context).size;
-    final isCompact = screenSize.width < 900;
-
-    if (isCompact) {
+    // Use a single responsive grid for every screen size. The previous
+    // free-positioned canvas didn't reflow on resize, so toggling
+    // fullscreen made tiles vanish off-screen — the grid below always
+    // fills the available width regardless of the parent's constraints.
+    return LayoutBuilder(builder: (_, constraints) {
+      final w = constraints.maxWidth;
+      final double maxExtent = w < 430
+          ? 120
+          : w < 900
+              ? 140
+              : 170;
       return GridView.builder(
         padding: const EdgeInsets.all(8),
         gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: screenSize.width < 430 ? 110 : 130,
+          maxCrossAxisExtent: maxExtent,
           mainAxisSpacing: 6,
           crossAxisSpacing: 6,
           childAspectRatio: 1.0,
@@ -868,102 +941,150 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           final isDeactivated = _deactivatedTables[table.id] ?? false;
 
           final pickup = _pickupByTable[table.id];
-          final hasMeshOwner = _waiter.tableRegistry.ownerIdFor(table.id) != null;
+          final hasMeshOwner =
+              _waiter.tableRegistry.ownerIdFor(table.id) != null;
+          final waitlistHold = waitlistService.entryForTable(table.id);
+          final waiterEnabled = ApiConstants.haveWaiters;
           return _NormalTableCard(
+            key: ValueKey('table_${table.id}'),
             table: table,
             isDeactivated: isDeactivated,
             compact: true,
             width: double.infinity,
             height: double.infinity,
-            onTap: isDeactivated ? null : () => _checkTableStatus(table),
+            onTap: isDeactivated ? null : () => _handleTableTap(table),
             activePickup: pickup,
-            onRequestPickup: isDeactivated ? null : () => _requestPickup(table),
-            onCancelPickup:
-                isDeactivated ? null : () => _cancelPickup(table),
-            onMigrate: isDeactivated ? null : () => _migrateTable(table),
-            onReleaseTable: (isDeactivated || !hasMeshOwner)
+            onRequestPickup: (isDeactivated || !waiterEnabled)
+                ? null
+                : () => _requestPickup(table),
+            onCancelPickup: (isDeactivated || !waiterEnabled)
+                ? null
+                : () => _cancelPickup(table),
+            onMigrate: (isDeactivated || !waiterEnabled)
+                ? null
+                : () => _migrateTable(table),
+            onReleaseTable: (isDeactivated || !hasMeshOwner || !waiterEnabled)
                 ? null
                 : () => _forceReleaseTable(table),
             isTakingOrder: _takingOrderTables.contains(table.id),
             guestCount: _waiter.tableRegistry.guestCountFor(table.id),
+            holdingForName: waitlistHold?.customerName,
           );
         },
       );
-    }
+    });
+  }
 
-    final defaultCanvasWidth = screenSize.width;
-    final defaultCanvasHeight = math.max(420.0, screenSize.height - 260);
+  // Tables for the active bottom-tab section. If no section has been picked
+  // yet, default to the first one so the screen is never blank.
+  List<TableItem> _tablesForSelectedSection() {
+    final sections = _groupBySection(_tables);
+    if (sections.isEmpty) return const [];
+    _selectedSectionKey ??= sections.first.key;
+    final active = sections.firstWhere(
+      (s) => s.key == _selectedSectionKey,
+      orElse: () => sections.first,
+    );
+    _selectedSectionKey = active.key;
+    return active.tables;
+  }
 
-    const canvasPadding = 80.0;
-    double canvasWidth = defaultCanvasWidth;
-    double canvasHeight = defaultCanvasHeight;
-
-    for (final table in tables) {
-      final position = _tablePositions[table.id] ?? const Offset(100, 100);
-      canvasWidth = math.max(
-        canvasWidth,
-        position.dx + _tableCardWidth + canvasPadding,
-      );
-      canvasHeight = math.max(
-        canvasHeight,
-        position.dy + _tableCardHeight + canvasPadding,
-      );
-    }
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+  Widget _buildSectionTabBar() {
+    final sections = _groupBySection(_tables);
+    if (sections.length <= 1) return const SizedBox.shrink();
+    final activeKey = _selectedSectionKey ?? sections.first.key;
+    return Container(
+      decoration: BoxDecoration(
+        color: context.appCardBg,
+        border: Border(
+          top: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
         child: SizedBox(
-          key: _gridCanvasKey,
-          width: canvasWidth,
-          height: canvasHeight,
-          child: Stack(
+          height: 56,
+          child: Row(
             children: [
-              // PERF: stable ValueKey per table so Flutter can reuse the
-              // underlying Element/RenderObject across rebuilds (e.g. after
-              // drag or refresh) instead of tearing down and re-creating
-              // every card.
-              ...tables.map((rawTable) {
-                final table = rawTable;
-                final isDeactivated = _deactivatedTables[table.id] ?? false;
-                final position =
-                    _tablePositions[table.id] ?? const Offset(100, 100);
-
-                final pickup = _pickupByTable[table.id];
-                final hasMeshOwner =
-                    _waiter.tableRegistry.ownerIdFor(table.id) != null;
-                return _DraggableTableCard(
-                  key: ValueKey('table_${table.id}'),
-                  table: table,
-                  isDeactivated: isDeactivated,
-                  initialPosition: position,
-                  canvasKey: _gridCanvasKey,
-                  canvasSize: Size(canvasWidth, canvasHeight),
-                  onTap: isDeactivated ? null : () => _checkTableStatus(table),
-                  onPositionChanged: (newPosition) =>
-                      _updateTablePosition(table.id, newPosition),
-                  activePickup: pickup,
-                  onRequestPickup:
-                      isDeactivated ? null : () => _requestPickup(table),
-                  onCancelPickup:
-                      isDeactivated ? null : () => _cancelPickup(table),
-                  onMigrate:
-                      isDeactivated ? null : () => _migrateTable(table),
-                  onReleaseTable: (isDeactivated || !hasMeshOwner)
-                      ? null
-                      : () => _forceReleaseTable(table),
-                  isTakingOrder: _takingOrderTables.contains(table.id),
-                  guestCount:
-                      _waiter.tableRegistry.guestCountFor(table.id),
-                );
-              }),
+              for (final section in sections)
+                Expanded(
+                  child: InkWell(
+                    onTap: () =>
+                        setState(() => _selectedSectionKey = section.key),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(
+                            color: section.key == activeKey
+                                ? const Color(0xFFF58220)
+                                : Colors.transparent,
+                            width: 3,
+                          ),
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        section.title,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: section.key == activeKey
+                              ? const Color(0xFFF58220)
+                              : context.appText,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
   }
+
+  // Groups tables by `category_name`. The "General" bucket is always
+  // present (even when empty) so the user can land on it after a refresh
+  // even if the backend now returns a category for every table.
+  List<_RestaurantTableSection> _groupBySection(List<TableItem> tables) {
+    const generalKey = '__none__';
+    final generalTitle = translationService.t('uncategorized_section');
+    final order = <String>[generalKey];
+    final byKey = <String, _RestaurantTableSection>{
+      generalKey: _RestaurantTableSection(
+        key: generalKey,
+        title: generalTitle,
+        tables: [],
+      ),
+    };
+    for (final t in tables) {
+      final raw = t.categoryName?.trim();
+      final isGeneral = raw == null || raw.isEmpty;
+      final key = isGeneral ? generalKey : raw;
+      final title = isGeneral ? generalTitle : raw;
+      final bucket = byKey.putIfAbsent(key, () {
+        order.add(key);
+        return _RestaurantTableSection(
+            key: key, title: title, tables: []);
+      });
+      bucket.tables.add(t);
+    }
+    return [for (final k in order) byKey[k]!];
+  }
+}
+
+class _RestaurantTableSection {
+  final String key;
+  final String title;
+  final List<TableItem> tables;
+  _RestaurantTableSection({
+    required this.key,
+    required this.title,
+    required this.tables,
+  });
 }
 
 class GridPainter extends CustomPainter {
@@ -988,148 +1109,6 @@ class GridPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _DraggableTableCard extends StatefulWidget {
-  final TableItem table;
-  final bool isDeactivated;
-  final Offset initialPosition;
-  final GlobalKey canvasKey;
-  final Size canvasSize;
-  final VoidCallback? onTap;
-  final Function(Offset) onPositionChanged;
-  final TablePickupRequest? activePickup;
-  final VoidCallback? onRequestPickup;
-  final VoidCallback? onCancelPickup;
-  final VoidCallback? onMigrate;
-  final VoidCallback? onReleaseTable;
-  final bool isTakingOrder;
-  final int? guestCount;
-
-  const _DraggableTableCard({
-    super.key,
-    required this.table,
-    required this.isDeactivated,
-    required this.initialPosition,
-    required this.canvasKey,
-    required this.canvasSize,
-    required this.onTap,
-    required this.onPositionChanged,
-    this.activePickup,
-    this.onRequestPickup,
-    this.onCancelPickup,
-    this.onMigrate,
-    this.onReleaseTable,
-    this.isTakingOrder = false,
-    this.guestCount,
-  });
-
-  @override
-  State<_DraggableTableCard> createState() => _DraggableTableCardState();
-}
-
-class _DraggableTableCardState extends State<_DraggableTableCard> {
-  static const double _cardWidth = 140;
-  static const double _cardHeight = 140;
-
-  late Offset _currentPosition;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentPosition = widget.initialPosition;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      left: _currentPosition.dx,
-      top: _currentPosition.dy,
-      child: Draggable<Offset>(
-        feedback: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(20),
-          child: SizedBox(
-            width: _cardWidth,
-            height: _cardHeight,
-            child: _NormalTableCard(
-              table: widget.table,
-              isDeactivated: widget.isDeactivated,
-            ),
-          ),
-        ),
-        childWhenDragging: Opacity(
-          opacity: 0.3,
-          child: SizedBox(
-            width: _cardWidth,
-            height: _cardHeight,
-            child: _NormalTableCard(
-              table: widget.table,
-              isDeactivated: widget.isDeactivated,
-            ),
-          ),
-        ),
-        onDragEnd: (details) {
-          final renderBox = widget.canvasKey.currentContext?.findRenderObject();
-          if (renderBox is! RenderBox) return;
-
-          final localPosition = renderBox.globalToLocal(details.offset);
-          final maxX = math.max(0.0, widget.canvasSize.width - _cardWidth);
-          final maxY = math.max(0.0, widget.canvasSize.height - _cardHeight);
-          final clamped = Offset(
-            localPosition.dx.clamp(0.0, maxX).toDouble(),
-            localPosition.dy.clamp(0.0, maxY).toDouble(),
-          );
-
-          setState(() => _currentPosition = clamped);
-          widget.onPositionChanged(clamped);
-        },
-        child: SizedBox(
-          width: _cardWidth,
-          height: _cardHeight,
-          child: Stack(
-            children: [
-              _NormalTableCard(
-                table: widget.table,
-                isDeactivated: widget.isDeactivated,
-                onTap: widget.onTap,
-                activePickup: widget.activePickup,
-                onRequestPickup: widget.onRequestPickup,
-                onCancelPickup: widget.onCancelPickup,
-                onMigrate: widget.onMigrate,
-                onReleaseTable: widget.onReleaseTable,
-                isTakingOrder: widget.isTakingOrder,
-                guestCount: widget.guestCount,
-              ),
-              // Drag handle indicator
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF58220),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.2),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    LucideIcons.move,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _NormalTableCard extends StatelessWidget {
   final TableItem table;
@@ -1159,7 +1138,13 @@ class _NormalTableCard extends StatelessWidget {
   /// table's capacity `seats`). Null when no active party.
   final int? guestCount;
 
+  /// When non-null the table was handed to this waitlist party but
+  /// they haven't arrived yet. Overrides the normal free-state color
+  /// so the host doesn't accidentally double-book.
+  final String? holdingForName;
+
   const _NormalTableCard({
+    super.key,
     required this.table,
     required this.isDeactivated,
     this.onTap,
@@ -1173,7 +1158,14 @@ class _NormalTableCard extends StatelessWidget {
     this.onReleaseTable,
     this.isTakingOrder = false,
     this.guestCount,
+    this.holdingForName,
   });
+
+  bool get _isHoldingForWaitlist {
+    if (isDeactivated) return false;
+    if (table.status != TableStatus.available) return false;
+    return holdingForName != null && holdingForName!.trim().isNotEmpty;
+  }
 
   _TablePalette _paletteFor() {
     if (isDeactivated) {
@@ -1181,6 +1173,16 @@ class _NormalTableCard extends StatelessWidget {
         background: Color(0xFFF1F5F9),
         border: Color(0xFFCBD5E1),
         accent: Color(0xFF64748B),
+      );
+    }
+    if (_isHoldingForWaitlist) {
+      // Warm amber — mirrors the waiter card + assign banner so the
+      // host reads "this table is reserved for an incoming party" at
+      // a glance.
+      return const _TablePalette(
+        background: Color(0xFFFEF3C7),
+        border: Color(0xFFF59E0B),
+        accent: Color(0xFFB45309),
       );
     }
     switch (table.status) {
@@ -1214,7 +1216,24 @@ class _NormalTableCard extends StatelessWidget {
       width: width ?? 140,
       height: height ?? 140,
       child: RepaintBoundary(
-        child: Material(
+        child: RawGestureDetector(
+          behavior: HitTestBehavior.opaque,
+          gestures: isDeactivated || !_hasAnyAction()
+              ? const <Type, GestureRecognizerFactory>{}
+              : <Type, GestureRecognizerFactory>{
+                  LongPressGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                          LongPressGestureRecognizer>(
+                    () => LongPressGestureRecognizer(
+                      duration: const Duration(seconds: 2),
+                    ),
+                    (instance) {
+                      instance.onLongPressStart = (details) =>
+                          _openActionsMenu(context, details.globalPosition);
+                    },
+                  ),
+                },
+          child: Material(
           color: palette.background,
           borderRadius: BorderRadius.circular(10),
           child: InkWell(
@@ -1291,23 +1310,8 @@ class _NormalTableCard extends StatelessWidget {
                         color: Color(0xFFB45309),
                       ),
                     ),
-                  if (!isDeactivated &&
-                      (onMigrate != null ||
-                          onReleaseTable != null ||
-                          (activePickup == null &&
-                              table.status == TableStatus.available &&
-                              onRequestPickup != null) ||
-                          (activePickup != null &&
-                              activePickup!.isPending &&
-                              onCancelPickup != null)))
-                    PositionedDirectional(
-                      top: -2,
-                      end: -2,
-                      child: _buildActionsMenu(
-                        context,
-                        ultraCompact: true,
-                      ),
-                    ),
+                  // 3-dots menu was replaced by a 2-second long-press
+                  // anywhere on the card — see RawGestureDetector above.
                   if (!isDeactivated && _showPickupHint())
                     PositionedDirectional(
                       bottom: 4,
@@ -1346,12 +1350,22 @@ class _NormalTableCard extends StatelessWidget {
             ),
           ),
         ),
+        ),
       ),
     );
   }
 
   String? _subtitleLabel() {
     if (isDeactivated) return null;
+    // Holding-for-waitlist overrides every other free-state signal —
+    // that table is effectively reserved, so "بانتظار نادل" or similar
+    // would confuse the host.
+    if (_isHoldingForWaitlist) {
+      return translationService.t(
+        'waitlist_table_pill_waiting_for',
+        args: {'name': holdingForName!},
+      );
+    }
     if (table.status == TableStatus.occupied && isTakingOrder) {
       return 'جاري اخذ الطلب';
     }
@@ -1399,119 +1413,120 @@ class _NormalTableCard extends StatelessWidget {
     );
   }
 
-  Widget _buildActionsMenu(
-    BuildContext context, {
-    required bool ultraCompact,
-  }) {
-    final size = ultraCompact ? 26.0 : 30.0;
-    return Material(
-      color: Colors.white,
-      shape: const CircleBorder(),
-      elevation: 1.5,
-      child: PopupMenuButton<String>(
-        tooltip: 'خيارات',
-        padding: EdgeInsets.zero,
-        icon: Icon(
-          LucideIcons.moreVertical,
-          size: ultraCompact ? 15 : 17,
-          color: const Color(0xFF1E293B),
-        ),
-        constraints: BoxConstraints.tightFor(width: size, height: size),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
-        onSelected: (value) {
-          if (value == 'pickup' && onRequestPickup != null) onRequestPickup!();
-          if (value == 'cancel_pickup' && onCancelPickup != null) {
-            onCancelPickup!();
-          }
-          if (value == 'migrate' && onMigrate != null) onMigrate!();
-          if (value == 'release' && onReleaseTable != null) onReleaseTable!();
-        },
-        itemBuilder: (_) => [
-          if (activePickup == null &&
-              table.status == TableStatus.available &&
-              onRequestPickup != null)
-            const PopupMenuItem<String>(
-              value: 'pickup',
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(LucideIcons.handMetal,
-                      size: 16, color: Color(0xFFF58220)),
-                  SizedBox(width: 8),
-                  Text(
-                    'استلام',
-                    style: TextStyle(
-                      color: Color(0xFFF58220),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (activePickup != null &&
-              activePickup!.isPending &&
-              onCancelPickup != null)
-            const PopupMenuItem<String>(
-              value: 'cancel_pickup',
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(LucideIcons.x,
-                      size: 16, color: Color(0xFFDC2626)),
-                  SizedBox(width: 8),
-                  Text(
-                    'إلغاء الاستلام',
-                    style: TextStyle(
-                      color: Color(0xFFDC2626),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (onMigrate != null)
-            const PopupMenuItem<String>(
-              value: 'migrate',
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(LucideIcons.moveRight,
-                      size: 16, color: Color(0xFF2563EB)),
-                  SizedBox(width: 8),
-                  Text(
-                    'نقل إلى طاولة أخرى',
-                    style: TextStyle(
-                      color: Color(0xFF2563EB),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (onReleaseTable != null)
-            const PopupMenuItem<String>(
-              value: 'release',
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(LucideIcons.logOut,
-                      size: 16, color: Color(0xFFDC2626)),
-                  SizedBox(width: 8),
-                  Text(
-                    'تحرير الطاولة',
-                    style: TextStyle(
-                      color: Color(0xFFDC2626),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
+  bool _hasAnyAction() {
+    final canPickup = activePickup == null &&
+        table.status == TableStatus.available &&
+        onRequestPickup != null;
+    final canCancelPickup = activePickup != null &&
+        activePickup!.isPending &&
+        onCancelPickup != null;
+    return canPickup ||
+        canCancelPickup ||
+        onMigrate != null ||
+        onReleaseTable != null;
+  }
+
+  // Long-press anchor: opens the actions menu at the touch position
+  // (instead of a fixed corner-anchored 3-dots button).
+  Future<void> _openActionsMenu(
+    BuildContext context,
+    Offset globalPosition,
+  ) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromLTRB(
+      globalPosition.dx,
+      globalPosition.dy,
+      overlay.size.width - globalPosition.dx,
+      overlay.size.height - globalPosition.dy,
     );
+    final value = await showMenu<String>(
+      context: context,
+      position: position,
+      items: [
+        if (activePickup == null &&
+            table.status == TableStatus.available &&
+            onRequestPickup != null)
+          const PopupMenuItem<String>(
+            value: 'pickup',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(LucideIcons.handMetal,
+                    size: 16, color: Color(0xFFF58220)),
+                SizedBox(width: 8),
+                Text(
+                  'استلام',
+                  style: TextStyle(
+                    color: Color(0xFFF58220),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (activePickup != null &&
+            activePickup!.isPending &&
+            onCancelPickup != null)
+          const PopupMenuItem<String>(
+            value: 'cancel_pickup',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(LucideIcons.x, size: 16, color: Color(0xFFDC2626)),
+                SizedBox(width: 8),
+                Text(
+                  'إلغاء الاستلام',
+                  style: TextStyle(
+                    color: Color(0xFFDC2626),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (onMigrate != null)
+          const PopupMenuItem<String>(
+            value: 'migrate',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(LucideIcons.moveRight,
+                    size: 16, color: Color(0xFF2563EB)),
+                SizedBox(width: 8),
+                Text(
+                  'نقل إلى طاولة أخرى',
+                  style: TextStyle(
+                    color: Color(0xFF2563EB),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (onReleaseTable != null)
+          const PopupMenuItem<String>(
+            value: 'release',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(LucideIcons.logOut, size: 16, color: Color(0xFFDC2626)),
+                SizedBox(width: 8),
+                Text(
+                  'تحرير الطاولة',
+                  style: TextStyle(
+                    color: Color(0xFFDC2626),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (value == 'pickup' && onRequestPickup != null) onRequestPickup!();
+    if (value == 'cancel_pickup' && onCancelPickup != null) onCancelPickup!();
+    if (value == 'migrate' && onMigrate != null) onMigrate!();
+    if (value == 'release' && onReleaseTable != null) onReleaseTable!();
   }
 }
 
@@ -1558,6 +1573,74 @@ class _HeaderActionBtn extends StatelessWidget {
                     color: btnColor,
                     fontSize: 16,
                     fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact icon-only waitlist button for the compact header layout.
+class _WaitlistHeaderIconButton extends StatelessWidget {
+  final int count;
+  final VoidCallback onPressed;
+
+  const _WaitlistHeaderIconButton({
+    required this.count,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: translationService.t('waitlist_tooltip'),
+      icon: Badge(
+        isLabelVisible: count > 0,
+        label: Text('$count'),
+        backgroundColor: const Color(0xFFDC2626),
+        child: const Icon(LucideIcons.clock),
+      ),
+      color: const Color(0xFFF58220),
+    );
+  }
+}
+
+/// Full-width waitlist action button matching [_HeaderActionBtn] styling.
+class _WaitlistHeaderActionBtn extends StatelessWidget {
+  final int count;
+  final VoidCallback onTap;
+
+  const _WaitlistHeaderActionBtn({
+    required this.count,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const btnColor = Color(0xFFF58220);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            Badge(
+              isLabelVisible: count > 0,
+              label: Text('$count'),
+              backgroundColor: const Color(0xFFDC2626),
+              child: const Icon(LucideIcons.clock, color: btnColor, size: 18),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              translationService.t('waitlist_title'),
+              style: const TextStyle(
+                color: btnColor,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
       ),

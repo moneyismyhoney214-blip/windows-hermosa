@@ -145,7 +145,7 @@ extension MainScreenPayment on _MainScreenState {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('مبلغ غير صالح: ${paymentAmount.toStringAsFixed(2)}'),
+            content: Text('مبلغ غير صالح: ${paymentAmount.toStringAsFixed(ApiConstants.digitsNumber)}'),
             backgroundColor: Colors.red,
           ),
         );
@@ -189,7 +189,7 @@ extension MainScreenPayment on _MainScreenState {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'المبلغ: ${paymentAmount.toStringAsFixed(2)} ${ApiConstants.currency}',
+                  'المبلغ: ${paymentAmount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 ),
                 const SizedBox(height: 8),
                 const Text(
@@ -222,8 +222,13 @@ extension MainScreenPayment on _MainScreenState {
 
     try {
       // 1️⃣ Ensure NearPay is fully bootstrapped (SDK + JWT + terminal).
+      // On iOS the local SDK is unavailable; we delegate to the paired
+      // display_app device over WebSocket, so skip the local bootstrap
+      // and rely on the dispatcher's own readiness check (WS connection).
       statusNotifier.value = 'جاري تجهيز الجهاز...';
-      final ready = await NearPayBootstrap.ensureInitialized();
+      final ready = RemoteNearPayDispatcher.isRequired
+          ? true
+          : await NearPayBootstrap.ensureInitialized();
       if (!ready) {
         closeWaitingDialog();
         unawaited(presentation.updatePaymentStatus(
@@ -262,31 +267,45 @@ extension MainScreenPayment on _MainScreenState {
 
       statusNotifier.value = 'ضع البطاقة على الجهاز...';
 
-      // 3️⃣ Execute purchase directly on the local NearPay SDK.
-      final service = getIt<np_local.NearPayService>();
-      final result = await service.executePurchaseWithSession(
-        amount: paymentAmount,
-        sessionId: sessionId,
-        referenceId: referenceId,
-        onStatusUpdate: (status) {
-          if (!isWaitingDialogOpen) return;
-          final lower = status.toLowerCase().trim();
-          if (lower.isEmpty) {
-            statusNotifier.value = 'جاري الدفع...';
-          } else if (lower.contains('ضع البطاقة') ||
-              lower.contains('waiting') ||
-              lower.contains('reader')) {
-            statusNotifier.value = status;
-          } else if (lower.contains('pin')) {
-            statusNotifier.value = 'أدخل الرقم السري...';
-          } else if (lower.contains('success') ||
-              lower.contains('✅')) {
-            statusNotifier.value = 'تم الدفع بنجاح';
-          } else {
-            statusNotifier.value = status;
-          }
-        },
-      );
+      // 3️⃣ Execute purchase. On Android we drive the embedded NearPay
+      // SDK directly; on iOS (no native SDK) we forward the request
+      // over WebSocket to the paired display_app and await its reply.
+      void mapStatus(String status) {
+        if (!isWaitingDialogOpen) return;
+        final lower = status.toLowerCase().trim();
+        if (lower.isEmpty) {
+          statusNotifier.value = 'جاري الدفع...';
+        } else if (lower.contains('ضع البطاقة') ||
+            lower.contains('waiting') ||
+            lower.contains('reader')) {
+          statusNotifier.value = status;
+        } else if (lower.contains('pin')) {
+          statusNotifier.value = 'أدخل الرقم السري...';
+        } else if (lower.contains('success') ||
+            lower.contains('✅')) {
+          statusNotifier.value = 'تم الدفع بنجاح';
+        } else {
+          statusNotifier.value = status;
+        }
+      }
+
+      final np_local.NearPayPaymentResult result;
+      if (RemoteNearPayDispatcher.isRequired) {
+        result = await RemoteNearPayDispatcher.instance.requestRemotePurchase(
+          amount: paymentAmount,
+          sessionId: sessionId,
+          referenceId: referenceId,
+          onStatusUpdate: mapStatus,
+        );
+      } else {
+        final service = getIt<np_local.NearPayService>();
+        result = await service.executePurchaseWithSession(
+          amount: paymentAmount,
+          sessionId: sessionId,
+          referenceId: referenceId,
+          onStatusUpdate: mapStatus,
+        );
+      }
 
       closeWaitingDialog();
 
@@ -491,7 +510,9 @@ extension MainScreenPayment on _MainScreenState {
         {
           'name': method == 'card' ? 'دفع بطاقة' : 'دفع نقدي',
           'pay_method': method,
-          'amount': double.parse(effectiveTotal.toStringAsFixed(2)),
+          // Round to the branch's currency precision so the BHD (3 decimals)
+          // case doesn't round 15.301 down to 15.30 and trigger 422.
+          'amount': ApiConstants.roundMoney(effectiveTotal),
           'index': 0,
         },
       ];
@@ -504,7 +525,7 @@ extension MainScreenPayment on _MainScreenState {
       final amount = (pay['amount'] as num?)?.toDouble() ??
           double.tryParse(pay['amount']?.toString() ?? '') ??
           0.0;
-      final roundedAmount = double.parse(amount.toStringAsFixed(2));
+      final roundedAmount = ApiConstants.roundMoney(amount);
       return {
         'name': pay['name']?.toString().trim().isNotEmpty == true
             ? pay['name']
@@ -516,12 +537,20 @@ extension MainScreenPayment on _MainScreenState {
     }).toList();
   }
 
+  int _pow10(int n) {
+    var r = 1;
+    for (var i = 0; i < n; i++) {
+      r *= 10;
+    }
+    return r;
+  }
+
   List<Map<String, dynamic>> _buildUpdatePaysPayload(
     List<Map<String, dynamic>> pays,
     double invoiceTotal, {
     bool preserveCardAmounts = false,
   }) {
-    double round2(double value) => double.parse(value.toStringAsFixed(2));
+    double round2(double value) => ApiConstants.roundMoney(value);
     num toBackendAmount(double value) {
       final rounded = round2(value);
       final asInt = rounded.roundToDouble();
@@ -579,8 +608,12 @@ extension MainScreenPayment on _MainScreenState {
     final targetTotal = round2(invoiceTotal);
     final currentTotal = round2(sum);
     final diff = round2(targetTotal - currentTotal);
-    // Adjust even for a 0.01 difference to satisfy backend strict validation.
-    if (diff.abs() >= 0.01) {
+    // Adjust even for a single-unit difference at the branch's currency
+    // precision (0.01 for SAR, 0.001 for BHD) to satisfy backend strict
+    // validation `sum(payments) == invoice.total`.
+    final adjustmentEpsilon =
+        1.0 / _pow10(ApiConstants.digitsNumber.clamp(0, 6));
+    if (diff.abs() >= adjustmentEpsilon) {
       final adjustmentIndex = resolveAdjustmentIndex();
       final currentAmount =
           (normalized[adjustmentIndex]['amount'] as num?)?.toDouble() ?? 0.0;
@@ -589,7 +622,7 @@ extension MainScreenPayment on _MainScreenState {
       );
     }
 
-    // Final safety pass: force exact 2-decimal total by correcting last pay.
+    // Final safety pass: force exact precision-aware total on the last pay.
     final recomputedSum = round2(normalized.fold<double>(
       0.0,
       (acc, p) => acc + ((p['amount'] as num?)?.toDouble() ?? 0.0),
@@ -1247,13 +1280,14 @@ extension MainScreenPayment on _MainScreenState {
         for (var item in cartItemsForOrder) {
           final addonIds = _toAddonIdList(item.selectedExtras);
           final effectiveDiscount = _resolveItemApiDiscount(item);
+          final qty = item.quantity > 0 ? item.quantity : 1.0;
           cartItems.add({
             'item_name': item.product.name,
             'meal_id': item.product.id,
-            'price': item.product.price,
+            'price': item.product.price * qty,
             'unitPrice': item.product.price,
             'modified_unit_price': null,
-            'quantity': item.quantity.round().clamp(1, 9999),
+            'quantity': qty,
             'addons': addonIds,
             if (item.notes.isNotEmpty) 'note': item.notes,
             if (effectiveDiscount > 0) 'discount': effectiveDiscount,
@@ -1581,7 +1615,7 @@ extension MainScreenPayment on _MainScreenState {
             if (amount <= 0) continue;
             sum += amount;
           }
-          return double.parse(sum.toStringAsFixed(2));
+          return double.parse(sum.toStringAsFixed(ApiConstants.digitsNumber));
         }
 
         // Calculate invoice first using official API payload
@@ -1663,7 +1697,7 @@ extension MainScreenPayment on _MainScreenState {
           if ((payableTotal - payableTotal.roundToDouble()).abs() <= 0.02) {
             payableTotal = payableTotal.roundToDouble();
           } else {
-            payableTotal = double.parse(payableTotal.toStringAsFixed(2));
+            payableTotal = double.parse(payableTotal.toStringAsFixed(ApiConstants.digitsNumber));
           }
         } on ApiException catch (e) {
           if (e.statusCode == 422 &&
@@ -1678,7 +1712,7 @@ extension MainScreenPayment on _MainScreenState {
                 _resolveEffectiveDiscountAmount(grossOrderTotal);
             orderTotal = (grossOrderTotal - appliedDiscountAmount)
                 .clamp(0.0, double.infinity);
-            payableTotal = double.parse(orderTotal.toStringAsFixed(2));
+            payableTotal = double.parse(orderTotal.toStringAsFixed(ApiConstants.digitsNumber));
             print(
               '♻️ Promo expired while calculating invoice; continuing without promo',
             );
@@ -1740,13 +1774,14 @@ extension MainScreenPayment on _MainScreenState {
               };
             }
 
+            final qty = item.quantity > 0 ? item.quantity : 1.0;
             return {
               'item_name': item.product.name,
               'meal_id': int.tryParse(item.product.id) ?? item.product.id,
-              'price': item.product.price,
+              'price': item.product.price * qty,
               'unitPrice': item.product.price,
               'modified_unit_price': null,
-              'quantity': item.quantity.round().clamp(1, 9999),
+              'quantity': qty,
               'addons': addonIds,
               if (item.notes.isNotEmpty) 'note': item.notes,
               if (effectiveDiscount > 0) 'discount': effectiveDiscount,
@@ -1795,8 +1830,8 @@ extension MainScreenPayment on _MainScreenState {
 
           final mealIdRaw = meal['meal_id'] ?? meal['product_id'];
           final mealIdStr = mealIdRaw?.toString() ?? '';
-          final quantity =
-              toSafeInt(meal['quantity'], fallback: 1).clamp(1, 9999);
+          final quantityRaw = toSafeDouble(meal['quantity'], fallback: 1.0);
+          final quantity = quantityRaw > 0 ? quantityRaw : 1.0;
           final unitPrice = toSafeDouble(
             meal['unit_price'] ?? meal['price'] ?? mealPriceById[mealIdStr],
             fallback: 0.0,
@@ -2362,7 +2397,7 @@ extension MainScreenPayment on _MainScreenState {
                   _resolveEffectiveDiscountAmount(grossOrderTotal);
               orderTotal = (grossOrderTotal - appliedDiscountAmount)
                   .clamp(0.0, double.infinity);
-              payableTotal = double.parse(orderTotal.toStringAsFixed(2));
+              payableTotal = double.parse(orderTotal.toStringAsFixed(ApiConstants.digitsNumber));
               normalizedPays = _buildNormalizedPays(
                 pays,
                 targetTotal: payableTotal,

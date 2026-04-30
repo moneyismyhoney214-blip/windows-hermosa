@@ -28,7 +28,11 @@ extension OrderPanelCartDisplay on _OrderPanelState {
 
     final subtotal =
         widget.cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
-    final tax = subtotal * widget.taxRate.clamp(0.0, 1.0);
+    final effectiveTaxRate =
+        (widget.taxRate ?? ApiConstants.effectiveTaxRate)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    final tax = subtotal * effectiveTaxRate;
     final beforeDiscountTotal = subtotal + tax;
     final orderDiscountAmount = widget.isOrderFree
         ? beforeDiscountTotal
@@ -154,8 +158,8 @@ extension OrderPanelCartDisplay on _OrderPanelState {
       items: displayItems,
       subtotal: subtotal,
       tax: tax,
-      taxRate: widget.taxRate,
-      hasTax: widget.taxRate > 0,
+      taxRate: effectiveTaxRate,
+      hasTax: ApiConstants.isTaxActive && effectiveTaxRate > 0,
       total: afterDiscountTotal,
       discountAmount: orderDiscountAmount,
       originalTotal: beforeDiscountTotal,

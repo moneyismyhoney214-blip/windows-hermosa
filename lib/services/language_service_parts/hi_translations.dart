@@ -192,6 +192,7 @@ final Map<String, String> _hiTranslations = {
     'test': 'जांच',
     'print_test': 'टेस्ट प्रिंट',
     'sections': 'सेक्शन',
+    'uncategorized_section': 'सामान्य',
     'add_printer_title': 'प्रिंटर जोड़ें',
     'printer_name': 'नाम',
     'ip_label': 'IP',

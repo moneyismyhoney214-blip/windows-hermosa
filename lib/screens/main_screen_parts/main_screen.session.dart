@@ -80,17 +80,23 @@ extension MainScreenSession on _MainScreenState {
         return;
       }
 
-      // Ensure branchModule is resolved (login response may lack it)
-      if (ApiConstants.branchModule.isEmpty) {
-        try {
-          final authService = getIt<AuthService>();
-          final branches = await authService.getBranches();
-          final match = branches.where((b) => b.id == ApiConstants.branchId);
-          if (match.isNotEmpty && match.first.module.isNotEmpty) {
-            ApiConstants.branchModule = match.first.module;
+      // Always refresh branchModule + haveWaiters from /seller/branches —
+      // login response lacks these keys, and a stale `haveWaiters=true`
+      // from a prior session would leak waiter buttons into a branch that
+      // had the feature disabled afterwards.
+      try {
+        final authService = getIt<AuthService>();
+        final branches = await authService.getBranches();
+        final match = branches.where((b) => b.id == ApiConstants.branchId);
+        if (match.isNotEmpty) {
+          final active = match.first;
+          if (active.module.isNotEmpty) {
+            ApiConstants.branchModule = active.module;
           }
-        } catch (_) {}
-      }
+          await authService.persistHaveWaiters(active.haveWaiters);
+          await authService.persistWhatsappEnabled(active.whatsappStatus);
+        }
+      } catch (_) {}
 
       // Kick the waiter-mesh viewer once the branch is confirmed. Runs in
       // parallel with the bootstrap data loads — the mesh doesn't need
@@ -103,6 +109,9 @@ extension MainScreenSession on _MainScreenState {
       // so run them concurrently instead of sequentially.
       final branchService = getIt<BranchService>();
       unawaited(branchService.getBranchSettings());
+      // Authoritative tax refresh — wins over the login-payload values
+      // when the branch's VAT settings change between sessions.
+      unawaited(branchService.refreshTaxConfig());
       unawaited(branchService.fetchAndCacheBranchReceiptInfo().then((_) {
         _prewarmReceiptCache();
       }));

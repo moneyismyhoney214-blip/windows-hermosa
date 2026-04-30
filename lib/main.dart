@@ -7,6 +7,7 @@ import 'Splash/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/api/auth_service.dart';
 import 'services/api/base_client.dart';
+import 'services/api/device_service.dart';
 import 'services/language_service.dart';
 import 'services/theme_service.dart';
 import 'services/printer_language_settings_service.dart';
@@ -153,6 +154,23 @@ void main() async {
     }
   } catch (e) {
     debugPrint('⚠️ Auth service init failed: $e');
+  }
+
+  // Auto-register the Centerm Q7 built-in printer on first boot. No-op
+  // on every device that isn't a Q7 (the channel returns false). The
+  // registered entry is wired to the cashier-receipt role only — kitchen
+  // tickets continue to flow through whichever bluetooth/network printer
+  // the user adds manually.
+  try {
+    if (locatorReady) {
+      final device = await getIt<DeviceService>()
+          .autoRegisterQ7BuiltInPrinterIfPresent();
+      if (device != null) {
+        debugPrint('✅ Q7 built-in printer auto-registered: ${device.name}');
+      }
+    }
+  } catch (e) {
+    debugPrint('⚠️ Q7 auto-register (non-fatal): $e');
   }
 
   // Initialize Presentation API for dual-screen devices (e.g. Sunmi D2s).

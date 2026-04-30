@@ -8,6 +8,7 @@ import '../locator.dart';
 import '../models/branch.dart';
 import 'branch_selection_screen.dart';
 import 'forgot_password_screen.dart';
+import 'legal_page_screen.dart';
 import 'main_screen.dart';
 import '../waiter_module/waiter_module_entry.dart';
 
@@ -476,6 +477,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 16),
+                        _buildLegalLinks(),
                         const SizedBox(height: 24),
                       ],
                     ),
@@ -484,6 +487,67 @@ class _LoginScreenState extends State<LoginScreen> {
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegalLinks() {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 4,
+      children: [
+        _legalLink(
+          label: translationService.t('privacy_policy'),
+          slug: 'privacy-policy',
+        ),
+        Text(
+          '•',
+          style: GoogleFonts.tajawal(
+            fontSize: 12,
+            color: context.appTextMuted,
+          ),
+        ),
+        _legalLink(
+          label: translationService.t('terms_conditions'),
+          slug: 'terms-conditions',
+        ),
+      ],
+    );
+  }
+
+  Widget _legalLink({required String label, required String slug}) {
+    return TextButton(
+      onPressed: _isLoading ? null : () => _openLegalPage(slug, label),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        minimumSize: const Size(0, 28),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        foregroundColor: context.appPrimary,
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.tajawal(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          decoration: TextDecoration.underline,
+        ),
+      ),
+    );
+  }
+
+  /// Open the static legal page in-app. Content is fetched from
+  /// `api.hermosaapp.com/staticPages/<slug>` (locale follows the
+  /// active `Accept-Language`) and rendered as HTML. The screen also
+  /// exposes an "open in browser" action that points at the canonical
+  /// `v2.hermosaapp.com/pages/<slug>` web copy.
+  void _openLegalPage(String slug, String fallbackTitle) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LegalPageScreen(
+          slug: slug,
+          fallbackTitle: fallbackTitle,
         ),
       ),
     );

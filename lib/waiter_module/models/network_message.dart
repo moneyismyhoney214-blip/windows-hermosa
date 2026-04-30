@@ -65,6 +65,14 @@ enum WireMessageType {
   /// chef knows where the existing order now lives.
   tableMigrate,
 
+  /// Waitlist delta — a party was added/updated/removed/notified/
+  /// seated/cancelled. Payload is a [WaitlistMeshEvent] which carries
+  /// its own `kind` so one wire type can convey all six mutations.
+  waitlistEvent,
+  /// Full waitlist snapshot — sent as catch-up to a freshly-joined
+  /// peer so it starts with the same queue as everyone else.
+  waitlistSnapshot,
+
   // Generic ack
   ack,
   error,
@@ -121,6 +129,10 @@ extension WireMessageTypeX on WireMessageType {
         return 'TABLE_PICKUP_CANCELLED';
       case WireMessageType.tableMigrate:
         return 'TABLE_MIGRATE';
+      case WireMessageType.waitlistEvent:
+        return 'WAITLIST_EVENT';
+      case WireMessageType.waitlistSnapshot:
+        return 'WAITLIST_SNAPSHOT';
       case WireMessageType.ack:
         return 'ACK';
       case WireMessageType.error:
@@ -178,6 +190,10 @@ extension WireMessageTypeX on WireMessageType {
         return WireMessageType.tablePickupCancelled;
       case 'TABLE_MIGRATE':
         return WireMessageType.tableMigrate;
+      case 'WAITLIST_EVENT':
+        return WireMessageType.waitlistEvent;
+      case 'WAITLIST_SNAPSHOT':
+        return WireMessageType.waitlistSnapshot;
       case 'ACK':
         return WireMessageType.ack;
       case 'ERROR':

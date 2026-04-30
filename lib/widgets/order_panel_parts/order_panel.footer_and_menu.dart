@@ -11,7 +11,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
         decoration: InputDecoration(
           hintStyle: const TextStyle(fontSize: 12),
           filled: true,
-          fillColor: const Color(0xFFF8FAFC),
+          fillColor: context.appSurfaceAlt,
           border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none),
@@ -82,16 +82,20 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
         children: [
           _SummaryRow(
               label: _tr('المجموع الفرعي', 'Subtotal'),
-              value: subtotal.toStringAsFixed(2)),
-          const SizedBox(height: 8),
-          _SummaryRow(
-              label: _tr('الضريبة (${(widget.taxRate * 100).toStringAsFixed(0)}%)', 'Tax (${(widget.taxRate * 100).toStringAsFixed(0)}%)'),
-              value: tax.toStringAsFixed(2)),
+              value: subtotal.toStringAsFixed(ApiConstants.digitsNumber)),
+          if (ApiConstants.isTaxActive) ...[
+            const SizedBox(height: 8),
+            _SummaryRow(
+                label: _tr(
+                    'الضريبة (${ApiConstants.taxPercentage}%)',
+                    'Tax (${ApiConstants.taxPercentage}%)'),
+                value: tax.toStringAsFixed(ApiConstants.digitsNumber)),
+          ],
           if (widget.orderDiscount > 0) ...[
             const SizedBox(height: 8),
             _SummaryRow(
                 label: _tr('خصم إضافي', 'Additional Discount'),
-                value: '- ${widget.orderDiscount.toStringAsFixed(2)}',
+                value: '- ${widget.orderDiscount.toStringAsFixed(ApiConstants.digitsNumber)}',
                 color: Colors.orange),
           ],
           if (promo != null && promoDiscountAmount > 0) ...[
@@ -108,7 +112,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                       Flexible(
                         child: Text(
                           '${_tr('كوبون', 'Coupon')}: ${promo.code}'
-                          ' (${promo.type == DiscountType.percentage ? '${promo.discount.toStringAsFixed(0)}%' : '${promo.discount.toStringAsFixed(2)} ${ApiConstants.currency}'})',
+                          ' (${promo.type == DiscountType.percentage ? '${promo.discount.toStringAsFixed(0)}%' : '${promo.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'})',
                           style: const TextStyle(
                               fontSize: 13,
                               color: Color(0xFF22C55E),
@@ -120,7 +124,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                   ),
                 ),
                 Text(
-                  '- ${promoDiscountAmount.toStringAsFixed(2)}',
+                  '- ${promoDiscountAmount.toStringAsFixed(ApiConstants.digitsNumber)}',
                   style: const TextStyle(
                       fontSize: 13,
                       color: Color(0xFF22C55E),
@@ -146,7 +150,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                       fontSize: 18,
                       color: context.appText)),
               Text(
-                  '${widget.totalAmount.toStringAsFixed(2)} ${ApiConstants.currency}',
+                  '${widget.totalAmount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                   style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 18,
@@ -447,7 +451,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                 ),
                 if (hasSelection) ...[
                   Text(
-                    '- ${depositAmount.toStringAsFixed(2)}',
+                    '- ${depositAmount.toStringAsFixed(ApiConstants.digitsNumber)}',
                     style: TextStyle(
                         fontSize: 13,
                         color: accentColor,
@@ -552,10 +556,10 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                         subtitle: Text(
                           exceedsCart
                               ? _tr(
-                                  'المبلغ: ${price.toStringAsFixed(2)} — أكبر من الفاتورة',
-                                  'Amount: ${price.toStringAsFixed(2)} — exceeds invoice',
+                                  'المبلغ: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — أكبر من الفاتورة',
+                                  'Amount: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — exceeds invoice',
                                 )
-                              : '${_tr('المبلغ', 'Amount')}: ${price.toStringAsFixed(2)} ${ApiConstants.currency}',
+                              : '${_tr('المبلغ', 'Amount')}: ${price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                           style: TextStyle(
                             color: exceedsCart
                                 ? const Color(0xFFEF4444)

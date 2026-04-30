@@ -15,6 +15,9 @@ class ProductCard extends StatefulWidget {
   final bool isDisabled;
   final double taxRate;
   final String? placeholderImageUrl;
+  /// When true, [product.price] is already VAT-inclusive (e.g. salon
+  /// services), so the card must not multiply by `(1 + taxRate)` again.
+  final bool priceIsTaxInclusive;
 
   const ProductCard({
     super.key,
@@ -25,6 +28,7 @@ class ProductCard extends StatefulWidget {
     this.isDisabled = false,
     this.taxRate = 0.0,
     this.placeholderImageUrl,
+    this.priceIsTaxInclusive = false,
   });
 
   @override
@@ -46,13 +50,15 @@ class _ProductCardState extends State<ProductCard> {
   void didUpdateWidget(covariant ProductCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.product.price != widget.product.price ||
-        oldWidget.taxRate != widget.taxRate) {
+        oldWidget.taxRate != widget.taxRate ||
+        oldWidget.priceIsTaxInclusive != widget.priceIsTaxInclusive) {
       _formattedPrice = _computePrice();
     }
   }
 
   String _computePrice() {
-    return '${(widget.product.price * (1 + widget.taxRate)).toStringAsFixed(2)} ${ApiConstants.currency}';
+    final multiplier = widget.priceIsTaxInclusive ? 1.0 : (1 + widget.taxRate);
+    return '${(widget.product.price * multiplier).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
   }
 
   Widget _buildProductImage() {

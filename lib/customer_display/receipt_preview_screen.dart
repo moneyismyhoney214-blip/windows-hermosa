@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../services/api/api_constants.dart';
 
 /// Receipt Preview Widget — In-App Invoice Display
 ///
@@ -463,7 +464,7 @@ class ReceiptPreviewScreen extends StatelessWidget {
                       child: Align(
                         alignment: AlignmentDirectional.centerEnd,
                         child: Text(
-                          total.toStringAsFixed(2),
+                          total.toStringAsFixed(ApiConstants.digitsNumber),
                           style: GoogleFonts.tajawal(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
@@ -553,7 +554,7 @@ class ReceiptPreviewScreen extends StatelessWidget {
               Directionality(
                 textDirection: TextDirection.ltr,
                 child: Text(
-                  '${_total.toStringAsFixed(2)} $_currencyAr',
+                  '${_total.toStringAsFixed(ApiConstants.digitsNumber)} $_currencyAr',
                   style: GoogleFonts.tajawal(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
@@ -601,7 +602,7 @@ class ReceiptPreviewScreen extends StatelessWidget {
             ],
           ),
           Text(
-            '$prefix${value.toStringAsFixed(2)} $_currencyAr',
+            '$prefix${value.toStringAsFixed(ApiConstants.digitsNumber)} $_currencyAr',
             style: GoogleFonts.tajawal(
               fontSize: 14,
               fontWeight: FontWeight.bold,

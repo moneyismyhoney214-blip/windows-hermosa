@@ -19,7 +19,17 @@ class TableService {
     }
 
     try {
-      final response = await _client.get(ApiConstants.tablesEndpoint);
+      // `skipGlobalAuth: true` keeps a 401 here local — without it the
+      // global onUnauthorized handler tears down the freshly-logged-in
+      // session whenever the WAITER role hits this endpoint (which the
+      // backend currently rejects for that role).
+      // `with=category` makes the backend hydrate
+      // `restaurant_table_category_id` + `category_name` on each table so
+      // we can group the grid by section in the cashier + waiter modules.
+      final response = await _client.get(
+        '${ApiConstants.tablesEndpoint}?with=category',
+        skipGlobalAuth: true,
+      );
       List<TableItem> tables = [];
 
       if (response is Map && response['data'] is List) {
@@ -60,7 +70,7 @@ class TableService {
   /// Returns null if table is deactivated (data: null)
   Future<TableItem?> getTableDetails(String tableId) async {
     try {
-      final endpoint = '${ApiConstants.tablesEndpoint}/$tableId';
+      final endpoint = '${ApiConstants.tablesEndpoint}/$tableId?with=category';
       final response = await _client.get(endpoint);
 
       // If data is null, table is deactivated by administrator

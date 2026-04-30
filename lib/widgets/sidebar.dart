@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../models.dart';
+import '../services/app_themes.dart';
 import '../services/language_service.dart';
 
 class Sidebar extends StatelessWidget {
@@ -87,13 +88,13 @@ class Sidebar extends StatelessWidget {
           height: double.infinity,
           padding: EdgeInsets.symmetric(vertical: verticalPadding),
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
+            color: context.appSidebarBg,
             border: Border(
               left: translationService.isRTL
-                  ? const BorderSide(color: Color(0xFFE2E8F0))
+                  ? BorderSide(color: context.appBorder)
                   : BorderSide.none,
               right: !translationService.isRTL
-                  ? const BorderSide(color: Color(0xFFE2E8F0))
+                  ? BorderSide(color: context.appBorder)
                   : BorderSide.none,
             ),
           ),
@@ -136,7 +137,9 @@ class Sidebar extends StatelessWidget {
                             height: cardHeight,
                             decoration: BoxDecoration(
                               color: isActive
-                                  ? const Color(0xFFFFEDD5)
+                                  ? (context.isDark
+                                      ? const Color(0xFFF58220).withValues(alpha: 0.18)
+                                      : const Color(0xFFFFEDD5))
                                   : Colors.transparent,
                               borderRadius: BorderRadius.circular(isVerySmallScreen ? 8 : 12),
                             ),
@@ -157,8 +160,10 @@ class Sidebar extends StatelessWidget {
                                         item.icon,
                                         size: iconSize,
                                         color: isActive
-                                            ? const Color(0xFFC2410C)
-                                            : const Color(0xFF94A3B8),
+                                            ? (context.isDark
+                                                ? const Color(0xFFFFB37A)
+                                                : const Color(0xFFC2410C))
+                                            : context.appTextSubtle,
                                       ),
                                     ),
                                   )
@@ -204,8 +209,8 @@ class Sidebar extends StatelessWidget {
                 onPressed: onSwitchBranch,
                 tooltip: translationService.t('switch_branch'),
                 style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFFF1F5F9),
-                  foregroundColor: const Color(0xFF64748B),
+                  backgroundColor: context.appSurfaceAlt,
+                  foregroundColor: context.appTextMuted,
                   fixedSize: Size(buttonSize, buttonSize),
                 ),
                 icon: Icon(LucideIcons.repeat, size: buttonIconSize),
@@ -217,10 +222,10 @@ class Sidebar extends StatelessWidget {
                 style: IconButton.styleFrom(
                   backgroundColor: activeTab == 'settings'
                       ? const Color(0xFFF58220)
-                      : const Color(0xFFF1F5F9),
+                      : context.appSurfaceAlt,
                   foregroundColor: activeTab == 'settings'
                       ? Colors.white
-                      : const Color(0xFF64748B),
+                      : context.appTextMuted,
                   fixedSize: Size(buttonSize, buttonSize),
                 ),
                 icon: Icon(LucideIcons.settings, size: buttonIconSize),
@@ -230,7 +235,9 @@ class Sidebar extends StatelessWidget {
                 onPressed: onLogout,
                 tooltip: translationService.t('logout'),
                 style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFFFEF2F2),
+                  backgroundColor: context.isDark
+                      ? const Color(0xFFEF4444).withValues(alpha: 0.18)
+                      : const Color(0xFFFEF2F2),
                   foregroundColor: const Color(0xFFEF4444),
                   fixedSize: Size(buttonSize, buttonSize),
                 ),

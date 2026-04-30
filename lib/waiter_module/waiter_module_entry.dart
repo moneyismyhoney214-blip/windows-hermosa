@@ -6,6 +6,8 @@ import '../locator.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
 import '../services/language_service.dart';
+import '../services/waitlist_mesh_bridge.dart';
+import '../services/waitlist_service.dart';
 import 'screens/waiter_home_screen.dart';
 import 'services/waiter_billing_service.dart';
 import 'services/waiter_config_store.dart';
@@ -104,6 +106,11 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
       try {
         await _controller.start();
       } catch (_) {}
+      // Wire the waitlist service to this waiter's controller so every
+      // queue mutation made on this device rides the mesh, and deltas
+      // from the cashier (or other waiters) apply here.
+      unawaited(waitlistService.initialize());
+      waitlistMeshBridge.attach(_controller);
     }
     if (mounted) setState(() => _ready = true);
   }

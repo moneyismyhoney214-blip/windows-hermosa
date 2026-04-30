@@ -6,6 +6,7 @@ import '../services/api/report_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/zatca_printer_service.dart';
@@ -615,7 +616,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.appBg,
       appBar: AppBar(
         title: Text(translationService.t('daily_closing_report')),
         backgroundColor: const Color(0xFFF58220),

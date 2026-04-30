@@ -38,6 +38,7 @@ import '../services/cashier_mesh_bootstrap.dart';
 import '../customer_display/nearpay/nearpay_bootstrap.dart';
 import '../customer_display/nearpay/nearpay_config_service.dart';
 import '../customer_display/nearpay/nearpay_service.dart' as np_local;
+import '../services/remote_nearpay_dispatcher.dart';
 import 'package:uuid/uuid.dart';
 import '../utils/display_device_selection.dart';
 import '../widgets/pdf_preview_screen.dart';
@@ -191,8 +192,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   double _mealIconScale = 1.0;
   double _sidebarIconScale = 1.0;
   bool _categoryLayoutVertical = false;
-  bool _isTaxEnabled = true;
-  double _taxRate = 0.15;
+  // Initialised from the global VAT config (populated at login + restored
+  // from SharedPreferences). `_loadTaxConfiguration` overwrites these
+  // once the branch-settings API resolves; the defaults here only matter
+  // for the first frame before that future completes.
+  bool _isTaxEnabled = ApiConstants.hasTax;
+  double _taxRate = ApiConstants.effectiveTaxRate;
   bool _isProfileNearPayEnabled = false;
   String? _lastCreatedBookingId;
   String? _lastMainCartFingerprint;

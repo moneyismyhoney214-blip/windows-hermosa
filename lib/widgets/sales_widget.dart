@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 import '../services/printer_language_settings_service.dart';
+import '../services/api/api_constants.dart';
 
 // تعريف موديل البيانات داخل الملف ليكون مكتفياً بذاته أو انقله لملف منفصل
 class DailyClosingReportLine {
@@ -266,7 +267,12 @@ class DailyClosingReceiptWidget extends StatelessWidget {
           '-',
         ),
         // Dynamic Rows
-        ...rows.map((row) => _buildDataRow(row.label, row.amount.toStringAsFixed(2), 'SAR')),
+        ...rows.map((row) => _buildDataRow(
+            row.label,
+            row.amount.toStringAsFixed(ApiConstants.digitsNumber),
+            ApiConstants.currency.trim().isEmpty
+                ? 'SAR'
+                : ApiConstants.currency)),
       ],
     );
   }
@@ -321,7 +327,7 @@ class DailyClosingReceiptWidget extends StatelessWidget {
           style: GoogleFonts.cairo(fontSize: 14, fontWeight: FontWeight.bold, color: _primaryText),
         ),
         Text(
-          'https://portal.hermosaapp.com',
+          'https://api.hermosaapp.com',
           textAlign: TextAlign.center,
           style: GoogleFonts.inter(fontSize: 12, color: _secondaryText),
         ),

@@ -99,7 +99,7 @@ extension MainScreenSettings on _MainScreenState {
 
     setState(() {
       _cashTransactionsTotal = double.parse(
-        (_cashTransactionsTotal + cashIn).toStringAsFixed(2),
+        (_cashTransactionsTotal + cashIn).toStringAsFixed(ApiConstants.digitsNumber),
       );
     });
     await _persistCashFloat();

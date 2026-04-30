@@ -565,10 +565,10 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
                 children: [
                   Text(
                     item.name,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF1E293B)),
+                        color: context.appText),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -581,7 +581,7 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
             ),
             if (item.price > 0)
               Text(
-                '${item.price.toStringAsFixed(2)} ${ApiConstants.currency}',
+                '${item.price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
@@ -622,7 +622,7 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
               ),
               const SizedBox(height: 4),
               Text(
-                '${displayAmount.toStringAsFixed(2)} ${ApiConstants.currency}',
+                '${displayAmount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w800,
@@ -659,7 +659,7 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
             style: ElevatedButton.styleFrom(
               backgroundColor: _kAccent,
               foregroundColor: Colors.white,
-              disabledBackgroundColor: Colors.grey.shade200,
+              disabledBackgroundColor: context.appSurfaceHigh,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
               elevation: 0,
@@ -715,12 +715,12 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
                 size: 36, color: Color(0xFF16A34A)),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'تم استرجاع جميع العناصر',
             style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF1E293B),
+              color: context.appText,
             ),
           ),
           const SizedBox(height: 8),

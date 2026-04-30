@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cds_page.dart';
 import 'models.dart';
+import '../services/api/api_constants.dart';
+import '../services/app_themes.dart';
 
 /// Secondary entry point for the customer-facing display.
 ///
@@ -292,14 +294,14 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       children: [
         baseScreen,
         if (showOverlay)
-          Positioned.fill(child: _buildStatusOverlay()),
+          Positioned.fill(child: _buildStatusOverlay(context)),
         if (showPayment)
           Positioned.fill(child: _buildPaymentOverlay()),
       ],
     );
   }
 
-  Widget _buildStatusOverlay() {
+  Widget _buildStatusOverlay(BuildContext context) {
     final overlay = _statusOverlay ?? {};
     final title = overlay['title']?.toString() ?? '';
     final subtitle = overlay['subtitle']?.toString() ?? '';
@@ -316,7 +318,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
         width: 520,
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 26),
         decoration: BoxDecoration(
-          color: const Color(0xFF0F172A),
+          color: context.appText,
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: accent.withValues(alpha: 0.5), width: 1.5),
         ),
@@ -340,7 +342,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
             ],
             if (amount > 0) ...[
               const SizedBox(height: 14),
-              Text(amount.toStringAsFixed(2), textAlign: TextAlign.center,
+              Text(amount.toStringAsFixed(ApiConstants.digitsNumber), textAlign: TextAlign.center,
                 style: GoogleFonts.cairo(fontSize: 24, fontWeight: FontWeight.w700, color: accent)),
             ],
           ],
@@ -496,7 +498,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       return CartItem(
         cartId: itemMap['cartId']?.toString() ?? UniqueKey().toString(),
         product: product,
-        quantity: _toInt(itemMap['quantity']),
+        quantity: _toDouble(itemMap['quantity']),
         selectedExtras: extras,
         discount: discount,
         discountType: discountType,

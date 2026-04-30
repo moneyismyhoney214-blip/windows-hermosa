@@ -6,6 +6,7 @@ import '../services/api/product_service.dart';
 import '../locator.dart';
 import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/api/api_constants.dart';
 
 class ProductCustomizationDialog extends StatefulWidget {
   final Product product;
@@ -127,7 +128,7 @@ class _ProductCustomizationDialogState
       child: Container(
         width: isWide ? (screen.width * 0.85).clamp(700.0, 1200.0) : screen.width,
         height: (screen.height * 0.92).clamp(500.0, double.infinity),
-        color: const Color(0xFFF4F4F4),
+        color: context.appBg,
         child: Column(
           children: [
             _header(),
@@ -148,18 +149,18 @@ class _ProductCustomizationDialogState
     return Container(
       height: 48,
       padding: const EdgeInsets.symmetric(horizontal: 14),
-      color: Colors.white,
+      color: context.appHeaderBg,
       child: Row(
         children: [
           Container(
             width: 30, height: 30,
-            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.grey.shade400)),
-            child: const Center(child: Text('Z', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: context.appBorder)),
+            child: Center(child: Text('Z', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: context.appText))),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(widget.product.name,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: context.appText),
                 maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           InkWell(
@@ -167,8 +168,8 @@ class _ProductCustomizationDialogState
             borderRadius: BorderRadius.circular(6),
             child: Container(
               width: 34, height: 34,
-              decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(6)),
-              child: const Icon(LucideIcons.x, size: 20),
+              decoration: BoxDecoration(color: context.appSurfaceAlt, borderRadius: BorderRadius.circular(6)),
+              child: Icon(LucideIcons.x, size: 20, color: context.appText),
             ),
           ),
         ],
@@ -186,7 +187,7 @@ class _ProductCustomizationDialogState
           flex: 35,
           child: _leftColumn(),
         ),
-        const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        VerticalDivider(width: 1, thickness: 1, color: context.appDivider),
         // ─── Right 65% ───
         Expanded(
           flex: 65,
@@ -231,12 +232,12 @@ class _ProductCustomizationDialogState
           _quantityRow(),
           const SizedBox(height: 18),
           // ── الأسعار ──
-          const Text('الأسعار', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF333333))),
+          Text('الأسعار', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: context.appText)),
           const SizedBox(height: 8),
           _priceChipsRow(),
           const SizedBox(height: 18),
           // ── ملاحظات ──
-          const Text('ملاحظات', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF333333))),
+          Text('ملاحظات', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: context.appText)),
           const SizedBox(height: 8),
           _notesField(),
         ],
@@ -261,9 +262,9 @@ class _ProductCustomizationDialogState
     final hasAny = base.isNotEmpty || (!_isLoadingAddons && groups.isNotEmpty);
 
     if (hasAny) {
-      w.add(const Padding(
-        padding: EdgeInsets.only(bottom: 10),
-        child: Text('الإضافات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF333333))),
+      w.add(Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text('الإضافات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: context.appText)),
       ));
     }
 
@@ -323,7 +324,7 @@ class _ProductCustomizationDialogState
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 22),
           child: Text(
-            _quantity % 1 == 0 ? _quantity.toStringAsFixed(0) : _quantity.toStringAsFixed(2),
+            _quantity % 1 == 0 ? _quantity.toStringAsFixed(0) : _quantity.toStringAsFixed(ApiConstants.digitsNumber),
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
         ),
@@ -351,7 +352,7 @@ class _ProductCustomizationDialogState
       spacing: 8,
       runSpacing: 8,
       children: [
-        _priceChip(price.toStringAsFixed(2), true),
+        _priceChip(price.toStringAsFixed(ApiConstants.digitsNumber), true),
       ],
     );
   }
@@ -360,12 +361,12 @@ class _ProductCustomizationDialogState
     return Container(
       width: 80, height: 52,
       decoration: BoxDecoration(
-        color: selected ? _brand : Colors.white,
+        color: selected ? _brand : context.appSurface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: selected ? _brand : Colors.grey[350]!, width: 1.5),
+        border: Border.all(color: selected ? _brand : context.appBorder, width: 1.5),
       ),
       child: Center(
-        child: Text(price, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: selected ? Colors.white : Colors.black87)),
+        child: Text(price, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: selected ? Colors.white : context.appText)),
       ),
     );
   }
@@ -375,15 +376,15 @@ class _ProductCustomizationDialogState
     return TextField(
       controller: _notesController,
       maxLines: 3,
-      style: const TextStyle(fontSize: 14),
+      style: TextStyle(fontSize: 14, color: context.appText),
       decoration: InputDecoration(
         hintText: translationService.t('add_notes_hint'),
-        hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
+        hintStyle: TextStyle(color: context.appTextSubtle, fontSize: 13),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: context.appSurface,
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: context.appBorder)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: context.appBorder)),
         focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _brand)),
       ),
     );
@@ -421,7 +422,7 @@ class _ProductCustomizationDialogState
           color: context.appCardBg,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? _brand : Colors.grey[300]!,
+            color: selected ? _brand : context.appBorder,
             width: selected ? 2.0 : 1.0,
           ),
         ),
@@ -433,13 +434,15 @@ class _ProductCustomizationDialogState
               child: Container(
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  color: selected ? _brandBg : const Color(0xFFEEEEEE),
+                  color: selected
+                      ? (context.isDark ? _brand.withValues(alpha: 0.15) : _brandBg)
+                      : context.appSurfaceAlt,
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
                 ),
                 child: Center(
                   child: Text(
                     extra.name.length >= 2 ? extra.name.substring(0, 2).toUpperCase() : extra.name.toUpperCase(),
-                    style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: selected ? _brand : Colors.grey[400]),
+                    style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: selected ? _brand : context.appTextSubtle),
                   ),
                 ),
               ),
@@ -455,13 +458,13 @@ class _ProductCustomizationDialogState
                   children: [
                     Text(
                       extra.name,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.appText),
                       maxLines: 1, overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      (extra.price * (1 + widget.taxRate)).toStringAsFixed(2),
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: selected ? _brand : Colors.grey[600]),
+                      (extra.price * (1 + widget.taxRate)).toStringAsFixed(ApiConstants.digitsNumber),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: selected ? _brand : context.appTextMuted),
                     ),
                     if (selected) ...[
                       const SizedBox(height: 4),
@@ -471,7 +474,7 @@ class _ProductCustomizationDialogState
                           _tinyBtn(LucideIcons.minus, const Color(0xFFEF5350), () => _changeExtraQty(extra.id, -1)),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 6),
-                            child: Text('$qty', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                            child: Text('$qty', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: context.appText)),
                           ),
                           _tinyBtn(LucideIcons.plus, _brand, () => _changeExtraQty(extra.id, 1)),
                         ],

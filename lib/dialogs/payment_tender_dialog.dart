@@ -8,7 +8,9 @@ import '../services/app_themes.dart';
 
 class PaymentTenderDialog extends StatefulWidget {
   final double total;
-  final double taxRate;
+  // Optional override; null means "use the active branch's VAT config from
+  // ApiConstants" — picked up via [_State._effectiveTaxRate].
+  final double? taxRate;
   final Function(List<Map<String, dynamic>> pays)? onConfirmWithPays;
   final VoidCallback onConfirm;
   final ValueChanged<String>? onNoteChanged;
@@ -32,7 +34,7 @@ class PaymentTenderDialog extends StatefulWidget {
   const PaymentTenderDialog({
     super.key,
     required this.total,
-    this.taxRate = 0.15,
+    this.taxRate,
     required this.onConfirm,
     this.onConfirmWithPays,
     this.enabledMethods = const {
@@ -101,16 +103,25 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
     return 0.0;
   }
 
+  /// Effective VAT rate — caller override wins, otherwise we fall through
+  /// to the active branch's VAT config (zero when the branch has tax off).
+  double get _effectiveTaxRate {
+    final override = widget.taxRate;
+    if (override != null) return override.clamp(0.0, 1.0).toDouble();
+    return ApiConstants.effectiveTaxRate;
+  }
+
   /// Tax-inclusive deduction the server will apply for the selected deposit.
   /// Mirrors the server formula observed in HAR: `pre_paid = price × (1 + tax)`.
   double get _depositDeductionWithTax =>
-      _depositPricePreTax * (1 + widget.taxRate.clamp(0.0, 1.0));
+      _depositPricePreTax * (1 + _effectiveTaxRate);
 
   /// The amount the cashier actually needs to collect after a deposit is
   /// applied. Matches `data.invoice.total` from the calculate endpoint.
+  /// Rounded to the branch's currency precision (BHD = 3 decimals).
   double get _effectiveTotal {
     final net = widget.total - _depositDeductionWithTax;
-    return net < 0 ? 0.0 : double.parse(net.toStringAsFixed(2));
+    return net < 0 ? 0.0 : ApiConstants.roundMoney(net);
   }
 
   /// Deposits that would exceed the invoice total are rejected by the server
@@ -122,7 +133,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         ? p.toDouble()
         : (p is String ? (double.tryParse(p) ?? 0.0) : 0.0);
     return price > 0 &&
-        price * (1 + widget.taxRate.clamp(0.0, 1.0)) <= widget.total + 0.01;
+        price * (1 + _effectiveTaxRate) <= widget.total + 0.01;
   }
 
   Future<void> _handleSplitPayment() async {
@@ -375,14 +386,15 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         children: [
           _SummaryLine(
             label: translationService.t('amount'),
-            value: subtotal.toStringAsFixed(2),
+            value: subtotal.toStringAsFixed(ApiConstants.digitsNumber),
             compact: isCompact,
           ),
-          _SummaryLine(
-            label: translationService.t('tax'),
-            value: tax.toStringAsFixed(2),
-            compact: isCompact,
-          ),
+          if (ApiConstants.isTaxActive)
+            _SummaryLine(
+              label: translationService.t('tax'),
+              value: tax.toStringAsFixed(ApiConstants.digitsNumber),
+              compact: isCompact,
+            ),
           _SummaryLine(
             label: translationService.t('discount'),
             value: '0.00',
@@ -390,7 +402,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           ),
           _SummaryLine(
             label: translationService.t('total'),
-            value: widget.total.toStringAsFixed(2),
+            value: widget.total.toStringAsFixed(ApiConstants.digitsNumber),
             strong: true,
             compact: isCompact,
           ),
@@ -398,7 +410,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
             const SizedBox(height: 6),
             _SummaryLine(
               label: _tr('عربون', 'Deposit'),
-              value: '- ${depositDeduction.toStringAsFixed(2)}',
+              value: '- ${depositDeduction.toStringAsFixed(ApiConstants.digitsNumber)}',
               valueColor: const Color(0xFF22C55E),
               compact: isCompact,
             ),
@@ -410,7 +422,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           const Divider(height: 20),
           _SummaryLine(
             label: translationService.t('remaining_amount'),
-            value: _effectiveTotal.toStringAsFixed(2),
+            value: _effectiveTotal.toStringAsFixed(ApiConstants.digitsNumber),
             strong: true,
             valueColor: const Color(0xFFF58220),
             compact: isCompact,
@@ -601,10 +613,10 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                         subtitle: Text(
                           exceeds
                               ? _tr(
-                                  'المبلغ: ${price.toStringAsFixed(2)} — أكبر من الفاتورة',
-                                  'Amount: ${price.toStringAsFixed(2)} — exceeds invoice',
+                                  'المبلغ: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — أكبر من الفاتورة',
+                                  'Amount: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — exceeds invoice',
                                 )
-                              : '${_tr('المبلغ', 'Amount')}: ${price.toStringAsFixed(2)} ${ApiConstants.currency}',
+                              : '${_tr('المبلغ', 'Amount')}: ${price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                           style: TextStyle(
                             color:
                                 exceeds ? const Color(0xFFEF4444) : null,
@@ -667,10 +679,10 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                 ? const NeverScrollableScrollPhysics()
                 : const BouncingScrollPhysics(),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: isCompact ? 2 : 3,
-              childAspectRatio: isCompact ? 1.2 : 1.3,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
+              crossAxisCount: isCompact ? 3 : 4,
+              childAspectRatio: isCompact ? 1.0 : 1.1,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
             ),
             itemCount: _methods.length,
             itemBuilder: (context, index) {
@@ -763,14 +775,14 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                             ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFF334155),
+                          color: context.appTextMuted,
                         ),
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${_effectiveTotal.toStringAsFixed(2)} ${ApiConstants.currency}',
+                        '${_effectiveTotal.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                         textAlign: TextAlign.end,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
@@ -790,15 +802,15 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                               ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFF334155),
+                            color: context.appTextMuted,
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${_effectiveTotal.toStringAsFixed(2)} ${ApiConstants.currency}',
+                        '${_effectiveTotal.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF16A34A),
@@ -819,7 +831,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
     if (hasPromo) {
       final discountText = promo!.type == DiscountType.percentage
           ? '${promo.discount.toStringAsFixed(0)}%'
-          : '${promo.discount.toStringAsFixed(2)} ${ApiConstants.currency}';
+          : '${promo.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
       label = '${promo.code} ($discountText)';
     } else {
       label = _tr('اختر كوبون', 'Select Coupon');
@@ -896,9 +908,9 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           const SizedBox(height: 14),
           Text(
             _tr('ملاحظات الطلب', 'Order Notes'),
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w700,
-              color: Color(0xFF334155),
+              color: context.appTextMuted,
             ),
           ),
           const SizedBox(height: 8),
@@ -957,7 +969,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                     minimumSize: Size.fromHeight(isUltraCompact ? 42 : 48),
                     backgroundColor: const Color(0xFFF59E0B),
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor: const Color(0xFFE2E8F0),
+                    disabledBackgroundColor: context.appSurfaceHigh,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -1003,7 +1015,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                     minimumSize: const Size(220, 52),
                     backgroundColor: const Color(0xFFF59E0B),
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor: const Color(0xFFE2E8F0),
+                    disabledBackgroundColor: context.appSurfaceHigh,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -1025,7 +1037,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final safeTaxRate = widget.taxRate.clamp(0.0, 1.0);
+    final safeTaxRate = _effectiveTaxRate;
     final subtotal =
         safeTaxRate > 0 ? widget.total / (1.0 + safeTaxRate) : widget.total;
     final tax = widget.total - subtotal;
@@ -1370,21 +1382,22 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                 padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
                 child: TextField(
                   controller: _searchController,
+                  style: TextStyle(color: context.appText),
                   decoration: InputDecoration(
                     hintText: _tr('ابحث عن كوبون...', 'Search coupon...'),
-                    hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-                    prefixIcon: const Icon(LucideIcons.search, size: 16, color: Color(0xFF94A3B8)),
+                    hintStyle: TextStyle(fontSize: 13, color: context.appTextSubtle),
+                    prefixIcon: Icon(LucideIcons.search, size: 16, color: context.appTextSubtle),
                     filled: true,
-                    fillColor: const Color(0xFFF8FAFC),
+                    fillColor: context.appSurfaceAlt,
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      borderSide: BorderSide(color: context.appBorder),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      borderSide: BorderSide(color: context.appBorder),
                     ),
                   ),
                 ),
@@ -1411,7 +1424,7 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                           final isApplied = widget.activePromoId == promo.id;
                           final discountText = promo.type == DiscountType.percentage
                               ? '${promo.discount.toStringAsFixed(0)}%'
-                              : '${promo.discount.toStringAsFixed(2)} ${ApiConstants.currency}';
+                              : '${promo.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
 
                           return InkWell(
                             onTap: () => Navigator.pop(context, promo),
@@ -1454,10 +1467,10 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                                   Expanded(
                                     child: Text(
                                       promo.code,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w600,
-                                        color: Color(0xFF1E293B),
+                                        color: context.appText,
                                       ),
                                     ),
                                   ),

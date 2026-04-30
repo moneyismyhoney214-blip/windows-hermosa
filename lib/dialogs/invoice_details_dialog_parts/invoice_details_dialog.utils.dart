@@ -24,7 +24,7 @@ extension InvoiceDetailsDialogUtils on _InvoiceDetailsDialogState {
 
   String _formatRefundAmount(double value) {
     final safe = value <= 0 ? 0.0 : value;
-    return safe.toStringAsFixed(2);
+    return safe.toStringAsFixed(ApiConstants.digitsNumber);
   }
 
   String _formatRefundCandidateSubtitle(_RefundCandidate candidate) {
@@ -34,7 +34,7 @@ extension InvoiceDetailsDialogUtils on _InvoiceDetailsDialogState {
     }
     if (candidate.total > 0) {
       parts.add(
-        'الإجمالي: ${candidate.total.toStringAsFixed(2)} ${ApiConstants.currency}',
+        'الإجمالي: ${candidate.total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
       );
     }
     if (parts.isEmpty) {

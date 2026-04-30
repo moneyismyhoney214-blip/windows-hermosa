@@ -228,7 +228,7 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                   prefixIcon: const Icon(LucideIcons.search,
                       size: 18, color: Color(0xFF94A3B8)),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
+                  fillColor: context.appSurfaceAlt,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -300,7 +300,7 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
     // Discount text
     final discountText = promo.type == DiscountType.percentage
         ? '${promo.discount.toStringAsFixed(0)}%'
-        : '${promo.discount.toStringAsFixed(2)} ${ApiConstants.currency}';
+        : '${promo.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
 
     return GestureDetector(
       onTap: isActive
@@ -423,14 +423,14 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                         _infoChip(
                           icon: LucideIcons.arrowUpCircle,
                           text:
-                              '${_tr('حد أقصى', 'Max')}: ${promo.maxDiscountDisplay ?? '${promo.maxDiscount!.toStringAsFixed(2)} ${ApiConstants.currency}'}',
+                              '${_tr('حد أقصى', 'Max')}: ${promo.maxDiscountDisplay ?? '${promo.maxDiscount!.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'}',
                         ),
                       // Min pay
                       if (promo.minPay != null)
                         _infoChip(
                           icon: LucideIcons.wallet,
                           text:
-                              '${_tr('حد أدنى', 'Min')}: ${promo.minPayDisplay ?? '${promo.minPay!.toStringAsFixed(2)} ${ApiConstants.currency}'}',
+                              '${_tr('حد أدنى', 'Min')}: ${promo.minPayDisplay ?? '${promo.minPay!.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'}',
                         ),
                       // Max uses
                       if (promo.maxUse != null)

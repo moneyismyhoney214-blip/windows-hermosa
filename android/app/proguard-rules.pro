@@ -17,6 +17,12 @@
 # Keep JWT classes
 -keep class com.rg.rsa.** { *; }
 
+# Keep Centerm Q7 SDK (AIDL stubs / reflection-bound)
+-keep class com.pos.sdk.** { *; }
+-keep class com.centerm.sdk.** { *; }
+-dontwarn com.pos.sdk.**
+-dontwarn com.centerm.sdk.**
+
 # Keep model classes (if using JSON serialization)
 -keepclassmembers class ** {
     @com.google.gson.annotations.SerializedName <fields>;

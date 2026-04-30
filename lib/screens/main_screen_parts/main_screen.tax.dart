@@ -7,16 +7,31 @@ extension MainScreenTax on _MainScreenState {
     double? resolvedRate;
     bool? resolvedHasTax;
 
+    // Authoritative source: the dedicated `/seller/filters/branches/{id}/getTax`
+    // endpoint. On success it also updates `ApiConstants` so other tax
+    // consumers see fresh values without re-reading branch settings.
     try {
-      final settings = await service.getBranchSettings();
-      if (settings.isNotEmpty) {
-        resolvedRate = _findTaxRateInPayload(settings);
-        resolvedHasTax = _findHasTaxInPayload(settings);
-      }
+      await service.refreshTaxConfig();
+      resolvedRate = ApiConstants.taxRate;
+      resolvedHasTax = ApiConstants.hasTax;
     } catch (e) {
-      print('⚠️ Failed to read tax config from branch settings: $e');
+      print('⚠️ Failed to refresh tax via getTax: $e');
     }
 
+    // Secondary source: branch settings cache (multi-endpoint racer).
+    if (resolvedRate == null || resolvedHasTax == null) {
+      try {
+        final settings = await service.getBranchSettings();
+        if (settings.isNotEmpty) {
+          resolvedRate ??= _findTaxRateInPayload(settings);
+          resolvedHasTax ??= _findHasTaxInPayload(settings);
+        }
+      } catch (e) {
+        print('⚠️ Failed to read tax config from branch settings: $e');
+      }
+    }
+
+    // Tertiary source: scanning the branches list for a `taxObject`.
     if (resolvedRate == null || resolvedHasTax == null) {
       try {
         final branches = await getIt<AuthService>().getBranchesRaw();
@@ -40,9 +55,10 @@ extension MainScreenTax on _MainScreenState {
       }
     }
 
-    final hasTax = resolvedHasTax ?? true;
-    final taxRate =
-        hasTax ? (resolvedRate ?? _taxRate).clamp(0.0, 1.0).toDouble() : 0.0;
+    final hasTax = resolvedHasTax ?? ApiConstants.hasTax;
+    final taxRate = hasTax
+        ? (resolvedRate ?? ApiConstants.taxRate).clamp(0.0, 1.0).toDouble()
+        : 0.0;
     if (!mounted) return;
     if ((_taxRate - taxRate).abs() > 0.000001 || _isTaxEnabled != hasTax) {
       setState(() {

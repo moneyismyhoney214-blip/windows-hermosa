@@ -3,8 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../services/api/api_constants.dart';
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../../services/waitlist_service.dart';
+import '../../services/whatsapp_service.dart';
+import '../../widgets/waitlist_sheet.dart';
 import '../models/table_pickup_request.dart';
 import '../models/waiter_message.dart';
 import '../services/waiter_controller.dart';
@@ -39,6 +43,12 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
     widget.controller.messages.addListener(_onControllerChanged);
     widget.controller.roster.addListener(_onControllerChanged);
     widget.controller.pickupStore.addListener(_onControllerChanged);
+    // Lazy-boot the waitlist stores so the badge count is fresh the
+    // moment the waiter lands on this shell, and the message bridge
+    // is ready whenever a notify fires.
+    unawaited(waitlistService.initialize());
+    unawaited(whatsAppService.initialize());
+    waitlistService.addListener(_onControllerChanged);
   }
 
   @override
@@ -49,8 +59,11 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
     widget.controller.messages.removeListener(_onControllerChanged);
     widget.controller.roster.removeListener(_onControllerChanged);
     widget.controller.pickupStore.removeListener(_onControllerChanged);
+    waitlistService.removeListener(_onControllerChanged);
     super.dispose();
   }
+
+  Future<void> _openWaitlist() => WaitlistSheet.show(context);
 
   void _onControllerChanged() {
     if (mounted) setState(() {});
@@ -86,6 +99,8 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
       WaiterProfileScreen(controller: widget.controller),
     ];
 
+    final waitlistCount = waitlistService.activeCount;
+
     return Scaffold(
       backgroundColor: context.appBg,
       appBar: AppBar(
@@ -93,6 +108,23 @@ class _WaiterHomeScreenState extends State<WaiterHomeScreen> {
         foregroundColor: context.appText,
         elevation: 0,
         title: Text(title),
+        actions: [
+          // Only show on the tables tab — the waitlist is meaningless
+          // on the notifications / profile screens. Also hidden when the
+          // branch can't send WhatsApp notifications at all (the only
+          // dispatch channel left after SMS was removed).
+          if (_tab == 0 && ApiConstants.whatsappEnabled)
+            IconButton(
+              tooltip: translationService.t('waitlist_tooltip'),
+              onPressed: _openWaitlist,
+              icon: Badge(
+                isLabelVisible: waitlistCount > 0,
+                label: Text('$waitlistCount'),
+                backgroundColor: const Color(0xFFDC2626),
+                child: const Icon(LucideIcons.clock),
+              ),
+            ),
+        ],
       ),
       body: IndexedStack(index: _tab, children: pages),
       bottomNavigationBar: NavigationBar(

@@ -192,6 +192,7 @@ final Map<String, String> _trTranslations = {
     'test': 'Test',
     'print_test': 'Test Yazdır',
     'sections': 'Bölümler',
+    'uncategorized_section': 'Genel',
     'add_printer_title': 'Yazıcı Ekle',
     'printer_name': 'Ad',
     'ip_label': 'IP',

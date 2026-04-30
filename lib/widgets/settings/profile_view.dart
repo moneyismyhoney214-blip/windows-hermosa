@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../screens/legal_page_screen.dart';
 import '../../services/api/profile_service.dart';
 import '../../locator.dart';
 import '../../services/language_service.dart';
@@ -509,10 +510,88 @@ class _ProfileViewState extends State<ProfileView> {
                     ),
                     compact: compactInfo,
                   ),
+
+                SizedBox(height: sectionGap),
+                Divider(color: Colors.grey.shade200),
+                SizedBox(height: sectionGap),
+
+                // Legal — privacy policy + terms. Required by Apple
+                // App Review 5.1.1(i): the privacy policy must be
+                // accessible WITHIN the app, not just on the App
+                // Store listing or login screen.
+                _buildSectionTitle(
+                  _tr('قانوني', 'Legal'),
+                  compact: compactInfo,
+                ),
+                const SizedBox(height: 20),
+                _buildLegalRow(
+                  icon: Icons.privacy_tip_outlined,
+                  label: _tr('سياسة الخصوصية', 'Privacy Policy'),
+                  slug: 'privacy-policy',
+                  compact: compactInfo,
+                ),
+                _buildLegalRow(
+                  icon: Icons.description_outlined,
+                  label: _tr('الشروط والأحكام', 'Terms & Conditions'),
+                  slug: 'terms-conditions',
+                  compact: compactInfo,
+                ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLegalRow({
+    required IconData icon,
+    required String label,
+    required String slug,
+    bool compact = false,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => LegalPageScreen(slug: slug, fallbackTitle: label),
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: compact ? 10 : 12),
+        child: Row(
+          children: [
+            Container(
+              width: compact ? 40 : 44,
+              height: compact ? 40 : 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF58220).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(compact ? 10 : 12),
+              ),
+              child: Icon(
+                icon,
+                color: const Color(0xFFF58220),
+                size: compact ? 20 : 22,
+              ),
+            ),
+            SizedBox(width: compact ? 12 : 16),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: compact ? 15 : 16,
+                  fontWeight: FontWeight.w600,
+                  color: context.appText,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              color: context.appTextMuted,
+              size: 20,
+            ),
+          ],
+        ),
       ),
     );
   }

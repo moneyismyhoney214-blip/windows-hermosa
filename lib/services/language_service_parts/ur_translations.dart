@@ -191,6 +191,7 @@ final Map<String, String> _urTranslations = {
     'test': 'چیک',
     'print_test': 'ٹیسٹ پرنٹ',
     'sections': 'سیکشنز',
+    'uncategorized_section': 'عام',
     'add_printer_title': 'پرنٹر شامل کریں',
     'printer_name': 'نام',
     'ip_label': 'IP',

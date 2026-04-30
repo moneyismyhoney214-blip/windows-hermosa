@@ -53,10 +53,10 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF1E293B),
+                        color: context.appText,
                       ),
                     ),
                   ),
@@ -89,10 +89,10 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
               const Spacer(),
               Text(
                 translationService.t('invoices'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF1E293B),
+                  color: context.appText,
                 ),
               ),
               const Spacer(),
@@ -331,57 +331,37 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                         side: const BorderSide(color: Color(0xFF0EA5E9)),
                       ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: canOrderActions && !_isSendingWhatsApp
-                          ? () async {
-                              final resolvedOrderId =
-                                  orderId ?? await _resolveOrderIdForInvoiceAsync(invoice);
-                              if (resolvedOrderId == null || resolvedOrderId <= 0) {
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(_tr(
-                                      'تعذر تحديد رقم الطلب لهذه الفاتورة',
-                                      'Unable to resolve order for this invoice',
-                                    )),
-                                  ),
-                                );
-                                return;
-                              }
-                              await _sendWhatsAppForOrder(
-                                orderId: resolvedOrderId,
-                                orderLabel: _formatInvoiceNumber(invoice),
-                              );
-                            }
-                          : null,
-                      icon: const Icon(LucideIcons.messageCircle, size: 16),
-                      label: Text(_tr('واتساب', 'WhatsApp')),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF16A34A),
-                        side: const BorderSide(color: Color(0xFF16A34A)),
-                      ),
-                    ),
-                    if (canRefund)
+                    if (ApiConstants.branchModule != 'salons')
                       OutlinedButton.icon(
-                        onPressed: isRefunding
-                            ? null
-                            : () => _showInvoiceRefundOptions(invoice),
-                        icon: isRefunding
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(LucideIcons.refreshCw, size: 16),
-                        label: Text(
-                          hasPartialRefund
-                              ? _tr('استرجاع إضافي', 'Refund More')
-                              : _tr('استرجاع', 'Refund'),
-                        ),
+                        onPressed: canOrderActions && !_isSendingWhatsApp
+                            ? () async {
+                                final resolvedOrderId = orderId ??
+                                    await _resolveOrderIdForInvoiceAsync(
+                                        invoice);
+                                if (resolvedOrderId == null ||
+                                    resolvedOrderId <= 0) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(_tr(
+                                        'تعذر تحديد رقم الطلب لهذه الفاتورة',
+                                        'Unable to resolve order for this invoice',
+                                      )),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                await _sendWhatsAppForOrder(
+                                  orderId: resolvedOrderId,
+                                  orderLabel: _formatInvoiceNumber(invoice),
+                                );
+                              }
+                            : null,
+                        icon: const Icon(LucideIcons.messageCircle, size: 16),
+                        label: Text(_tr('واتساب', 'WhatsApp')),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFEF4444),
-                          side: const BorderSide(color: Color(0xFFEF4444)),
+                          foregroundColor: const Color(0xFF16A34A),
+                          side: const BorderSide(color: Color(0xFF16A34A)),
                         ),
                       ),
                     if (isFullyRefunded)
@@ -409,14 +389,62 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                           ],
                         ),
                       ),
-                    OutlinedButton.icon(
-                      onPressed: () => _showRefundedMealsForInvoice(invoice),
-                      icon: const Icon(LucideIcons.list, size: 16),
-                      label: Text(_tr('المرتجعات', 'Refunds')),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFB45309),
-                        side: const BorderSide(color: Color(0xFFB45309)),
-                      ),
+                    PopupMenuButton<String>(
+                      tooltip: _tr('المزيد', 'More'),
+                      icon: isRefunding
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(LucideIcons.moreVertical,
+                              size: 20, color: context.appText),
+                      onSelected: (value) {
+                        if (value == 'refund') {
+                          _showInvoiceRefundOptions(invoice);
+                        } else if (value == 'refunds_list') {
+                          _showRefundedMealsForInvoice(invoice);
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        if (canRefund)
+                          PopupMenuItem<String>(
+                            value: 'refund',
+                            enabled: !isRefunding,
+                            child: Row(
+                              children: [
+                                const Icon(LucideIcons.refreshCw,
+                                    size: 16, color: Color(0xFFEF4444)),
+                                const SizedBox(width: 8),
+                                Text(
+                                  hasPartialRefund
+                                      ? _tr('استرجاع إضافي', 'Refund More')
+                                      : _tr('استرجاع', 'Refund'),
+                                  style: const TextStyle(
+                                      color: Color(0xFFEF4444),
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ),
+                          ),
+                        PopupMenuItem<String>(
+                          value: 'refunds_list',
+                          child: Row(
+                            children: [
+                              const Icon(LucideIcons.list,
+                                  size: 16, color: Color(0xFFB45309)),
+                              const SizedBox(width: 8),
+                              Text(
+                                _tr('المرتجعات', 'Refunds'),
+                                style: const TextStyle(
+                                    color: Color(0xFFB45309),
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

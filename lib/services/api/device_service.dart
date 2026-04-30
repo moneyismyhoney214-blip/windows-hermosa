@@ -7,6 +7,8 @@ import 'package:hermosa_pos/services/cache_service.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../printer_role_registry.dart';
+import '../q7_printer_channel.dart';
 import 'api_constants.dart';
 import 'base_client.dart';
 
@@ -44,7 +46,14 @@ class DeviceService {
     overrides.forEach((id, data) {
       final ip = (data['ip'] ?? '').toString();
       final name = (data['name'] ?? 'Printer').toString();
-      if (ip.isEmpty && (data['bluetooth_address'] ?? '').toString().isEmpty) {
+      final connType = _parseConnectionType(
+          data['connection_type'] ?? data['connectionType']);
+      // Q7 built-in printers reach the device via a system-service IPC
+      // and so have neither IP nor MAC. The other connection types do
+      // need at least one transport address.
+      if (connType != PrinterConnectionType.q7Builtin &&
+          ip.isEmpty &&
+          (data['bluetooth_address'] ?? '').toString().isEmpty) {
         return; // Skip entries with no connection info
       }
       devices.add(DeviceConfig(
@@ -57,8 +66,7 @@ class DeviceService {
         isOnline: false,
         copies: int.tryParse((data['copies'] ?? 1).toString()) ?? 1,
         paperWidthMm: _normalizePaperWidthMm(data['paper_width_mm']),
-        connectionType: _parseConnectionType(
-            data['connection_type'] ?? data['connectionType']),
+        connectionType: connType,
         bluetoothAddress: data['bluetooth_address']?.toString(),
         bluetoothName: data['bluetooth_name']?.toString(),
       ));
@@ -202,6 +210,53 @@ class DeviceService {
     await _saveLocalOverride(device);
   }
 
+  /// On Centerm Q7 hardware, register a singleton "Built-in (Q7)" cashier
+  /// printer so users don't have to add anything by hand. No-op on every
+  /// other device — keeps Sunmi/Bluetooth/network paths untouched.
+  ///
+  /// Idempotent: if a Q7 entry already exists, only its name/role are
+  /// refreshed; the user's chosen `copies`, `paperWidthMm`, etc. are
+  /// preserved. Returns the registered device, or null when Q7 is absent.
+  Future<DeviceConfig?> autoRegisterQ7BuiltInPrinterIfPresent() async {
+    final available = await Q7PrinterChannel.isAvailable();
+    if (!available) return null;
+
+    final overrides = await _loadLocalOverrides();
+    final existing = overrides[Q7PrinterChannel.builtInDeviceId];
+
+    final device = DeviceConfig(
+      id: Q7PrinterChannel.builtInDeviceId,
+      name: existing != null && (existing['name']?.toString().trim().isNotEmpty ?? false)
+          ? existing['name'].toString()
+          : 'Built-in Printer (Q7)',
+      ip: '',
+      port: '0',
+      type: 'printer',
+      model: Q7PrinterChannel.builtInModel,
+      connectionType: PrinterConnectionType.q7Builtin,
+      copies: int.tryParse((existing?['copies'] ?? 1).toString()) ?? 1,
+      paperWidthMm: _normalizePaperWidthMm(existing?['paper_width_mm'] ?? 58),
+    );
+    await _saveLocalOverride(device);
+
+    // Default the auto-registered printer to the cashier-receipt role —
+    // the user may still reassign it from Settings → Printers, but this
+    // matches the requirement that the device's built-in printer only
+    // produces cashier receipts. Kitchen tickets continue to flow through
+    // whichever bluetooth/network printer the user adds manually.
+    try {
+      final roleRegistry = getIt.isRegistered<PrinterRoleRegistry>()
+          ? getIt<PrinterRoleRegistry>()
+          : PrinterRoleRegistry();
+      await roleRegistry.initialize();
+      if (!roleRegistry.hasExplicitRole(device.id)) {
+        await roleRegistry.setRole(device.id, PrinterRole.cashierReceipt);
+      }
+    } catch (_) {}
+
+    return device;
+  }
+
 
   List<dynamic> _extractList(dynamic response) {
     if (response is List) return response;
@@ -328,17 +383,28 @@ class DeviceService {
         '[Printer] saved paperSize: ${device.paperWidthMm}',
         name: 'Printer',
       );
+      // Coerce Q7 entries back to the q7Builtin connection type even if
+      // an edit dialog accidentally saved them as wifi/bluetooth — the
+      // settings UI's connection-type toggle doesn't include the Q7
+      // option, so we'd otherwise silently reroute receipts onto a
+      // dead network/BT path.
+      final isQ7 = device.id.startsWith(Q7PrinterChannel.deviceIdPrefix) ||
+          device.model == Q7PrinterChannel.builtInModel ||
+          device.connectionType == PrinterConnectionType.q7Builtin;
+      final connTypeName = isQ7
+          ? PrinterConnectionType.q7Builtin.name
+          : device.connectionType.name;
       final map = await _loadLocalOverrides();
       map[device.id] = {
         'name': device.name,
-        'ip': device.ip,
+        'ip': isQ7 ? '' : device.ip,
         'port': device.port,
         'type': device.type,
-        'model': device.model,
-        'paper_width_mm': _normalizePaperWidthMm(device.paperWidthMm),
-        'connection_type': device.connectionType.name,
-        'bluetooth_address': device.bluetoothAddress,
-        'bluetooth_name': device.bluetoothName,
+        'model': isQ7 ? Q7PrinterChannel.builtInModel : device.model,
+        'paper_width_mm': isQ7 ? 58 : _normalizePaperWidthMm(device.paperWidthMm),
+        'connection_type': connTypeName,
+        'bluetooth_address': isQ7 ? null : device.bluetoothAddress,
+        'bluetooth_name': isQ7 ? null : device.bluetoothName,
       };
       await _persistLocalOverrides(map);
     } catch (_) {}
@@ -348,6 +414,9 @@ class DeviceService {
     final value = raw?.toString().trim().toLowerCase() ?? '';
     if (value == 'bluetooth' || value == 'bt') {
       return PrinterConnectionType.bluetooth;
+    }
+    if (value == 'q7_builtin' || value == 'q7' || value == 'q7builtin') {
+      return PrinterConnectionType.q7Builtin;
     }
     return PrinterConnectionType.wifi;
   }

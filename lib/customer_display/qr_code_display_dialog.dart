@@ -5,6 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../services/app_themes.dart';
+
 class QRCodeDisplayDialog extends StatelessWidget {
   final String ipAddress;
   final int port;
@@ -69,7 +71,7 @@ class QRCodeDisplayDialog extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: context.appBorder),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.05),
@@ -83,13 +85,14 @@ class QRCodeDisplayDialog extends StatelessWidget {
                   version: QrVersions.auto,
                   size: 200,
                   backgroundColor: Colors.white,
-                  eyeStyle: const QrEyeStyle(
+                  eyeStyle: QrEyeStyle(
                     eyeShape: QrEyeShape.square,
-                    color: Color(0xFF0F172A),
+                    color: context.appText,
+
                   ),
-                  dataModuleStyle: const QrDataModuleStyle(
+                  dataModuleStyle: QrDataModuleStyle(
                     dataModuleShape: QrDataModuleShape.square,
-                    color: Color(0xFF0F172A),
+                    color: context.appText,
                   ),
                   errorStateBuilder: (context, error) {
                     return Container(
@@ -112,15 +115,15 @@ class QRCodeDisplayDialog extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: context.appSurfaceAlt,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: context.appBorder),
                 ),
                 child: Column(
                   children: [
-                    _buildInfoRow('IP Address', ipAddress),
+                    _buildInfoRow(context, 'IP Address', ipAddress),
                     const Divider(height: 16),
-                    _buildInfoRow('Port', port.toString()),
+                    _buildInfoRow(context, 'Port', port.toString()),
                   ],
                 ),
               ),
@@ -175,7 +178,7 @@ class QRCodeDisplayDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildInfoRow(BuildContext context, String label, String value) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -183,7 +186,7 @@ class QRCodeDisplayDialog extends StatelessWidget {
           label,
           style: GoogleFonts.tajawal(
             fontSize: 14,
-            color: const Color(0xFF64748B),
+            color: context.appTextMuted,
           ),
         ),
         SelectableText(
@@ -191,7 +194,7 @@ class QRCodeDisplayDialog extends StatelessWidget {
           style: GoogleFonts.tajawal(
             fontSize: 14,
             fontWeight: FontWeight.bold,
-            color: const Color(0xFF0F172A),
+            color: context.appText,
           ),
         ),
       ],

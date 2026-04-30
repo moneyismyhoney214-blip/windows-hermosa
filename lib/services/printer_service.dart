@@ -5,12 +5,14 @@ import 'dart:typed_data';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart' as esc;
 import 'package:flutter/material.dart';
-import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart' as fbp;
 import 'package:image/image.dart' as img;
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
+import 'package:hermosa_pos/services/api/api_constants.dart';
 import '../models.dart';
 import '../models/receipt_data.dart';
+import 'bluetooth_print_channel.dart';
 import 'network_print_helper.dart';
+import 'q7_printer_channel.dart';
 
 class PrintRequest {
   final DeviceConfig device;
@@ -87,6 +89,12 @@ class PrinterService {
     return device.connectionType == PrinterConnectionType.bluetooth;
   }
 
+  bool _isQ7BuiltInPrinter(DeviceConfig device) {
+    return device.connectionType == PrinterConnectionType.q7Builtin ||
+        device.id.startsWith(Q7PrinterChannel.deviceIdPrefix) ||
+        device.model == Q7PrinterChannel.builtInModel;
+  }
+
   bool _isDisplayDevice(DeviceConfig device) {
     final type = device.type.trim().toLowerCase();
     return type == 'kds' ||
@@ -131,6 +139,13 @@ class PrinterService {
 
   Future<bool> testConnection(DeviceConfig device) async {
     _assertPrinterDevice(device);
+
+    if (_isQ7BuiltInPrinter(device)) {
+      // The Q7 channel reports availability based on the system service
+      // being installed AND the SDK successfully binding. Treat that as
+      // the test result.
+      return Q7PrinterChannel.isAvailable();
+    }
 
     if (_isBluetoothPrinter(device)) {
       final mac = device.bluetoothAddress?.trim() ?? '';
@@ -268,8 +283,9 @@ class PrinterService {
     required String serviceName,
     required String employeeName,
     required String priceFormatted,
-    String currencyAr = 'ر.س',
-    String currencyEn = 'SAR',
+    // Null falls back to the active branch's currency from ApiConstants.
+    String? currencyAr,
+    String? currencyEn,
     String? sellerNameAr,
     String? sellerNameEn,
     String? addressLine,
@@ -290,8 +306,8 @@ class PrinterService {
         'service_name': serviceName,
         'employee_name': employeeName,
         'price_formatted': priceFormatted,
-        'currency_ar': currencyAr,
-        'currency_en': currencyEn,
+        'currency_ar': currencyAr ?? ApiConstants.currency,
+        'currency_en': currencyEn ?? ApiConstants.currency,
         if (sellerNameAr != null) 'seller_name_ar': sellerNameAr,
         if (sellerNameEn != null) 'seller_name_en': sellerNameEn,
         if (addressLine != null) 'address_line': addressLine,
@@ -323,6 +339,25 @@ class PrinterService {
   Future<void> finalizePrintJob(PrintRequest request, Uint8List imageBytes) async {
     final device = request.device;
 
+    if (_isQ7BuiltInPrinter(device)) {
+      // Centerm Q7 built-in thermal printer. The SDK's `printBitmap`
+      // accepts a PNG-ish bitmap directly — no ESC/POS dance, no
+      // grayscale/binarisation pre-pass (the firmware does the dithering),
+      // no socket. The bridge raises a PlatformException with code
+      // `Q7_UNAVAILABLE` if the SDK service vanished mid-print, which we
+      // surface to the caller so the orchestrator can retry/failover.
+      try {
+        await Q7PrinterChannel.printBitmap(
+          data: imageBytes,
+          feedLines: 3,
+        );
+      } catch (e) {
+        debugPrint('❌ Q7 built-in print failed [${device.name}]: $e');
+        rethrow;
+      }
+      return;
+    }
+
     if (_isBluetoothPrinter(device)) {
       // Encode the PNG through the same ESC/POS pipeline network printing uses,
       // then stream the bytes over the Bluetooth transport. Previously this
@@ -338,10 +373,12 @@ class PrinterService {
         addFeeds: 4,
       );
       try {
-        await fbp.FlutterBluetoothPrinter.printBytes(
+        // Routes through BluetoothPrintBridge.kt — bonds the device if
+        // the printer requires a PIN, then falls back through secure /
+        // insecure / reflection RFCOMM transports as needed.
+        await BluetoothPrintChannel.printBytes(
           address: address,
           data: escBytes,
-          keepConnected: false,
         );
       } catch (e) {
         debugPrint('❌ BT raw-image print failed [${device.name}]: $e');

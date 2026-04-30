@@ -211,8 +211,8 @@ class _SettingsViewState extends State<SettingsView> {
                     : null,
                 title: Text(
                   translationService.t('settings'),
-                  style: const TextStyle(
-                    color: Color(0xFF1E293B),
+                  style: TextStyle(
+                    color: context.appText,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -267,7 +267,7 @@ class _SettingsViewState extends State<SettingsView> {
                                       style: TextStyle(fontSize: isVeryNarrow ? 11 : 12),
                                     ),
                                     style: TextButton.styleFrom(
-                                      foregroundColor: const Color(0xFF64748B),
+                                      foregroundColor: context.appTextMuted,
                                       padding: const EdgeInsets.symmetric(horizontal: 8),
                                       visualDensity: VisualDensity.compact,
                                     ),
@@ -333,10 +333,10 @@ class _SettingsViewState extends State<SettingsView> {
                     color: context.appCardBg,
                     border: Border(
                       left: translationService.isRTL
-                          ? BorderSide(color: Colors.grey.shade200)
+                          ? BorderSide(color: context.appBorder)
                           : BorderSide.none,
                       right: !translationService.isRTL
-                          ? BorderSide(color: Colors.grey.shade200)
+                          ? BorderSide(color: context.appBorder)
                           : BorderSide.none,
                     ),
                   ),
@@ -347,7 +347,7 @@ class _SettingsViewState extends State<SettingsView> {
                         padding: const EdgeInsets.all(24),
                         decoration: BoxDecoration(
                           border: Border(
-                            bottom: BorderSide(color: Colors.grey.shade200),
+                            bottom: BorderSide(color: context.appBorder),
                           ),
                         ),
                         child: Column(
@@ -364,8 +364,8 @@ class _SettingsViewState extends State<SettingsView> {
                                   ),
                                   Text(
                                     translationService.t('back_to_main'),
-                                    style: const TextStyle(
-                                      color: Color(0xFF64748B),
+                                    style: TextStyle(
+                                      color: context.appTextMuted,
                                       fontSize: 14,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -395,9 +395,10 @@ class _SettingsViewState extends State<SettingsView> {
                                     children: [
                                       Text(
                                         translationService.t('settings'),
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 20,
                                           fontWeight: FontWeight.bold,
+                                          color: context.appText,
                                         ),
                                       ),
                                       _isLoadingBranch
@@ -437,7 +438,7 @@ class _SettingsViewState extends State<SettingsView> {
                                                         icon: const Icon(Icons.swap_horiz, size: 18),
                                                         label: Text(translationService.t('switch_branch')),
                                                         style: TextButton.styleFrom(
-                                                          foregroundColor: const Color(0xFF64748B),
+                                                          foregroundColor: context.appTextMuted,
                                                           padding: const EdgeInsets.symmetric(horizontal: 8),
                                                           visualDensity: VisualDensity.compact,
                                                         ),
@@ -448,8 +449,8 @@ class _SettingsViewState extends State<SettingsView> {
                                               : Text(
                                                   translationService
                                                       .t('app_name'),
-                                                  style: const TextStyle(
-                                                    color: Colors.grey,
+                                                  style: TextStyle(
+                                                    color: context.appTextMuted,
                                                     fontSize: 14,
                                                   ),
                                                 ),
@@ -495,7 +496,7 @@ class _SettingsViewState extends State<SettingsView> {
                                           tab.icon,
                                           color: isSelected
                                               ? Colors.white
-                                              : const Color(0xFF64748B),
+                                              : context.appTextMuted,
                                           size: 22,
                                         ),
                                         const SizedBox(width: 12),
@@ -504,7 +505,7 @@ class _SettingsViewState extends State<SettingsView> {
                                           style: TextStyle(
                                             color: isSelected
                                                 ? Colors.white
-                                                : const Color(0xFF64748B),
+                                                : context.appTextMuted,
                                             fontWeight: FontWeight.w600,
                                             fontSize: 15,
                                           ),
@@ -524,7 +525,7 @@ class _SettingsViewState extends State<SettingsView> {
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           border: Border(
-                            top: BorderSide(color: Colors.grey.shade200),
+                            top: BorderSide(color: context.appBorder),
                           ),
                         ),
                         child: _buildLogoutButton(),
@@ -667,12 +668,12 @@ class _SettingsViewState extends State<SettingsView> {
             vertical: 8,
           ),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFF58220) : Colors.white,
+            color: isSelected ? const Color(0xFFF58220) : context.appSurface,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
               color: isSelected
                   ? const Color(0xFFF58220)
-                  : const Color(0xFFE2E8F0),
+                  : context.appBorder,
             ),
           ),
           child: Row(
@@ -683,7 +684,7 @@ class _SettingsViewState extends State<SettingsView> {
               Icon(
                 tab.icon,
                 size: 16,
-                color: isSelected ? Colors.white : const Color(0xFF64748B),
+                color: isSelected ? Colors.white : context.appTextMuted,
               ),
               const SizedBox(width: 6),
               Flexible(
@@ -693,7 +694,7 @@ class _SettingsViewState extends State<SettingsView> {
                   overflow: TextOverflow.ellipsis,
                   textAlign: fillWidth ? TextAlign.center : TextAlign.start,
                   style: TextStyle(
-                    color: isSelected ? Colors.white : const Color(0xFF334155),
+                    color: isSelected ? Colors.white : context.appText,
                     fontWeight: FontWeight.w700,
                     fontSize: 13,
                   ),

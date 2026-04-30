@@ -7,6 +7,20 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Exclude the outdated `local.libs:centrum-printer:1.0.0_20221223`
+// jar that NearPay's `kernelsdk-release` pulls in transitively. It
+// ships an older snapshot of the Centerm `com.pos.sdk.*` AIDL stubs
+// (different transaction codes than the 2025 service installed on
+// the Q7), and roughly 87 of its classes collide with our local
+// CpaySDKLib_Q jar — so leaving it on the classpath either fails the
+// merge step (R8) or, worse, wins the duplicate-class fight at dex
+// time and silently misroutes every IPC call to the Q7 printer
+// service. NearPay's payment flow on the Q7 doesn't print through
+// that jar (the host app does), so the exclusion is safe.
+configurations.all {
+    exclude(group = "local.libs", module = "centrum-printer")
+}
+
 // NEARPAY MAVEN REPOSITORY
 repositories {
     google()
@@ -67,10 +81,18 @@ android {
     }
 
     dependencies {
-        // NearPay Terminal SDK
+        // NearPay Terminal SDK. The outdated transitive
+        // `local.libs:centrum-printer` jar is removed at the
+        // configuration level (above) so the classpath stays clean
+        // across every variant.
         implementation("io.nearpay:terminalsdk-release:0.0.169")
         implementation("com.google.android.gms:play-services-location:20.0.0")
         implementation("com.huawei.hms:location:6.4.0.300")
+        // Centerm Q7 POS SDK (printer + system services). Backed by the
+        // com.pos.smartposservice APK that must be pre-installed on Q7
+        // hardware. Detected at runtime — code paths are no-ops on
+        // non-Q7 devices.
+        implementation(fileTree("libs") { include("*.jar") })
     }
 
     signingConfigs {

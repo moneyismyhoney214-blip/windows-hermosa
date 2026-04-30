@@ -381,7 +381,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _header(
-              LucideIcons.smartphone,
+              LucideIcons.keyRound,
               _l(
                 ar: 'استعادة كلمة المرور',
                 en: 'Recover Password',
@@ -391,49 +391,69 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ur: 'پاس ورڈ بحالی',
               ),
               _l(
-                ar: 'أدخل رقم جوالك لإرسال رمز التحقق',
-                en: 'Enter your mobile number to receive a verification code',
-                es: 'Ingresa tu número de móvil para recibir un código',
-                tr: 'Doğrulama kodu için cep numaranızı girin',
-                hi: 'सत्यापन कोड के लिए अपना मोबाइल नंबर दर्ज करें',
-                ur: 'تصدیقی کوڈ کیلئے اپنا موبائل نمبر درج کریں',
+                ar: 'أدخل بريدك الإلكتروني أو رقم جوالك لإرسال رمز التحقق',
+                en: 'Enter your email or mobile number to receive a verification code',
+                es: 'Ingresa tu correo o número de móvil para recibir un código',
+                tr: 'Doğrulama kodu için e-posta veya cep numaranızı girin',
+                hi: 'सत्यापन कोड के लिए अपना ईमेल या मोबाइल नंबर दर्ज करें',
+                ur: 'تصدیقی کوڈ کیلئے ای میل یا موبائل نمبر درج کریں',
               ),
             ),
             const SizedBox(height: 24),
             TextFormField(
               controller: _mobileCtrl,
               enabled: !_busy,
-              keyboardType: TextInputType.phone,
+              keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.done,
-              autofillHints: const [AutofillHints.telephoneNumber],
+              autofillHints: const [
+                AutofillHints.email,
+                AutofillHints.telephoneNumber,
+              ],
               textDirection: TextDirection.ltr,
               textAlign: TextAlign.left,
               inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9+\-\s]')),
-                LengthLimitingTextInputFormatter(20),
+                LengthLimitingTextInputFormatter(120),
               ],
               onFieldSubmitted: (_) => _submitMobile(),
               style: GoogleFonts.inter(
-                fontSize: 18,
+                fontSize: 16,
                 fontWeight: FontWeight.w700,
                 color: _kTextDark,
-                letterSpacing: 1.2,
               ),
               decoration: _fieldDecoration(
-                label: _l(ar: 'رقم الجوال', en: 'Mobile number'),
-                hint: '05XXXXXXXX',
-                icon: LucideIcons.smartphone,
+                label: _l(
+                  ar: 'البريد الإلكتروني أو رقم الجوال',
+                  en: 'Email or mobile number',
+                ),
+                hint: 'name@example.com',
+                icon: LucideIcons.atSign,
               ),
               validator: (v) {
                 final t = v?.trim() ?? '';
                 if (t.isEmpty) {
                   return _l(
-                      ar: 'رقم الجوال مطلوب', en: 'Mobile number required');
+                    ar: 'البريد الإلكتروني أو رقم الجوال مطلوب',
+                    en: 'Email or mobile number required',
+                  );
+                }
+                final isEmail = t.contains('@');
+                if (isEmail) {
+                  // Minimal email shape — backend will do the real lookup.
+                  final emailRe = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+                  if (!emailRe.hasMatch(t)) {
+                    return _l(
+                      ar: 'بريد إلكتروني غير صحيح',
+                      en: 'Invalid email address',
+                    );
+                  }
+                  return null;
                 }
                 final digits = t.replaceAll(RegExp(r'\D'), '');
                 if (digits.length < 7) {
                   return _l(
-                      ar: 'رقم جوال غير صحيح', en: 'Invalid mobile number');
+                    ar: 'رقم جوال غير صحيح',
+                    en: 'Invalid mobile number',
+                  );
                 }
                 return null;
               },

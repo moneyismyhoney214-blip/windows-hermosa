@@ -4,6 +4,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'display_provider.dart';
+import '../services/api/api_constants.dart';
 
 /// Payment Display Screen for CDS
 /// This is shown on the Customer Display when payment is initiated
@@ -124,7 +125,7 @@ class _PaymentDisplayScreenState extends State<PaymentDisplayScreen> {
 
           // Amount
           Text(
-            '${amount.toStringAsFixed(2)} ر.س',
+            '${amount.toStringAsFixed(ApiConstants.digitsNumber)} ر.س',
             style: GoogleFonts.tajawal(
               fontSize: 64,
               fontWeight: FontWeight.bold,

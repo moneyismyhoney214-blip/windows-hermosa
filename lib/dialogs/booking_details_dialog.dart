@@ -454,9 +454,18 @@ class BookingDetailsDialog extends StatelessWidget {
     final totalPrice = _parsePrice(meal['total'] ?? meal['price']);
     final extras = _extractMealExtras(meal);
     final rawStatus = meal['status']?.toString().trim().toLowerCase() ?? '';
+    // Salon services use a different numeric status enum than cashier meals,
+    // so the legacy `status == '3'` heuristic incorrectly tagged active
+    // services as cancelled. Trust the explicit boolean flags only for salon
+    // items (detected via `service_id` / `service_name` / `booking_service_id`),
+    // and keep the original heuristic for restaurant meals untouched.
+    final isSalonItem = meal.containsKey('service_id') ||
+        meal.containsKey('service_name') ||
+        meal.containsKey('booking_service_id') ||
+        meal['service'] is Map;
     final isCancelled = rawStatus == 'cancelled' ||
         rawStatus == 'canceled' ||
-        rawStatus == '3' ||
+        (!isSalonItem && rawStatus == '3') ||
         _isTruthy(meal['is_cancelled']) ||
         _isTruthy(meal['cancel_status']) ||
         _isTruthy(meal['cancelled']);
@@ -573,7 +582,7 @@ class BookingDetailsDialog extends StatelessWidget {
                 ),
               ),
               Text(
-                '${totalPrice.toStringAsFixed(2)} ${ApiConstants.currency}',
+                '${totalPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -627,7 +636,7 @@ class BookingDetailsDialog extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 40),
               child: Text(
-                '${unitPrice.toStringAsFixed(2)} ${ApiConstants.currency} / ${translationService.t('per_unit')}',
+                '${unitPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency} / ${translationService.t('per_unit')}',
                 style: TextStyle(
                   fontSize: 11,
                   color: Colors.grey[600],
@@ -676,7 +685,7 @@ class BookingDetailsDialog extends StatelessWidget {
                 .toLowerCase();
         if (name.isNotEmpty) {
           signatures.add(
-            'name:$name|qty:${item['quantity'] ?? 1}|total:${_parsePrice(item['total'] ?? item['price']).toStringAsFixed(2)}',
+            'name:$name|qty:${item['quantity'] ?? 1}|total:${_parsePrice(item['total'] ?? item['price']).toStringAsFixed(ApiConstants.digitsNumber)}',
           );
         }
       }
@@ -778,8 +787,8 @@ class BookingDetailsDialog extends StatelessWidget {
         ),
         Text(
           isDiscount
-              ? '- ${value.abs().toStringAsFixed(2)} ${ApiConstants.currency}'
-              : '${value.toStringAsFixed(2)} ${ApiConstants.currency}',
+              ? '- ${value.abs().toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'
+              : '${value.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
           style: TextStyle(
             fontSize: isTotal ? 18 : 14,
             fontWeight: FontWeight.bold,
@@ -1070,7 +1079,7 @@ class BookingDetailsDialog extends StatelessWidget {
                 ),
               ),
               Text(
-                '${total.toStringAsFixed(2)} ${ApiConstants.currency}',
+                '${total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.bold,

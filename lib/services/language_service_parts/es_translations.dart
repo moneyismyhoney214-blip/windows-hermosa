@@ -245,6 +245,7 @@ final Map<String, String> _esTranslations = {
     'test': 'Probar',
     'print_test': 'Prueba de impresión',
     'sections': 'Secciones',
+    'uncategorized_section': 'General',
     'add_printer_title': 'Agregar impresora',
     'printer_name': 'Nombre',
     'ip_label': 'IP',

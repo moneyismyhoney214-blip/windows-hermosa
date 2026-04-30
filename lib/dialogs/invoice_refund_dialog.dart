@@ -21,7 +21,7 @@ import '../services/app_themes.dart';
 
 enum _RefundMode { full, partial }
 
-enum _RefundCandidateType { meal, product, unknown }
+enum _RefundCandidateType { meal, product, service, unknown }
 
 class _RefundCandidate {
   final int id;
@@ -91,6 +91,15 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
   final Set<_RefundCandidate> _selectedItems = {};
   double _refundAmount = 0;
   bool _allItemsRefunded = false;
+
+  // Captured during _loadData and replayed into the salon refund payload.
+  // The backend's PATCH /seller/refund/branches/{id}/invoices/{id} requires
+  // `date` and `pays` for salon invoices (422 "الحقل التاريخ مطلوب" /
+  // "الحقل المدفوعات مطلوب"); the cashier (meals/products) endpoint does
+  // not, so we only attach them when the refund targets services.
+  String? _invoiceDate;
+  List<Map<String, dynamic>> _invoicePays = const [];
+  double _invoiceTotal = 0;
 
   late final AnimationController _fadeCtrl;
   late final Animation<double> _fadeAnim;
@@ -171,6 +180,48 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
       final allRefunded = candidates.isEmpty && amount == 0;
 
+      // Capture the invoice's `date` and `pays` so a salon refund can echo
+      // them back to satisfy the PATCH validators. Fall back gracefully
+      // when the backend omits any of these fields.
+      final resolvedDate = (data['date'] ??
+              previewInvoice['date'] ??
+              data['created_at'] ??
+              previewInvoice['created_at'] ??
+              data['issue_date'])
+          ?.toString();
+      final paysSource = data['pays'] ??
+          previewInvoice['pays'] ??
+          data['payment_methods'] ??
+          previewInvoice['payment_methods'] ??
+          previewPayload['pays'];
+      final resolvedPays = <Map<String, dynamic>>[];
+      if (paysSource is List) {
+        for (final entry in paysSource.whereType<Map>()) {
+          final m = entry.map((k, v) => MapEntry(k.toString(), v));
+          // Only forward the keys the backend's pays validator looks at.
+          // Sending unknown fields (e.g. `created_at`) sometimes trips its
+          // strict-mode rejection on this endpoint.
+          final amount = _parsePrice(m['amount'] ?? m['total'] ?? m['paid']);
+          if (amount <= 0) continue;
+          resolvedPays.add({
+            'pay_method': m['pay_method'] ??
+                m['payment_method'] ??
+                m['method'] ??
+                'cash',
+            'name': m['name'] ?? m['label'] ?? '',
+            'amount': amount,
+          });
+        }
+      }
+      final resolvedTotal = _parsePrice(
+        previewInvoice['total'] ??
+            previewPayload['total'] ??
+            data['grand_total'] ??
+            data['total'] ??
+            payload['grand_total'] ??
+            payload['total'],
+      );
+
       setState(() {
         _candidates = candidates;
         _dailyOrderNumber = (dailyOrderNumber != null && dailyOrderNumber.isNotEmpty)
@@ -178,6 +229,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             : widget.invoiceLabel;
         _refundAmount = amount;
         _allItemsRefunded = allRefunded;
+        _invoiceDate = resolvedDate;
+        _invoicePays = resolvedPays;
+        _invoiceTotal = resolvedTotal;
         _isLoading = false;
       });
       _fadeCtrl.forward();
@@ -217,8 +271,52 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           .where((c) => c.type == _RefundCandidateType.product)
           .map((c) => c.id)
           .toList();
+      final serviceIds = itemsToRefund
+          .where((c) => c.type == _RefundCandidateType.service)
+          .map((c) => c.id)
+          .toList();
       if (mealIds.isNotEmpty) refundPayload['refund_meals'] = mealIds;
       if (productIds.isNotEmpty) refundPayload['refund_products'] = productIds;
+      // Salon refund: backend's PATCH /seller/refund/branches/{id}/invoices/{id}
+      // requires the items under `refund_services` and the validators also
+      // demand `date` and `pays` — without them the call returns 422
+      // "الحقل التاريخ مطلوب" / "الحقل المدفوعات مطلوب".
+      final isSalonRefund = serviceIds.isNotEmpty ||
+          (ApiConstants.branchModule == 'salons' &&
+              mealIds.isEmpty &&
+              productIds.isEmpty);
+      if (serviceIds.isNotEmpty) {
+        refundPayload['refund_services'] = serviceIds;
+      }
+      if (isSalonRefund) {
+        // Echo today's date when the invoice didn't carry one (the original
+        // invoice's `date` field is preferred; backend accepts ISO-y-m-d).
+        final today =
+            DateTime.now().toIso8601String().split('T').first;
+        refundPayload['date'] = (_invoiceDate != null &&
+                _invoiceDate!.trim().isNotEmpty)
+            ? _invoiceDate
+            : today;
+
+        // Build pays from the invoice's recorded payments. If we couldn't
+        // resolve any (e.g. the invoice payload didn't expose `pays`), fall
+        // back to a single cash payment for the refund total — the backend
+        // only validates "non-empty" + sum-equality on this endpoint.
+        if (_invoicePays.isNotEmpty) {
+          refundPayload['pays'] = _invoicePays;
+        } else {
+          final amount = _refundAmount > 0
+              ? _refundAmount
+              : (_invoiceTotal > 0 ? _invoiceTotal : 0.0);
+          refundPayload['pays'] = [
+            {
+              'pay_method': 'cash',
+              'name': 'كاش',
+              'amount': amount,
+            }
+          ];
+        }
+      }
 
       final result = await _orderService.processInvoiceRefund(
         invoiceId: widget.invoiceId,
@@ -601,7 +699,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             ),
             if (candidate.total > 0)
               Text(
-                '${candidate.total.toStringAsFixed(2)} ${ApiConstants.currency}',
+                '${candidate.total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
@@ -641,7 +739,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
               ),
               const SizedBox(height: 4),
               Text(
-                '${displayAmount.toStringAsFixed(2)} ${ApiConstants.currency}',
+                '${displayAmount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w800,
@@ -678,7 +776,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             style: ElevatedButton.styleFrom(
               backgroundColor: _kAccent,
               foregroundColor: Colors.white,
-              disabledBackgroundColor: Colors.grey.shade200,
+              disabledBackgroundColor: context.appSurfaceHigh,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               elevation: 0,
             ),
@@ -765,7 +863,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
   String _buildCandidateSubtitle(_RefundCandidate c) {
     final parts = <String>[];
     if (c.quantity > 0) parts.add('الكمية: ${c.quantity}');
-    if (c.total > 0) parts.add('${c.total.toStringAsFixed(2)} ${ApiConstants.currency}');
+    if (c.total > 0) parts.add('${c.total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}');
     return parts.join(' • ');
   }
 
@@ -968,6 +1066,14 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
     final seen = <String>{};
     final results = <_RefundCandidate>[];
 
+    // Salon invoices surface services under both `sales_services` and the
+    // generic `items` fallback. Dedupe by id alone for salon to avoid
+    // duplicates; restaurant keeps the legacy per-type dedupe untouched.
+    final hasSalonServices =
+        previewPayload['sales_services'] is List ||
+            previewPayload['services'] is List ||
+            ApiConstants.branchModule == 'salons';
+
     void add({
       required _RefundCandidateType type,
       required int id,
@@ -976,7 +1082,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       required int qty,
     }) {
       if (id <= 0) return;
-      final key = '${type.name}:$id';
+      final key = hasSalonServices ? id.toString() : '${type.name}:$id';
       if (seen.contains(key)) return;
       seen.add(key);
       results.add(_RefundCandidate(id: id, type: type, name: name, total: total, quantity: qty));
@@ -1001,6 +1107,15 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
     addFromList(previewPayload['sales_meals'] ?? previewPayload['meals'], type: _RefundCandidateType.meal, idKeys: const ['sales_meal_id', 'meal_id', 'item_id']);
     addFromList(previewPayload['sales_products'] ?? previewPayload['products'], type: _RefundCandidateType.product, idKeys: const ['sales_product_id', 'product_id', 'item_id']);
+    // Salon invoices expose refundable services under `sales_services` /
+    // `services`. The backend's PATCH refund endpoint requires them under
+    // `refund_services` (see [_confirm]), so they need their own candidate
+    // type rather than being lumped in with `meal`/`unknown`.
+    addFromList(
+      previewPayload['sales_services'] ?? previewPayload['services'],
+      type: _RefundCandidateType.service,
+      idKeys: const ['sales_service_id', 'service_id', 'item_id'],
+    );
     addFromList(data['items'] ?? data['meals'] ?? payload['items'] ?? payload['meals'], type: _RefundCandidateType.unknown, idKeys: const ['id', 'item_id', 'meal_id']);
 
     return results;

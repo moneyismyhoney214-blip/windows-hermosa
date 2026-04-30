@@ -131,12 +131,19 @@ extension MainScreenCart on _MainScreenState {
     if (cartHash == _lastCartHashForTotal && _cachedGrossOrderTotal != null) {
       return _cachedGrossOrderTotal!;
     }
-    final subtotal = _cart.fold<double>(
+    final cartSum = _cart.fold<double>(
       0,
       (sum, item) => sum + item.totalPrice,
     );
-    final tax = _taxAmountFromSubtotal(subtotal);
-    _cachedGrossOrderTotal = subtotal + tax;
+    // Salon services are configured tax-inclusive on the backend, so the
+    // cart price already contains the VAT — adding it again would inflate
+    // the grand total (e.g. a 350 SAR service displayed as 402.50).
+    if (_isSalonMode) {
+      _cachedGrossOrderTotal = cartSum;
+    } else {
+      final tax = _taxAmountFromSubtotal(cartSum);
+      _cachedGrossOrderTotal = cartSum + tax;
+    }
     _lastCartHashForTotal = cartHash;
     return _cachedGrossOrderTotal!;
   }
@@ -684,11 +691,21 @@ extension MainScreenCart on _MainScreenState {
     final promoDiscountTypeForDisplay =
         promoDiscountType == 'fixed' ? 'amount' : promoDiscountType;
     final cashFloatSnapshot = _buildCashFloatSnapshot();
-    final subtotal =
+    final cartSum =
         _cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
-    final tax = _taxAmountFromSubtotal(subtotal);
+    // Salon prices are tax-inclusive — derive the pre-tax subtotal/tax from
+    // the inclusive total instead of adding VAT on top.
+    final double subtotal;
+    final double tax;
+    if (_isSalonMode) {
+      subtotal = _subtotalFromTaxInclusiveTotal(cartSum);
+      tax = _taxFromTaxInclusiveTotal(cartSum);
+    } else {
+      subtotal = cartSum;
+      tax = _taxAmountFromSubtotal(subtotal);
+    }
     final taxPercentage = double.parse((_taxRate * 100).toStringAsFixed(4));
-    final beforeDiscountTotal = subtotal + tax;
+    final beforeDiscountTotal = _isSalonMode ? cartSum : (subtotal + tax);
     final discountAmountForDisplay = _isOrderFree
         ? beforeDiscountTotal
         : effectiveDiscount.clamp(0.0, beforeDiscountTotal);

@@ -1,4 +1,5 @@
 import '../services/display_app_service.dart';
+import '../services/api/api_constants.dart';
 
 /// Example: How to integrate KDS (Kitchen Display System) in Cashier App
 ///
@@ -213,7 +214,7 @@ class KDSIntegrationExample {
   /// Helper: Print Receipt
   void _printReceipt(String orderNumber, double total) {
     // Implement receipt printing
-    print('Printing receipt for $orderNumber: ${total.toStringAsFixed(2)} SAR');
+    print('Printing receipt for $orderNumber: ${total.toStringAsFixed(ApiConstants.digitsNumber)} SAR');
   }
 
   /// Helper: Save to Database

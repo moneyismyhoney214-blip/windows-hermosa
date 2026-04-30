@@ -1936,8 +1936,8 @@ class InvoiceHtmlPdfService {
         final amount = map['amount'];
         if (amount != null) {
           final amountStr = (amount is num)
-              ? amount.toStringAsFixed(2)
-              : (double.tryParse(amount.toString()) ?? 0).toStringAsFixed(2);
+              ? amount.toStringAsFixed(ApiConstants.digitsNumber)
+              : (double.tryParse(amount.toString()) ?? 0).toStringAsFixed(ApiConstants.digitsNumber);
           parts.add('$label ($amountStr)');
         } else {
           parts.add(label);
@@ -2023,7 +2023,7 @@ class InvoiceHtmlPdfService {
       total += _toDouble(_pick(item, const ['price', 'total']));
     }
 
-    return double.parse(total.toStringAsFixed(2));
+    return double.parse(total.toStringAsFixed(ApiConstants.digitsNumber));
   }
 
   bool _truthy(dynamic value) {
@@ -2043,7 +2043,7 @@ class InvoiceHtmlPdfService {
       if (value % 1 == 0) {
         return value.toStringAsFixed(0);
       }
-      return value.toStringAsFixed(2);
+      return value.toStringAsFixed(ApiConstants.digitsNumber);
     }
     return value.toString();
   }

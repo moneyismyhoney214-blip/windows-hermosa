@@ -36,6 +36,11 @@
          (the system simply grants a no-op). Without it, some Sunmi firmware
          builds refuse to let us launch an Activity on the OEM second screen. -->
     <uses-permission android:name="com.sunmi.permission.DISPLAYER" />
+
+    <!-- Required for Android 13+ when any Google SDK (Play Services / Firebase)
+         is present in transitive deps. Without this, Play Console blocks the
+         release with an AD_ID manifest warning. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
     
     <application
         android:label="Hermosa"
@@ -89,5 +94,9 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Centerm Q7 SDK service package. Required so PackageManager
+             on API 30+ reports the package as installed instead of
+             throwing NameNotFoundException under the visibility rules. -->
+        <package android:name="com.pos.smartposservice"/>
     </queries>
 </manifest>

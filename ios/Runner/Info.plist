@@ -45,5 +45,56 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<key>NSCameraUsageDescription</key>
+	<string>يستخدم Hermosa الكاميرا لمسح أكواد QR ورموز الباركود الخاصة بالمنتجات والفواتير.</string>
+
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>يستخدم Hermosa البلوتوث للاتصال بطابعات الإيصالات الحرارية وأجهزة العرض المساعدة.</string>
+
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>يستخدم Hermosa البلوتوث للاتصال بطابعات الإيصالات الحرارية وأجهزة العرض المساعدة.</string>
+
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>يستخدم Hermosa الشبكة المحلية لاكتشاف طابعات الشبكة وأجهزة عرض العميل (CDS) الخاصة بالنادل.</string>
+
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_hermosa-waiter._tcp</string>
+		<string>_hermosa-display._tcp</string>
+	</array>
+
+	<key>NFCReaderUsageDescription</key>
+	<string>يستخدم Hermosa NFC للتحقق من التوافق مع NearPay وقراءة بطاقات الدفع غير التلامسية عند الإتاحة.</string>
+
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>يحفظ Hermosa صور الإيصالات وكشوف الإغلاق اليومي في معرض الصور لإعادة الطباعة أو المشاركة.</string>
+
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>يصل Hermosa إلى الصور لإرفاق صورة شعار المتجر أو صور المنتجات في إعدادات الفاتورة.</string>
+
+	<key>NSMicrophoneUsageDescription</key>
+	<string>قد يستخدم Hermosa الميكروفون مع المؤثرات الصوتية للإشعارات (غير مطلوب للتشغيل العادي).</string>
+
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+		<string>tel</string>
+		<string>mailto</string>
+		<string>sms</string>
+		<string>https</string>
+		<string>http</string>
+	</array>
+
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

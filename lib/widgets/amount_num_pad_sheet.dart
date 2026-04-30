@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../services/api/api_constants.dart';
+import '../services/app_themes.dart';
 import '../services/language_service.dart';
 
 /// In-app numeric keypad for SAR amount entry.
@@ -18,7 +19,7 @@ import '../services/language_service.dart';
 ///   initial: 12.50,
 ///   max: 100.00,
 /// );
-/// if (result != null) controller.text = result.toStringAsFixed(2);
+/// if (result != null) controller.text = result.toStringAsFixed(ApiConstants.digitsNumber);
 /// ```
 class AmountNumPadSheet extends StatefulWidget {
   final double initial;
@@ -41,7 +42,7 @@ class AmountNumPadSheet extends StatefulWidget {
     return showModalBottomSheet<double>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: context.appSurface,
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -67,7 +68,7 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
   @override
   void initState() {
     super.initState();
-    _buffer = widget.initial > 0 ? widget.initial.toStringAsFixed(2) : '0';
+    _buffer = widget.initial > 0 ? widget.initial.toStringAsFixed(ApiConstants.digitsNumber) : '0';
   }
 
   double get _currentValue => double.tryParse(_buffer) ?? 0;
@@ -122,7 +123,7 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
     final max = widget.max;
     if (max == null) return;
     HapticFeedback.selectionClick();
-    setState(() => _buffer = max.toStringAsFixed(2));
+    setState(() => _buffer = max.toStringAsFixed(ApiConstants.digitsNumber));
   }
 
   void _confirm() {
@@ -180,10 +181,10 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
           Expanded(
             child: Text(
               _title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF334155),
+                color: context.appTextMuted,
               ),
             ),
           ),
@@ -199,12 +200,19 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
 
   Widget _buildAmountDisplay() {
     final valid = _isWithinMax;
+    final isDark = context.isDark;
+    final bgColor = isDark
+        ? const Color(0xFFFBBF24).withValues(alpha: 0.18)
+        : const Color(0xFFFEF3C7);
+    final fgColor = isDark
+        ? const Color(0xFFFCD34D)
+        : const Color(0xFF92400E);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFFEF3C7),
+          color: bgColor,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: valid ? const Color(0xFFFBBF24) : Colors.red,
@@ -215,10 +223,10 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
           children: [
             Text(
               ApiConstants.currency,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF92400E),
+                color: fgColor,
               ),
             ),
             const SizedBox(width: 10),
@@ -234,8 +242,7 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
                     fontSize: 34,
                     fontWeight: FontWeight.w800,
                     fontFeatures: const [FontFeature.tabularFigures()],
-                    color:
-                        valid ? const Color(0xFF92400E) : Colors.red.shade700,
+                    color: valid ? fgColor : Colors.red.shade700,
                   ),
                 ),
               ),
@@ -259,9 +266,9 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
           Flexible(
             child: Text(
               '$maxLabel: '
-              '${max.toStringAsFixed(2)} ${ApiConstants.currency}',
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              '${max.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
+              style: TextStyle(
+                color: context.appTextMuted,
                 fontSize: 12,
               ),
             ),
@@ -327,11 +334,11 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
         onTap: () => key == '.' ? _appendDot() : _appendDigit(key),
         child: Text(
           key,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF0F172A),
-            fontFeatures: [FontFeature.tabularFigures()],
+            color: context.appText,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ),
@@ -366,7 +373,7 @@ class _AmountNumPadSheetState extends State<AmountNumPadSheet> {
                 minimumSize: const Size.fromHeight(48),
                 backgroundColor: const Color(0xFFF59E0B),
                 foregroundColor: Colors.white,
-                disabledBackgroundColor: const Color(0xFFE2E8F0),
+                disabledBackgroundColor: context.appSurfaceHigh,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -401,7 +408,7 @@ class _KeyTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFF1F5F9),
+      color: context.appSurfaceAlt,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,

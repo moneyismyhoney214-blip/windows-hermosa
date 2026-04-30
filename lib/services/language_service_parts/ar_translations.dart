@@ -10,6 +10,12 @@ final Map<String, String> _arTranslations = {
     'password': 'كلمة المرور',
     'remember_me': 'تذكرني',
     'forgot_password': 'نسيت كلمة المرور؟',
+    'privacy_policy': 'سياسة الخصوصية',
+    'terms_conditions': 'الشروط والأحكام',
+    'open_in_browser': 'فتح في المتصفح',
+    'country_code_picker_title': 'كود الدولة',
+    'country_code_picker_search': 'ابحث عن دولة أو كود',
+    'country_code_picker_empty': 'لا توجد نتائج',
     'submit': 'إرسال',
     'cancel': 'إلغاء',
     'save': 'حفظ',
@@ -361,6 +367,7 @@ final Map<String, String> _arTranslations = {
     'test': 'فحص',
     'print_test': 'تجربة',
     'sections': 'أقسام',
+    'uncategorized_section': 'عام',
     'add_printer_title': 'إضافة طابعة',
     'printer_name': 'الاسم',
     'ip_label': 'IP',
@@ -666,4 +673,100 @@ final Map<String, String> _arTranslations = {
     'waiter_bill_printing_receipt': 'تجهيز الإيصال...',
     'waiter_call_offline_warning':
         '{name} غير متصل الآن. قد لا يصله الاستدعاء فوراً. هل تريد الإرسال؟',
+
+    // ---- Waitlist ----
+    'waitlist_title': 'قائمة الانتظار',
+    'waitlist_subtitle_count': '{count} زبون في الانتظار',
+    'waitlist_tooltip': 'قائمة الانتظار',
+    'waitlist_empty_title': 'لا يوجد زبائن في الانتظار',
+    'waitlist_empty_body':
+        'اضغط "إضافة زبون للانتظار" لتسجيل أول زبون بانتظار طاولة.',
+    'waitlist_add_cta': 'إضافة زبون للانتظار',
+    'waitlist_add_title': 'زبون جديد للانتظار',
+    'waitlist_edit_title': 'تعديل بيانات الزبون',
+    'waitlist_add_submit': 'إضافة',
+    'waitlist_field_name': 'اسم الزبون',
+    'waitlist_field_name_hint': 'مثال: أحمد محمد',
+    'waitlist_field_phone': 'رقم الجوال',
+    'waitlist_field_party_size': 'عدد الأشخاص',
+    'waitlist_field_channel': 'قناة الإشعار',
+    'waitlist_field_notes': 'ملاحظات',
+    'waitlist_field_notes_hint': 'بجانب النافذة، لا يدخن، ...',
+    'waitlist_validation_name_required': 'يرجى إدخال الاسم',
+    'waitlist_validation_phone_required': 'رقم الجوال غير صالح',
+    'waitlist_party_of': 'عدد الأشخاص: {count}',
+    'waitlist_waited_minutes': 'منذ {count} د',
+    'waitlist_status_notified': 'تم إرسال الإشعار',
+    'waitlist_notified_to': 'طاولة {table}',
+    'waitlist_assign_cta': 'تخصيص طاولة وإرسال الرسالة',
+    'waitlist_reassign_cta': 'إعادة التخصيص',
+    'waitlist_revert_to_waiting': 'إعادة إلى الانتظار',
+    'waitlist_remove': 'حذف',
+    'waitlist_remove_title': 'حذف من قائمة الانتظار',
+    'waitlist_remove_body': 'هل تريد حذف {name} من قائمة الانتظار؟',
+    'waitlist_remove_confirm': 'حذف',
+    'waitlist_assign_banner_title': 'اختر طاولة فاضية للزبون {name}',
+    'waitlist_assign_banner_hint': 'عدد الأشخاص: {count} — الطاولة المحجوزة غير متاحة',
+    'waitlist_assign_table_unavailable':
+        'الطاولة غير متاحة. اختر طاولة خضراء (فاضية).',
+    'waitlist_notify_title': 'إرسال رسالة للزبون',
+    'waitlist_notify_table_label': 'الطاولة',
+    'waitlist_notify_channel_label': 'قناة الإرسال',
+    'waitlist_notify_preview_label': 'معاينة الرسالة',
+    'waitlist_notify_send': 'إرسال الرسالة',
+    'waitlist_send_success_api': 'تم إرسال الرسالة إلى {name} بخصوص طاولة {table}',
+    'waitlist_send_success_whatsapp':
+        'تم فتح واتساب — اضغط إرسال لتبليغ {name}',
+    'waitlist_send_success_sms':
+        'تم فتح الرسائل — اضغط إرسال لتبليغ {name}',
+    'waitlist_send_error_phone': 'رقم الجوال غير صالح',
+    'waitlist_send_error_whatsapp_missing':
+        'واتساب غير مثبت على الجهاز. جرب قناة SMS.',
+    'waitlist_send_error_sms': 'تعذر فتح تطبيق الرسائل',
+    'waitlist_send_error_timeout':
+        'انتهت المهلة قبل وصول الرد من خدمة واتساب',
+    'waitlist_send_error_generic': 'تعذر إرسال الرسالة',
+    'waitlist_table_pill_waiting_for': 'في انتظار: {name}',
+
+    // ---- Waitlist history ----
+    'waitlist_history_title': 'سجل قائمة الانتظار',
+    'waitlist_history_tab_seated': 'تم إجلاسهم ({count})',
+    'waitlist_history_tab_cancelled': 'تم إلغاؤهم ({count})',
+    'waitlist_history_empty_seated': 'لا يوجد سجل إجلاس بعد',
+    'waitlist_history_empty_cancelled': 'لا يوجد سجل إلغاء بعد',
+    'waitlist_history_outcome_seated': 'تم الإجلاس',
+    'waitlist_history_outcome_cancelled': 'تم الإلغاء',
+    'waitlist_history_wait': 'الانتظار: {count} د',
+    'waitlist_history_today_at': 'اليوم الساعة {time}',
+    'waitlist_history_clear_title': 'حذف السجل',
+    'waitlist_history_clear_body':
+        'سيتم حذف جميع السجلات (تم إجلاسهم والإلغاءات). لا يمكن التراجع.',
+    'waitlist_history_clear_confirm': 'حذف الكل',
+
+    // ---- WhatsApp / WAWP settings ----
+    'whatsapp_settings_title': 'إعدادات واتساب (WAWP)',
+    'whatsapp_settings_creds_synced_title': 'الربط مع الواتساب جاهز',
+    'whatsapp_settings_creds_synced_body':
+        'تم جلب بيانات الاعتماد تلقائياً من إعدادات الفرع على الخادم.',
+    'whatsapp_settings_creds_missing_title': 'لم يتم ضبط بيانات الواتساب',
+    'whatsapp_settings_creds_missing_body':
+        'يرجى ضبط instance_id و instance_token من لوحة التحكم على الخادم لتفعيل الإرسال التلقائي.',
+    'whatsapp_settings_country_code': 'كود الدولة الافتراضي',
+    'whatsapp_settings_template': 'قالب الرسالة',
+    'whatsapp_settings_template_hint':
+        'مرحباً {name}، طاولتك رقم {table} جاهزة الآن...',
+    'whatsapp_settings_template_help':
+        'يمكنك استخدام {name} لاسم الزبون و {table} لرقم الطاولة.',
+    'whatsapp_settings_test_title': 'إرسال رسالة تجريبية',
+    'whatsapp_settings_test_button': 'تجربة',
+    'whatsapp_settings_test_customer': 'عميل تجريبي',
+    'whatsapp_settings_test_empty': 'أدخل رقم جوال للتجربة',
+    'whatsapp_settings_test_api_ok':
+        'تم إرسال الرسالة التجريبية عبر WAWP بنجاح',
+    'whatsapp_settings_test_deeplink_ok':
+        'تم فتح واتساب — أكّد الإرسال من الهاتف',
+    'whatsapp_settings_test_failed': 'فشل الإرسال: {reason}',
+
+    // ---- Shared ----
+    'options': 'خيارات',
 };

@@ -4,11 +4,12 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart' as fbp;
 import '../models.dart';
+import '../services/bluetooth_print_channel.dart';
 import '../services/network_print_helper.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/printer_service.dart';
+import '../services/q7_printer_channel.dart';
 import '../widgets/invoice_print_widget.dart';
 import '../locator.dart';
 
@@ -40,11 +41,19 @@ class _PrintListenerState extends State<PrintListener> {
   final PrinterService _printerService = getIt<PrinterService>();
 
   static const Duration _settleDelay = Duration(milliseconds: 800);
-  static const Duration _btTimeout = Duration(seconds: 15);
+  // 60s ceiling: native bonding alone takes up to 30s for PIN printers,
+  // then we still need socket connect + RFCOMM fallbacks + raster write.
+  static const Duration _btTimeout = Duration(seconds: 60);
 
   static bool _isBluetoothDevice(DeviceConfig device) {
     return device.type == 'bluetooth' ||
         (device.bluetoothAddress?.isNotEmpty ?? false);
+  }
+
+  static bool _isQ7BuiltInDevice(DeviceConfig device) {
+    return device.connectionType == PrinterConnectionType.q7Builtin ||
+        device.id.startsWith(Q7PrinterChannel.deviceIdPrefix) ||
+        device.model == Q7PrinterChannel.builtInModel;
   }
 
   @override
@@ -250,11 +259,27 @@ class _PrintListenerState extends State<PrintListener> {
   /// over the correct wire — Bluetooth MAC or TCP socket. The encoded
   /// payload already contains init/feed/cut commands, so the caller never
   /// needs to send a separate cut command.
+  ///
+  /// Q7 built-in printers are special-cased: the firmware accepts the PNG
+  /// bitmap directly via the SDK and does its own raster/dither, so we
+  /// skip the ESC/POS encode pass entirely.
   Future<void> _sendPngToPrinter({
     required DeviceConfig device,
     required Uint8List pngBytes,
     required bool isBluetooth,
   }) async {
+    if (_isQ7BuiltInDevice(device)) {
+      try {
+        await Q7PrinterChannel.printBitmap(data: pngBytes, feedLines: 3);
+        debugPrint(
+            '🖨️ Q7 built-in print sent: ${pngBytes.length} bytes (${device.name})');
+      } catch (e) {
+        debugPrint('❌ Q7 built-in print failed [${device.name}]: $e');
+        rethrow;
+      }
+      return;
+    }
+
     if (isBluetooth) {
       final address = device.bluetoothAddress?.trim() ?? '';
       if (address.isEmpty) {
@@ -266,10 +291,14 @@ class _PrintListenerState extends State<PrintListener> {
         paperWidthMm: device.paperWidthMm,
         addFeeds: 1,
       );
-      await fbp.FlutterBluetoothPrinter.printBytes(
+      // The native bridge (BluetoothPrintBridge.kt) bonds the device if
+      // needed, then tries secure → insecure → reflection RFCOMM in
+      // order. The 30s bond timeout already lives on the native side, so
+      // give the overall operation more headroom than a non-PIN print
+      // would need (bond + connect + write + drain).
+      await BluetoothPrintChannel.printBytes(
         address: address,
         data: escBytes,
-        keepConnected: false,
       ).timeout(
         _btTimeout,
         onTimeout: () => throw TimeoutException(

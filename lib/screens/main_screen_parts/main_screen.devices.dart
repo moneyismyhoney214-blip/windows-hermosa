@@ -441,6 +441,24 @@ extension MainScreenDevices on _MainScreenState {
       return nonKitchen;
     }
 
+    // Salon kiosks are usually configured with a single shared printer.
+    // After tagging it with the أدوار (kitchen) role for the turn slip, the
+    // cashier receipt has no eligible printer left — so the receipt
+    // silently fails. Reuse the same printer for the cashier receipt in
+    // that case. Restaurant flow keeps the strict separation and returns
+    // empty (kitchen printers should never accidentally print receipts on
+    // a multi-printer setup).
+    if (role == PrinterRole.cashierReceipt &&
+        ApiConstants.branchModule == 'salons') {
+      final fallback = List<DeviceConfig>.from(physical)
+        ..sort((a, b) => a.name.compareTo(b.name));
+      debugPrint(
+        'ℹ️ Salon: no dedicated cashier printer — reusing ${fallback.length} '
+        'available printer(s) for the cashier receipt',
+      );
+      return fallback;
+    }
+
     // No matching printers found — return empty (don't fall back to kitchen printers)
     return const <DeviceConfig>[];
   }

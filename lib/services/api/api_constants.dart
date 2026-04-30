@@ -1,9 +1,9 @@
 class ApiConstants {
   // Base URLs
-  static const String authBaseUrl = 'https://portal.hermosaapp.com';
-  static const String baseUrl = 'https://portal.hermosaapp.com';
-  static const String testBaseUrl = 'https://portal.hermosaapp.com';
-  static const String customersBaseUrl = 'https://portal.hermosaapp.com';
+  static const String authBaseUrl = 'https://api.hermosaapp.com';
+  static const String baseUrl = 'https://api.hermosaapp.com';
+  static const String testBaseUrl = 'https://api.hermosaapp.com';
+  static const String customersBaseUrl = 'https://api.hermosaapp.com';
   // Forgot-password flow lives on the public API host (see HAR capture).
   static const String forgotBaseUrl = 'https://api.hermosaapp.com';
 
@@ -38,8 +38,71 @@ class ApiConstants {
   // Currency - will be set from login response (taxObject.currency)
   static String currency = 'ر.س';
 
+  // ── Tax configuration ─────────────────────────────────────────────────
+  // All three fields are sourced from the active branch's `taxObject` at
+  // login time and refreshed via `/seller/filters/branches/{id}/getTax`.
+  //
+  //   * `hasTax`         — branch has VAT enabled
+  //   * `taxPercentage`  — integer percentage (e.g. 15 for 15% VAT)
+  //   * `taxRate`        — same value as a 0.0–1.0 multiplier (15 → 0.15)
+  //   * `digitsNumber`   — currency precision for displays/receipts
+  //
+  // Use `effectiveTaxRate` for math (returns 0 when tax is disabled) and
+  // `isTaxActive` to gate UI that should disappear when the branch has
+  // no VAT configured.
+  static bool hasTax = true;
+  static int taxPercentage = 15;
+  static double taxRate = 0.15;
+  static int digitsNumber = 2;
+
+  /// Tax multiplier safe for arithmetic — always 0 when tax is disabled.
+  static double get effectiveTaxRate => hasTax ? taxRate : 0.0;
+
+  /// True when the active branch should display + calculate VAT.
+  static bool get isTaxActive => hasTax && taxPercentage > 0;
+
+  /// Round a money value to the active branch's currency precision
+  /// (`digitsNumber`). Saudi Arabia → 2 decimals; Bahrain/Kuwait → 3.
+  ///
+  /// Critical for payment payloads: backend rejects invoices when
+  /// `sum(payments) ≠ invoice.total` at the server precision, so any
+  /// amount we send must already be rounded to `digitsNumber` decimals.
+  static double roundMoney(double value) {
+    final digits = digitsNumber.clamp(0, 6);
+    return double.parse(value.toStringAsFixed(digits));
+  }
+
+  /// Format a money value for display, padded to `digitsNumber` decimals.
+  static String formatMoney(double value) {
+    final digits = digitsNumber.clamp(0, 6);
+    return value.toStringAsFixed(digits);
+  }
+
   // Branch module - "restaurants" or "salons", set from branch selection
   static String branchModule = '';
+
+  // Country id of the active branch (matches `value` in
+  // `api.hermosaapp.com/countries/cities`). Drives the default
+  // country code on phone-input pickers — Saudi (1) is the safe
+  // fallback when the branch hasn't been resolved yet.
+  static int branchCountryId = 1;
+
+  // Whether the active branch has WhatsApp notifications enabled.
+  // Sourced from `/seller/branches[*].whatsapp_status`. Used to gate the
+  // waitlist (notify-when-table-ready) UI on both cashier + waiter — when
+  // the branch can't send WhatsApp, hide the entry points instead of
+  // surfacing a button that always errors out.
+  static bool whatsappEnabled = true;
+
+  // Whether the active branch has waiter-module features enabled.
+  // Sourced from `/seller/branches[*].have_waiters` (login response is
+  // missing the field — value is filled at branch-select / bootstrap from
+  // the canonical `/seller/branches` payload). Restaurant-only flag —
+  // when false, the cashier still shows the tables screen but hides the
+  // waiter-mesh actions inside it (pickup / migrate / release / message).
+  // Default `true` keeps existing behaviour for branches/older API
+  // payloads that don't return the field at all.
+  static bool haveWaiters = true;
 
   // Auth - JWT login uses different domain
   static const String jwtLoginEndpoint = '/seller/login';
@@ -54,6 +117,12 @@ class ApiConstants {
   static String get branchesEndpoint => '/seller/branches';
   static String get profileBranchesEndpoint => '/seller/profile/branches';
   static String get branchSettingEndpoint => '/seller/branch-setting/$branchId';
+
+  /// Branch tax configuration — returns `{has_tax, tax_percentage,
+  /// digits_number, currency}`. Authoritative refresh source consumed by
+  /// `BranchService.refreshTaxConfig`.
+  static String getBranchTaxEndpoint(int id) =>
+      '/seller/filters/branches/$id/getTax';
 
   // Promo codes
   static String get promocodesEndpoint =>

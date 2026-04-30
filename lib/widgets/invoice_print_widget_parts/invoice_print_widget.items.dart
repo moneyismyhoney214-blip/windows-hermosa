@@ -180,7 +180,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                                             ),
                                             Text(
                                               (addon.price * qty)
-                                                  .toStringAsFixed(2),
+                                                  .toStringAsFixed(ApiConstants.digitsNumber),
                                               style: GoogleFonts.tajawal(
                                                   fontSize: 17,
                                                   color: Colors.black54,
@@ -227,7 +227,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                           padding: const EdgeInsets.symmetric(vertical: 2),
                           alignment: Alignment.center,
                           child: Text(
-                            itemPrice.toStringAsFixed(2),
+                            itemPrice.toStringAsFixed(ApiConstants.digitsNumber),
                             style: GoogleFonts.tajawal(
                                 fontSize: 20,
                                 fontWeight: FontWeight.bold,
@@ -242,7 +242,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                           padding: const EdgeInsets.symmetric(vertical: 2),
                           alignment: Alignment.center,
                           child: Text(
-                            item.total.toStringAsFixed(2),
+                            item.total.toStringAsFixed(ApiConstants.digitsNumber),
                             style: const TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 21,
@@ -272,7 +272,7 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                             fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
                       ),
                       Text(
-                        '-${item.discountAmount!.toStringAsFixed(2)}',
+                        '-${item.discountAmount!.toStringAsFixed(ApiConstants.digitsNumber)}',
                         style: GoogleFonts.tajawal(
                             fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
                       ),

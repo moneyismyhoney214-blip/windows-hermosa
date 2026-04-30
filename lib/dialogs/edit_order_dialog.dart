@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:hermosa_pos/models.dart';
 import 'package:hermosa_pos/models/booking_invoice.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/api/branch_service.dart';
 import 'package:hermosa_pos/services/api/error_handler.dart';
 import 'package:hermosa_pos/services/api/order_service.dart';
 import 'package:hermosa_pos/services/api/product_service.dart';
@@ -317,7 +318,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
   String _formatQty(double qty) {
     final rounded = qty.round();
     if ((qty - rounded).abs() < 0.0001) return rounded.toString();
-    return qty.toStringAsFixed(2);
+    return qty.toStringAsFixed(ApiConstants.digitsNumber);
   }
 
   Future<void> _showProductPicker() async {
@@ -794,7 +795,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
               ),
               const Spacer(),
               Text(
-                '${item.totalPrice.toStringAsFixed(2)} ${ApiConstants.currency}',
+                '${item.totalPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Color(0xFFF58220),
@@ -827,7 +828,7 @@ class _QtyButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: context.appBorder),
         ),
-        child: Icon(icon, size: 14, color: const Color(0xFF0F172A)),
+        child: Icon(icon, size: 14, color: context.appText),
       ),
     );
   }
@@ -1046,6 +1047,28 @@ class _ProductPickerDialogState extends State<_ProductPickerDialog> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
+  String? get _salonPlaceholderLogo {
+    if (ApiConstants.branchModule != 'salons') return null;
+    final cached = getIt<BranchService>().cachedBranchReceiptInfo;
+    if (cached == null) return null;
+    String url = (cached['branch_logo_url']?.toString() ?? '').trim();
+    if (url.isEmpty) {
+      final branch = cached['branch'];
+      if (branch is Map) {
+        for (final key in const ['logo', 'image']) {
+          final v = branch[key]?.toString().trim() ?? '';
+          if (v.isNotEmpty && v.toLowerCase() != 'null') {
+            url = v;
+            break;
+          }
+        }
+      }
+    }
+    if (url.isEmpty) return null;
+    if (url.startsWith('/')) url = '${ApiConstants.baseUrl}$url';
+    return url;
+  }
+
   List<CategoryModel> _categories = [];
   List<Product> _products = [];
   String _selectedCategory = 'all';
@@ -1180,7 +1203,7 @@ class _ProductPickerDialogState extends State<_ProductPickerDialog> {
                   hintText: _tr('ابحث عن صنف', 'Search items'),
                   prefixIcon: const Icon(Icons.search),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
+                  fillColor: context.appSurfaceAlt,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
@@ -1250,6 +1273,9 @@ class _ProductPickerDialogState extends State<_ProductPickerDialog> {
                         return ProductCard(
                           product: product,
                           taxRate: widget.taxRate,
+                          priceIsTaxInclusive:
+                              ApiConstants.branchModule == 'salons',
+                          placeholderImageUrl: _salonPlaceholderLogo,
                           onTap: () => Navigator.pop(context, product),
                         );
                       },

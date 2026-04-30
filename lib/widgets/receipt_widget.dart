@@ -190,7 +190,7 @@ class ReceiptWidget extends StatelessWidget {
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              item.total.toStringAsFixed(2),
+                              item.total.toStringAsFixed(ApiConstants.digitsNumber),
                               style: GoogleFonts.inter(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
@@ -205,13 +205,26 @@ class ReceiptWidget extends StatelessWidget {
               ),
             ),
             const Divider(height: 18),
-            _buildTotalRow('الإجمالي قبل الضريبة', data.totalExclVat),
-            _buildTotalRow('ضريبة القيمة المضافة (15%)', data.vatAmount),
-            _buildTotalRow(
-              'الإجمالي شامل الضريبة',
-              data.totalInclVat,
-              isBold: true,
-            ),
+            // Tax-aware totals: pre-tax + tax rows are suppressed for tax-free
+            // branches; the grand-total label flips between "شامل الضريبة"
+            // and "الإجمالي" based on the active branch's VAT config.
+            if (ApiConstants.isTaxActive) ...[
+              _buildTotalRow('الإجمالي قبل الضريبة', data.totalExclVat),
+              _buildTotalRow(
+                'ضريبة القيمة المضافة (${ApiConstants.taxPercentage}%)',
+                data.vatAmount,
+              ),
+              _buildTotalRow(
+                'الإجمالي شامل الضريبة',
+                data.totalInclVat,
+                isBold: true,
+              ),
+            ] else
+              _buildTotalRow(
+                'الإجمالي',
+                data.totalInclVat,
+                isBold: true,
+              ),
             const SizedBox(height: 16),
             // Display ZATCA QR image if available, otherwise show base64 QR
             if (data.zatcaQrImage != null && data.zatcaQrImage!.isNotEmpty)
@@ -374,7 +387,7 @@ class ReceiptWidget extends StatelessWidget {
     if (qty % 1 == 0) {
       return qty.toStringAsFixed(0);
     }
-    return qty.toStringAsFixed(2);
+    return qty.toStringAsFixed(ApiConstants.digitsNumber);
   }
 
   Widget _buildInfoRow(String label, String value) {
@@ -422,7 +435,7 @@ class ReceiptWidget extends StatelessWidget {
             ),
           ),
           Text(
-            '${value.toStringAsFixed(2)} ${ApiConstants.currency}',
+            '${value.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
             style: GoogleFonts.inter(
               fontSize: isBold ? 16 : 13,
               fontWeight: isBold ? FontWeight.w800 : FontWeight.bold,

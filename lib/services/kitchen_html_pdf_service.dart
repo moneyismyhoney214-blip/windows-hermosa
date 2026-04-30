@@ -108,7 +108,11 @@ class KitchenHtmlPdfService {
 
     for (final item in items) {
       final name = (item['name'] ?? item['meal_name'] ?? 'صنف').toString();
-      final qty = (item['quantity'] ?? '1').toString();
+      final rawQty = item['quantity'] ?? 1;
+      final parsedQty = double.tryParse(rawQty.toString()) ?? 1.0;
+      final qty = parsedQty == parsedQty.toInt()
+          ? parsedQty.toInt().toString()
+          : parsedQty.toString();
 
       b.writeln('    <tr>');
       b.writeln('      <td>');

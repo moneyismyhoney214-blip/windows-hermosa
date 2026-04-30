@@ -272,10 +272,10 @@ class _DepositsScreenState extends State<DepositsScreen> {
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF1E293B),
+                        color: context.appText,
                       ),
                     ),
                   ),
@@ -328,10 +328,10 @@ class _DepositsScreenState extends State<DepositsScreen> {
               const Spacer(),
               Text(
                 _tr('العرابين', 'Deposits'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF1E293B),
+                  color: context.appText,
                 ),
               ),
               const Spacer(),
@@ -498,10 +498,10 @@ class _DepositsScreenState extends State<DepositsScreen> {
               Expanded(
                 child: Text(
                   displayNumber,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF0F172A),
+                    color: context.appText,
                   ),
                 ),
               ),
@@ -823,17 +823,18 @@ class _DepositDetailsDialog extends StatelessWidget {
                   children: [
                     // Customer
                     if (customerName.isNotEmpty)
-                      _buildInfoRow(
+                      _buildInfoRow(context,
                           LucideIcons.user, tr('العميل', 'Customer'), customerName),
 
                     // Created at
                     if (createdAt.isNotEmpty)
-                      _buildInfoRow(
+                      _buildInfoRow(context,
                           LucideIcons.calendar, tr('التاريخ', 'Date'), createdAt),
 
                     // Booking date/time
                     if (bookingDate.isNotEmpty)
                       _buildInfoRow(
+                        context,
                         LucideIcons.calendarDays,
                         tr('تاريخ الحجز', 'Booking Date'),
                         bookingTime.isNotEmpty
@@ -846,10 +847,10 @@ class _DepositDetailsDialog extends StatelessWidget {
                       const SizedBox(height: 12),
                       Text(
                         tr('الخدمات', 'Services'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
+                          color: context.appText,
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -882,13 +883,14 @@ class _DepositDetailsDialog extends StatelessWidget {
                     const Divider(height: 24),
 
                     // Price breakdown
-                    _buildAmountRow(tr('السعر قبل الضريبة', 'Subtotal'),
+                    _buildAmountRow(context, tr('السعر قبل الضريبة', 'Subtotal'),
                         '${amountFormatter.format(price)} ${ApiConstants.currency}'),
                     if (tax > 0)
-                      _buildAmountRow(tr('الضريبة', 'Tax'),
+                      _buildAmountRow(context, tr('الضريبة', 'Tax'),
                           '${amountFormatter.format(tax)} ${ApiConstants.currency}'),
                     const SizedBox(height: 4),
                     _buildAmountRow(
+                      context,
                       tr('الإجمالي', 'Total'),
                       '${amountFormatter.format(total)} ${ApiConstants.currency}',
                       isBold: true,
@@ -900,10 +902,10 @@ class _DepositDetailsDialog extends StatelessWidget {
                       const Divider(height: 24),
                       Text(
                         tr('المدفوعات', 'Payments'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
+                          color: context.appText,
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -927,10 +929,10 @@ class _DepositDetailsDialog extends StatelessWidget {
                               ),
                               Text(
                                 '${amountFormatter.format(amount)} ${ApiConstants.currency}',
-                                style: const TextStyle(
+                                style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
-                                    color: Color(0xFF1E293B)),
+                                    color: context.appText),
                               ),
                             ],
                           ),
@@ -941,7 +943,7 @@ class _DepositDetailsDialog extends StatelessWidget {
                     // Notes
                     if (notes.isNotEmpty) ...[
                       const Divider(height: 24),
-                      _buildInfoRow(
+                      _buildInfoRow(context,
                           LucideIcons.fileText, tr('ملاحظات', 'Notes'), notes),
                     ],
                   ],
@@ -982,7 +984,7 @@ class _DepositDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
+  Widget _buildInfoRow(BuildContext context, IconData icon, String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -1003,10 +1005,10 @@ class _DepositDetailsDialog extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF1E293B),
+                  color: context.appText,
                 ),
               ),
             ],
@@ -1016,7 +1018,7 @@ class _DepositDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildAmountRow(String label, String value,
+  Widget _buildAmountRow(BuildContext context, String label, String value,
       {bool isBold = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -1036,7 +1038,7 @@ class _DepositDetailsDialog extends StatelessWidget {
             style: TextStyle(
               fontSize: isBold ? 15 : 13,
               fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
-              color: color ?? const Color(0xFF1E293B),
+              color: color ?? context.appText,
             ),
           ),
         ],

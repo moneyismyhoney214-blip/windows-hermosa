@@ -443,6 +443,9 @@ class PrintOrchestratorService {
 
   bool _isUsablePrinter(DeviceConfig device) {
     if (!_isPhysicalPrinter(device)) return false;
+    if (device.connectionType == PrinterConnectionType.q7Builtin) {
+      return true; // Q7 SDK is reachable IPC-only — no IP/MAC required.
+    }
     if (device.connectionType == PrinterConnectionType.bluetooth) {
       return device.bluetoothAddress?.trim().isNotEmpty == true;
     }

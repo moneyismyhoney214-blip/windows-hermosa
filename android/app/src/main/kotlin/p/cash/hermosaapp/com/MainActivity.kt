@@ -26,6 +26,8 @@ class MainActivity : FlutterActivity() {
     private var presentation: CustomerDisplayPresentation? = null
     private var isPresentationShowing = false
     private var secondaryDisplayId: Int = -1
+    private var bluetoothPrintBridge: BluetoothPrintBridge? = null
+    private var q7PrintBridge: CentermQ7PrintBridge? = null
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -39,6 +41,23 @@ class MainActivity : FlutterActivity() {
         presentationChannel!!.setMethodCallHandler { call, result ->
             handlePresentationCall(call, result)
         }
+
+        // PIN-protected thermal printers go through this dedicated bridge —
+        // upstream flutter_bluetooth_printer can't bond or fall back to
+        // insecure RFCOMM, which is what those printers actually need.
+        bluetoothPrintBridge = BluetoothPrintBridge(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger
+        )
+
+        // Centerm Q7 built-in printer bridge. Detects the
+        // `com.pos.smartposservice` system service at runtime — the
+        // bridge is a no-op on non-Q7 devices, so existing Sunmi /
+        // Bluetooth / network printer paths are unaffected.
+        q7PrintBridge = CentermQ7PrintBridge(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger
+        )
     }
 
     private fun handlePresentationCall(call: MethodCall, result: MethodChannel.Result) {
@@ -372,6 +391,10 @@ class MainActivity : FlutterActivity() {
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         dm.unregisterDisplayListener(displayListener)
         dismissSecondaryDisplay()
+        bluetoothPrintBridge?.dispose()
+        bluetoothPrintBridge = null
+        q7PrintBridge?.dispose()
+        q7PrintBridge = null
         super.onDestroy()
     }
 }

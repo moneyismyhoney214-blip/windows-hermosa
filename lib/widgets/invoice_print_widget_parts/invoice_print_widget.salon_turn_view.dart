@@ -26,8 +26,12 @@ extension InvoicePrintWidgetSalonTurnView on InvoicePrintWidget {
     final serviceName = (kd['service_name'] ?? '').toString();
     final employeeName = (kd['employee_name'] ?? '').toString();
     final priceFormatted = (kd['price_formatted'] ?? '').toString();
-    final currencyAr = (kd['currency_ar'] ?? 'ر.س').toString();
-    final currencyEn = (kd['currency_en'] ?? 'SAR').toString();
+    // Falls back to the active branch's currency when the kitchen payload
+    // omits a currency hint (e.g. legacy payloads from older waiter clients).
+    final currencyAr =
+        (kd['currency_ar'] ?? ApiConstants.currency).toString();
+    final currencyEn =
+        (kd['currency_en'] ?? ApiConstants.currency).toString();
     final sellerNameAr = (kd['seller_name_ar'] ?? '').toString();
     final sellerNameEn = (kd['seller_name_en'] ?? '').toString();
     final addressLine = (kd['address_line'] ?? '').toString();

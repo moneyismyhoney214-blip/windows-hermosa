@@ -10,6 +10,8 @@ import 'models.dart';
 import 'display_language_service.dart';
 import 'app_error_handler.dart';
 import 'cds_page.dart';
+import '../services/api/api_constants.dart';
+import '../services/app_themes.dart';
 
 class CdsPageWrapper extends StatefulWidget {
   const CdsPageWrapper({super.key});
@@ -29,6 +31,12 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
   String _sellerNameAr = '';
   String _sellerNameEn = '';
   String _sellerLogoUrl = '';
+  // Tax/currency snapshot pulled from prefs (written by AuthService at
+  // login + by BranchService.refreshTaxConfig). Lets the welcome screen
+  // render the correct VAT label & currency before any cart push lands.
+  bool _prefsHasTax = true;
+  int _prefsTaxPercentage = 15;
+  String _prefsCurrency = 'ر.س';
   Timer? _sellerNamePoll;
 
   @override
@@ -61,18 +69,29 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
       final ar = prefs.getString('cds_seller_name_ar') ?? '';
       final en = prefs.getString('cds_seller_name_en') ?? '';
       final logo = prefs.getString('cds_seller_logo_url') ?? '';
+      // Tax/currency mirror — picked up so the welcome screen reflects the
+      // active branch's VAT config even before the first cart push.
+      final hasTax = prefs.getBool('has_tax') ?? _prefsHasTax;
+      final taxPct = prefs.getInt('tax_percentage') ?? _prefsTaxPercentage;
+      final currency = prefs.getString('currency') ?? _prefsCurrency;
       if (!mounted) return;
       // Invoice language state is sourced live from the cart payload (see
       // [build]), not from prefs — the cashier and CDS share this engine so
       // the payload is authoritative and can't race with a stale disk read.
       final same = ar == _sellerNameAr &&
           en == _sellerNameEn &&
-          logo == _sellerLogoUrl;
+          logo == _sellerLogoUrl &&
+          hasTax == _prefsHasTax &&
+          taxPct == _prefsTaxPercentage &&
+          currency == _prefsCurrency;
       if (same) return;
       setState(() {
         _sellerNameAr = ar;
         _sellerNameEn = en;
         _sellerLogoUrl = logo;
+        _prefsHasTax = hasTax;
+        _prefsTaxPercentage = taxPct;
+        _prefsCurrency = currency;
       });
     } catch (_) {
       // Fall back to default brand rendering.
@@ -188,13 +207,22 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         final subtotalAmount = _extractSubtotal(cartData);
         final taxAmount = _extractTax(cartData);
         final totalAmount = _extractTotal(cartData);
-        final taxRate = _extractTaxRate(cartData);
+        // Cart payload first, then SharedPreferences mirror (set by cashier
+        // engine at login + by getTax refresh) — keeps the welcome screen
+        // honest for branches that toggle VAT off.
+        final taxRate = _extractTaxRate(cartData) ??
+            (_prefsHasTax ? (_prefsTaxPercentage / 100.0) : 0.0);
         final isOrderFree = _extractIsOrderFree(cartData);
         final orderDiscountType = _extractOrderDiscountType(cartData);
         final orderDiscountValue = _extractOrderDiscountValue(cartData);
         final orderDiscountPercent = _extractOrderDiscountPercent(cartData);
         final discountSource = _extractDiscountSource(cartData);
-        final currencySymbol = _extractCurrencySymbol(cartData, catalogContext);
+        final cartCurrency = _extractCurrencySymbol(cartData, catalogContext);
+        // When the cart payload is empty (welcome screen), fall back to the
+        // mirrored branch currency so the price example renders correctly.
+        final currencySymbol = (cartCurrency.trim().isEmpty)
+            ? _prefsCurrency
+            : cartCurrency;
         final showPayment = provider.isShowingPayment;
         final showStatusOverlay = provider.hasStatusOverlay && !showPayment;
 
@@ -278,6 +306,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
             if (showStatusOverlay)
               Positioned.fill(
                 child: _buildStatusOverlay(
+                  context: context,
                   provider: provider,
                   languageCode: languageCode,
                   currencySymbol: currencySymbol,
@@ -302,6 +331,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
   }
 
   Widget _buildStatusOverlay({
+    required BuildContext context,
     required DisplayProvider provider,
     required String languageCode,
     required String currencySymbol,
@@ -319,7 +349,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
             'currency_suffix',
             languageCode: languageCode,
             args: {
-              'value': amount.toStringAsFixed(2),
+              'value': amount.toStringAsFixed(ApiConstants.digitsNumber),
               'currency': currencySymbol,
             },
           )
@@ -336,7 +366,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
           width: 520,
           padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 26),
           decoration: BoxDecoration(
-            color: const Color(0xFF0F172A),
+            color: context.appText,
             borderRadius: BorderRadius.circular(24),
             border: Border.all(color: accent.withValues(alpha: 0.5), width: 1.5),
             boxShadow: [
@@ -633,7 +663,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
       return CartItem(
         cartId: itemMap['cartId']?.toString() ?? UniqueKey().toString(),
         product: product,
-        quantity: _parseInt(itemMap['quantity']),
+        quantity: _parseDouble(itemMap['quantity']),
         selectedExtras: extras,
         discount: discount,
         discountType: discountType,

@@ -147,7 +147,7 @@ extension MainScreenSalon on _MainScreenState {
 
       if (url.isEmpty) return;
       if (url.startsWith('/')) {
-        url = 'https://portal.hermosaapp.com$url';
+        url = 'https://api.hermosaapp.com$url';
       }
 
       if (!mounted) return;
@@ -345,14 +345,17 @@ extension MainScreenSalon on _MainScreenState {
         final numeric = RegExp(r'[0-9]+(\.[0-9]+)?').firstMatch(rawTotal);
         final totalWithTax =
             numeric != null ? double.tryParse(numeric.group(0)!) ?? 0.0 : 0.0;
-        // Deposits list returns tax-inclusive `total`; reverse the 15% VAT so
-        // the field matches the filter endpoint's `price` (pre-tax principal).
-        final price = totalWithTax > 0 ? totalWithTax / 1.15 : 0.0;
+        // Deposits list returns tax-inclusive `total`; reverse the active
+        // branch's VAT so the field matches the filter endpoint's `price`
+        // (pre-tax principal). When the branch has tax disabled the
+        // multiplier collapses to 1.0 — the principal equals the total.
+        final taxMultiplier = 1.0 + ApiConstants.effectiveTaxRate;
+        final price = totalWithTax > 0 ? totalWithTax / taxMultiplier : 0.0;
 
         matches.add({
           'label': item['invoice_number']?.toString() ?? '#DP-$id',
           'value': id,
-          'price': double.parse(price.toStringAsFixed(2)),
+          'price': double.parse(price.toStringAsFixed(ApiConstants.digitsNumber)),
           'is_active': true,
           'cash_back': null,
           'equal_qty': null,

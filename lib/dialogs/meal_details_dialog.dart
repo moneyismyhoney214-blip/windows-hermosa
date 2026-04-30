@@ -135,7 +135,7 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${_t('price')}: ${widget.product.price.toStringAsFixed(2)} ${ApiConstants.currency}',
+                          '${_t('price')}: ${widget.product.price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -272,10 +272,10 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
                               if (widget.product.extras.isNotEmpty) ...[
                                 Text(
                                   _t('available_extras'),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
-                                    color: Color(0xFF1E293B),
+                                    color: context.appText,
                                   ),
                                 ),
                                 const SizedBox(height: 12),
@@ -328,7 +328,7 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
                                               ),
                                             ),
                                             Text(
-                                              '+${extra.price.toStringAsFixed(2)} ${ApiConstants.currency}',
+                                              '+${extra.price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                                               style: const TextStyle(
                                                 fontSize: 14,
                                                 fontWeight: FontWeight.bold,
@@ -440,7 +440,7 @@ class _MealDetailsDialogState extends State<MealDetailsDialog> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
-              color: valueColor ?? const Color(0xFF1E293B),
+              color: valueColor ?? context.appText,
             ),
           ),
         ),

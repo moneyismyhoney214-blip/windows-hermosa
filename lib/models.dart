@@ -501,14 +501,14 @@ class Product {
       normalized['unit_price'] ?? normalized['price'],
     );
 
-    // Handle image path normalization - Meals use portal.hermosaapp.com
+    // Handle image path normalization - Meals use api.hermosaapp.com
     if (normalized['image'] != null && normalized['image'] is String) {
       String imagePath = normalized['image'];
       if (imagePath.isNotEmpty && !imagePath.startsWith('http')) {
         if (!imagePath.startsWith('/')) {
           imagePath = '/$imagePath';
         }
-        normalized['image'] = 'https://portal.hermosaapp.com$imagePath';
+        normalized['image'] = 'https://api.hermosaapp.com$imagePath';
       }
     }
 
@@ -682,9 +682,9 @@ class CartItem {
 
   double get totalPrice {
     if (isFree) return 0.0;
-    // Quantity is informational (e.g. 0.5 = half portion) — price is always
-    // based on full units. Use ceiling so 0.5 counts as 1 full unit.
-    final priceQty = quantity < 1 ? 1.0 : quantity;
+    // Backend computes line total as unit_price × quantity (decimals allowed,
+    // e.g. 0.25 kg). Match that exactly — see /seller/calculate response.
+    final priceQty = quantity > 0 ? quantity : 0.0;
     final basePrice =
         (product.price + selectedExtras.fold(0.0, (sum, e) => sum + e.price)) *
             priceQty;
@@ -806,7 +806,7 @@ class NavItem {
   const NavItem({required this.id, required this.icon, required this.label});
 }
 
-enum PrinterConnectionType { wifi, bluetooth }
+enum PrinterConnectionType { wifi, bluetooth, q7Builtin }
 
 @JsonSerializable()
 class DeviceConfig {
@@ -872,6 +872,10 @@ class TableItem {
   final String? qrImage;
   @JsonKey(name: 'is_active', defaultValue: true)
   final bool isActive;
+  @JsonKey(name: 'restaurant_table_category_id')
+  final String? categoryId;
+  @JsonKey(name: 'category_name')
+  final String? categoryName;
   @JsonKey(includeFromJson: false, includeToJson: false)
   double? positionX;
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -888,6 +892,8 @@ class TableItem {
     this.isPaid = false,
     this.qrImage,
     this.isActive = true,
+    this.categoryId,
+    this.categoryName,
     this.positionX,
     this.positionY,
   });
@@ -998,6 +1004,8 @@ class TableItem {
       isPaid: _parseApiBool(normalized['isPaid'] ?? normalized['is_paid']),
       qrImage: normalized['qr_image']?.toString(),
       isActive: _parseApiBool(normalized['is_active'], defaultValue: true),
+      categoryId: normalized['restaurant_table_category_id']?.toString(),
+      categoryName: normalized['category_name']?.toString(),
     );
   }
   Map<String, dynamic> toJson() => {
@@ -1011,6 +1019,8 @@ class TableItem {
         'isPaid': isPaid,
         'qr_image': qrImage,
         'is_active': isActive,
+        'restaurant_table_category_id': categoryId,
+        'category_name': categoryName,
       };
 }
 

@@ -119,15 +119,21 @@ List<Map<String, dynamic>> _extractBookingMealRows(
     source['meals'],
     source['booking_meals'],
     source['booking_products'],
+    source['booking_services'],
+    source['services'],
     source['sales_meals'],
     source['items'],
     source['card'],
     orderMap?['meals'],
     orderMap?['booking_meals'],
     orderMap?['booking_products'],
+    orderMap?['booking_services'],
+    orderMap?['services'],
     bookingMap?['meals'],
     bookingMap?['booking_meals'],
     bookingMap?['booking_products'],
+    bookingMap?['booking_services'],
+    bookingMap?['services'],
   ];
 
   for (final candidate in candidates) {
@@ -402,8 +408,12 @@ class BookingMeal {
       id ??= 0;
     }
 
-    // Handle meal_id being int or string
-    var mealId = json['meal_id'];
+    // Handle meal_id being int or string. Salon bookings use `service_id`
+    // (sometimes nested under `service.id`) instead of `meal_id`.
+    var mealId = json['meal_id'] ??
+        json['service_id'] ??
+        (json['service'] is Map ? (json['service'] as Map)['id'] : null) ??
+        (json['meal'] is Map ? (json['meal'] as Map)['id'] : null);
     if (mealId is String) {
       mealId = int.tryParse(mealId) ?? 0;
     } else {
@@ -455,7 +465,15 @@ class BookingMeal {
       id: id,
       mealId: mealId,
       mealName: _readLocalizedBookingText(
-            [json['meal_name'], json['name'], json['item_name'], json['title']],
+            [
+              json['meal_name'],
+              json['service_name'],
+              json['name'],
+              json['item_name'],
+              json['title'],
+              json['service'] is Map ? (json['service'] as Map)['name'] : null,
+              json['meal'] is Map ? (json['meal'] as Map)['name'] : null,
+            ],
           ) ??
           '',
       quantity: qty,

@@ -23,12 +23,12 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
   final List<Map<String, dynamic>> _selectedPayments = [];
   double _remainingAmount = 0;
 
-  // Use the same 2-decimal rounding as every displayed amount. widget.total
-  // can carry sub-halala precision from raw tax math (e.g. 14.50 * 1.15 =
-  // 16.675). Each text field is rounded to 2 decimals, so comparing their
-  // sum against the raw total leaves a ±0.005 drift that keeps the "pay"
-  // button grayed even when the user has fully allocated the bill.
-  double get _total => double.parse(widget.total.toStringAsFixed(2));
+  // Use the active branch's currency precision for rounding (2 for SAR,
+  // 3 for BHD/KWD). widget.total can carry sub-fils precision from raw
+  // tax math, so without this rounding the per-method text fields drift
+  // versus the total and the backend rejects payments != invoice total.
+  double get _total => ApiConstants.roundMoney(widget.total);
+  String _fmt(double v) => ApiConstants.formatMoney(v);
 
   String _t(String key, {Map<String, dynamic>? args}) {
     return translationService.t(key, args: args);
@@ -191,7 +191,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
         'icon': method['icon'],
         'color': method['color'],
         'controller':
-            TextEditingController(text: remaining.toStringAsFixed(2)),
+            TextEditingController(text: remaining.toStringAsFixed(ApiConstants.digitsNumber)),
       });
       _calculateRemaining();
     });
@@ -216,11 +216,20 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     }
     setState(() {
       _remainingAmount = (_total - totalPaid);
-      // Tolerate up to 1 halala (0.01 SAR) of rounding drift so a fully
-      // allocated split enables the "pay" button even when the raw total
-      // carries sub-halala precision.
-      if (_remainingAmount.abs() < 0.01) _remainingAmount = 0;
+      // Tolerate one currency unit (0.01 SAR / 0.001 BHD) of rounding
+      // drift so a fully-allocated split enables the "pay" button even
+      // when the raw total carries sub-precision math.
+      final tolerance = 1.0 / _pow10(ApiConstants.digitsNumber);
+      if (_remainingAmount.abs() < tolerance) _remainingAmount = 0;
     });
+  }
+
+  int _pow10(int n) {
+    var r = 1;
+    for (var i = 0; i < n; i++) {
+      r *= 10;
+    }
+    return r;
   }
 
   /// When user changes amount in any field, clamp it and auto-fill the last method
@@ -247,7 +256,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     final maxAllowed = _total - sumOthers;
     if (entered > maxAllowed) {
       entered = maxAllowed < 0 ? 0 : maxAllowed;
-      controller.text = entered.toStringAsFixed(2);
+      controller.text = entered.toStringAsFixed(ApiConstants.digitsNumber);
       controller.selection = TextSelection.fromPosition(
           TextPosition(offset: controller.text.length));
     }
@@ -263,7 +272,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
         }
         final lastRemaining = (_total - sumExceptLast).clamp(0.0, _total);
         _selectedPayments[lastIndex]['controller'].text =
-            lastRemaining.toStringAsFixed(2);
+            lastRemaining.toStringAsFixed(ApiConstants.digitsNumber);
         _selectedPayments[lastIndex]['amount'] = lastRemaining;
       }
     }
@@ -277,7 +286,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     final last = _selectedPayments.last;
     final currentAmount = double.tryParse(last['controller'].text) ?? 0;
     final newAmount = currentAmount + _remainingAmount;
-    last['controller'].text = newAmount.toStringAsFixed(2);
+    last['controller'].text = newAmount.toStringAsFixed(ApiConstants.digitsNumber);
     last['amount'] = newAmount;
     _calculateRemaining();
   }
@@ -306,7 +315,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
       title: payment['name']?.toString(),
     );
     if (!mounted || result == null) return;
-    controller.text = result.toStringAsFixed(2);
+    controller.text = result.toStringAsFixed(ApiConstants.digitsNumber);
     payment['amount'] = result;
     _onAmountChanged(index);
   }
@@ -343,10 +352,10 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     final dialogHeight = isCompact ? availableHeight : 700.0;
 
     // Phone-tuned sizes for the method tiles and summary banner.
-    final methodTileWidth = isPhone ? 84.0 : 100.0;
+    final methodTileWidth = isPhone ? 68.0 : 80.0;
     final methodTileHeight = isShortViewport
-        ? 68.0
-        : (isPhone ? 78.0 : 90.0);
+        ? 56.0
+        : (isPhone ? 64.0 : 72.0);
     final methodIconSize = isPhone ? 22.0 : 24.0;
     final methodFontSize = isPhone ? 11.5 : 12.0;
     final summaryGap = isShortViewport ? 4.0 : 8.0;
@@ -409,20 +418,20 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                         children: [
                           _SummaryItem(
                             label: _t('grand_total'),
-                            value: widget.total.toStringAsFixed(2),
+                            value: widget.total.toStringAsFixed(ApiConstants.digitsNumber),
                             compact: isShortViewport,
                           ),
                           SizedBox(height: summaryGap),
                           _SummaryItem(
                             label: _t('paid_amount'),
                             value: (widget.total - _remainingAmount)
-                                .toStringAsFixed(2),
+                                .toStringAsFixed(ApiConstants.digitsNumber),
                             compact: isShortViewport,
                           ),
                           SizedBox(height: summaryGap),
                           _SummaryItem(
                             label: _t('remaining_amount'),
-                            value: _remainingAmount.toStringAsFixed(2),
+                            value: _remainingAmount.toStringAsFixed(ApiConstants.digitsNumber),
                             valueColor: _remainingAmount > 0
                                 ? Colors.yellow
                                 : Colors.white,
@@ -444,7 +453,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                               style: TextStyle(
                                 fontSize: isPhone ? 15 : 18,
                                 fontWeight: FontWeight.bold,
-                                color: const Color(0xFF334155),
+                                color: context.appTextMuted,
                               ),
                             ),
                             SizedBox(height: isPhone ? 8 : 12),
@@ -507,7 +516,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                               style: TextStyle(
                                 fontSize: isPhone ? 14 : 16,
                                 fontWeight: FontWeight.bold,
-                                color: const Color(0xFF334155),
+                                color: context.appTextMuted,
                               ),
                             ),
                             SizedBox(height: isPhone ? 6 : 10),
@@ -698,17 +707,17 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                           const SizedBox(height: 24),
                           _SummaryItem(
                               label: _t('grand_total'),
-                              value: widget.total.toStringAsFixed(2)),
+                              value: widget.total.toStringAsFixed(ApiConstants.digitsNumber)),
                           const SizedBox(height: 16),
                           _SummaryItem(
                             label: _t('paid_amount'),
                             value: (widget.total - _remainingAmount)
-                                .toStringAsFixed(2),
+                                .toStringAsFixed(ApiConstants.digitsNumber),
                           ),
                           const SizedBox(height: 16),
                           _SummaryItem(
                             label: _t('remaining_amount'),
-                            value: _remainingAmount.toStringAsFixed(2),
+                            value: _remainingAmount.toStringAsFixed(ApiConstants.digitsNumber),
                             valueColor: _remainingAmount > 0
                                 ? Colors.yellow
                                 : Colors.white,
@@ -741,7 +750,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                   : null,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: context.appCardBg,
-                                disabledBackgroundColor: Colors.grey[300],
+                                disabledBackgroundColor: context.appSurfaceHigh,
                                 foregroundColor: const Color(0xFFC2410C),
                                 disabledForegroundColor: Colors.grey[600],
                                 shape: RoundedRectangleBorder(
@@ -777,10 +786,10 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                               children: [
                                 Text(
                                   _t('select_payment_methods'),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontSize: 22,
                                       fontWeight: FontWeight.bold,
-                                      color: Color(0xFF334155)),
+                                      color: context.appTextMuted),
                                 ),
                                 IconButton(
                                   onPressed: () => Navigator.pop(context),
@@ -793,7 +802,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
 
                             // Available Methods Horizontal List
                             SizedBox(
-                              height: 100,
+                              height: 80,
                               child: ListView.builder(
                                 scrollDirection: Axis.horizontal,
                                 itemCount: _availableMethods.length,
@@ -804,7 +813,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                                     child: InkWell(
                                       onTap: () => _addPaymentMethod(method),
                                       child: Container(
-                                        width: 120,
+                                        width: 92,
                                         decoration: BoxDecoration(
                                           color: context.appCardBg,
                                           borderRadius:
@@ -842,10 +851,10 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                             const SizedBox(height: 32),
                             Text(
                               _t('distributed_amounts'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
-                                  color: Color(0xFF334155)),
+                                  color: context.appTextMuted),
                             ),
                             const SizedBox(height: 16),
 

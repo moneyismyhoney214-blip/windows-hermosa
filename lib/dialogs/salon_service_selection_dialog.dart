@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../services/language_service.dart';
+import '../services/api/api_constants.dart';
 import '../services/api/salon_employee_service.dart';
 import '../locator.dart';
 import '../services/app_themes.dart';
@@ -129,7 +130,7 @@ class _SalonServiceSelectionDialogState
     _selectedDate = DateTime.now();
     _selectedTime = _roundToNext5(TimeOfDay.now());
     _priceController =
-        TextEditingController(text: _originalPrice.toStringAsFixed(2));
+        TextEditingController(text: _originalPrice.toStringAsFixed(ApiConstants.digitsNumber));
 
     // Pre-select first employee if available
     if (widget.employees.isNotEmpty) {
@@ -447,7 +448,7 @@ class _SalonServiceSelectionDialogState
             ? (screen.width * 0.85).clamp(700.0, 1200.0)
             : screen.width,
         height: (screen.height * 0.92).clamp(500.0, double.infinity),
-        color: const Color(0xFFF4F4F4),
+        color: context.appBg,
         child: Column(
           children: [
             _header(),
@@ -466,7 +467,7 @@ class _SalonServiceSelectionDialogState
     return Container(
       height: 48,
       padding: const EdgeInsets.symmetric(horizontal: 14),
-      color: Colors.white,
+      color: context.appSurface,
       child: Row(
         children: [
           Container(
@@ -474,7 +475,7 @@ class _SalonServiceSelectionDialogState
             height: 30,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.grey.shade400),
+              border: Border.all(color: context.appBorder),
             ),
             child: const Center(
               child: Icon(LucideIcons.scissors, size: 16, color: _brand),
@@ -484,7 +485,10 @@ class _SalonServiceSelectionDialogState
           Expanded(
             child: Text(
               _serviceName,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: context.appText),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -496,10 +500,10 @@ class _SalonServiceSelectionDialogState
               width: 34,
               height: 34,
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: context.appSurfaceAlt,
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const Icon(LucideIcons.x, size: 20),
+              child: Icon(LucideIcons.x, size: 20, color: context.appText),
             ),
           ),
         ],
@@ -513,8 +517,7 @@ class _SalonServiceSelectionDialogState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(flex: 40, child: _leftColumn()),
-        const VerticalDivider(
-            width: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        VerticalDivider(width: 1, thickness: 1, color: context.appBorder),
         Expanded(flex: 60, child: _rightColumn()),
       ],
     );
@@ -554,20 +557,20 @@ class _SalonServiceSelectionDialogState
           const SizedBox(height: 18),
           Text(
             _tr('الموظف', 'Employee'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF333333)),
+                color: context.appText),
           ),
           const SizedBox(height: 8),
           _employeeDropdown(),
           const SizedBox(height: 18),
           Text(
             _tr('التاريخ والوقت', 'Date & Time'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF333333)),
+                color: context.appText),
           ),
           const SizedBox(height: 8),
           _dateTimeRow(),
@@ -576,10 +579,10 @@ class _SalonServiceSelectionDialogState
           const SizedBox(height: 18),
           Text(
             _tr('السعر', 'Price'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF333333)),
+                color: context.appText),
           ),
           const SizedBox(height: 8),
           _priceField(),
@@ -596,11 +599,12 @@ class _SalonServiceSelectionDialogState
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(LucideIcons.packageOpen, size: 48, color: Colors.grey[300]),
+            Icon(LucideIcons.packageOpen,
+                size: 48, color: context.appTextSubtle),
             const SizedBox(height: 12),
             Text(
               _tr('لا توجد إضافات', 'No add-ons available'),
-              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+              style: TextStyle(fontSize: 14, color: context.appTextMuted),
             ),
           ],
         ),
@@ -626,7 +630,7 @@ class _SalonServiceSelectionDialogState
       decoration: BoxDecoration(
         color: context.appCardBg,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: context.appBorder),
       ),
       child: Row(
         children: [
@@ -657,8 +661,10 @@ class _SalonServiceSelectionDialogState
               children: [
                 Text(
                   _serviceName,
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: context.appText),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -667,7 +673,7 @@ class _SalonServiceSelectionDialogState
                   children: [
                     _infoBadge(
                       icon: LucideIcons.banknote,
-                      label: '${_originalPrice.toStringAsFixed(2)} ${_tr('ر.س', 'SAR')}',
+                      label: '${_originalPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                     ),
                     const SizedBox(width: 8),
                     _infoBadge(
@@ -739,24 +745,26 @@ class _SalonServiceSelectionDialogState
       decoration: BoxDecoration(
         color: context.appCardBg,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: context.appBorder),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<Map<String, dynamic>>(
           value: _selectedEmployee,
           isExpanded: true,
+          dropdownColor: context.appCardBg,
           hint: Text(
             _tr('اختر الموظف', 'Select employee'),
-            style: TextStyle(color: Colors.grey[400], fontSize: 14),
+            style: TextStyle(color: context.appTextSubtle, fontSize: 14),
           ),
-          icon: const Icon(LucideIcons.chevronDown, size: 18),
+          icon: Icon(LucideIcons.chevronDown,
+              size: 18, color: context.appTextMuted),
           items: widget.employees.map((emp) {
             return DropdownMenuItem<Map<String, dynamic>>(
               value: emp,
               child: Text(
                 emp['name']?.toString() ?? '',
-                style: const TextStyle(fontSize: 14),
+                style: TextStyle(fontSize: 14, color: context.appText),
               ),
             );
           }).toList(),
@@ -819,17 +827,19 @@ class _SalonServiceSelectionDialogState
           child: DropdownButton<String>(
             value: _selectedTimeSlot,
             isExpanded: true,
+            dropdownColor: context.appCardBg,
             icon: const Icon(LucideIcons.clock, size: 18, color: _brand),
             hint: Text(
               _tr('اختر الوقت', 'Select time'),
-              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+              style: TextStyle(color: context.appTextSubtle, fontSize: 14),
             ),
             items: _availableTimes.map((t) {
               final val = t['value']?.toString() ?? '';
               final label = t['label']?.toString() ?? val;
               return DropdownMenuItem<String>(
                 value: val,
-                child: Text(label, style: const TextStyle(fontSize: 14)),
+                child: Text(label,
+                    style: TextStyle(fontSize: 14, color: context.appText)),
               );
             }).toList(),
             onChanged: (val) {
@@ -867,7 +877,7 @@ class _SalonServiceSelectionDialogState
         decoration: BoxDecoration(
           color: context.appCardBg,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey[300]!),
+          border: Border.all(color: context.appBorder),
         ),
         child: Row(
           children: [
@@ -876,10 +886,14 @@ class _SalonServiceSelectionDialogState
             Expanded(
               child: Text(
                 label,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: context.appText),
               ),
             ),
-            Icon(LucideIcons.chevronDown, size: 16, color: Colors.grey[400]),
+            Icon(LucideIcons.chevronDown,
+                size: 16, color: context.appTextSubtle),
           ],
         ),
       ),
@@ -899,7 +913,10 @@ class _SalonServiceSelectionDialogState
           padding: const EdgeInsets.symmetric(horizontal: 22),
           child: Text(
             '$_quantity',
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: context.appText),
           ),
         ),
         _circleBtn(
@@ -928,16 +945,17 @@ class _SalonServiceSelectionDialogState
     return TextField(
       controller: _priceController,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+      style: TextStyle(
+          fontSize: 15, fontWeight: FontWeight.w600, color: context.appText),
       onChanged: (_) {
         setState(() => _priceEdited = true);
       },
       decoration: InputDecoration(
         prefixIcon: const Icon(LucideIcons.banknote, size: 18, color: _brand),
-        suffixText: _tr('ر.س', 'SAR'),
-        suffixStyle: TextStyle(fontSize: 13, color: Colors.grey[500]),
+        suffixText: ApiConstants.currency,
+        suffixStyle: TextStyle(fontSize: 13, color: context.appTextMuted),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: context.appCardBg,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         border: OutlineInputBorder(
@@ -966,10 +984,10 @@ class _SalonServiceSelectionDialogState
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
         _tr('الإضافات', 'Add-ons'),
-        style: const TextStyle(
+        style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
-            color: Color(0xFF333333)),
+            color: context.appText),
       ),
     ));
 
@@ -991,7 +1009,7 @@ class _SalonServiceSelectionDialogState
               style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Colors.grey[700]),
+                  color: context.appTextMuted),
             ),
           ));
         }
@@ -1069,7 +1087,7 @@ class _SalonServiceSelectionDialogState
           color: context.appCardBg,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? _brand : Colors.grey[300]!,
+            color: selected ? _brand : context.appBorder,
             width: selected ? 2.0 : 1.0,
           ),
         ),
@@ -1083,7 +1101,7 @@ class _SalonServiceSelectionDialogState
                 decoration: BoxDecoration(
                   color: selected
                       ? const Color(0xFFFFF3E0)
-                      : const Color(0xFFEEEEEE),
+                      : context.appSurfaceAlt,
                   borderRadius:
                       const BorderRadius.vertical(top: Radius.circular(7)),
                 ),
@@ -1095,7 +1113,7 @@ class _SalonServiceSelectionDialogState
                     style: TextStyle(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
-                      color: selected ? _brand : Colors.grey[400],
+                      color: selected ? _brand : context.appTextSubtle,
                     ),
                   ),
                 ),
@@ -1112,20 +1130,20 @@ class _SalonServiceSelectionDialogState
                   children: [
                     Text(
                       name,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF1E293B)),
+                          color: context.appText),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      price.toStringAsFixed(2),
+                      price.toStringAsFixed(ApiConstants.digitsNumber),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
-                        color: selected ? _brand : Colors.grey[600],
+                        color: selected ? _brand : context.appTextMuted,
                       ),
                     ),
                     if (selected) ...[
@@ -1173,7 +1191,7 @@ class _SalonServiceSelectionDialogState
   Widget _footer() {
     return Container(
       width: double.infinity,
-      color: Colors.white,
+      color: context.appSurface,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1187,11 +1205,13 @@ class _SalonServiceSelectionDialogState
                 children: [
                   Text(
                     _tr('الإجمالي', 'Total'),
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: context.appText),
                   ),
                   Text(
-                    '${_totalPrice.toStringAsFixed(2)} ${_tr('ر.س', 'SAR')}',
+                    '${_totalPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                     style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,

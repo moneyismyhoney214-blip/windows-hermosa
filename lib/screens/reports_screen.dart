@@ -614,7 +614,7 @@ class _ReportsScreenState extends State<ReportsScreen>
             ),
           ),
           const SizedBox(height: 8),
-          Text(_error!, style: TextStyle(color: Colors.grey.shade600)),
+          Text(_error!, style: TextStyle(color: context.appTextMuted)),
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: _loadData,
@@ -677,7 +677,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                   '${_formatDate(_dateFrom)} - ${_formatDate(_dateTo)}',
                   style: TextStyle(
                     fontSize: 11,
-                    color: Colors.grey.shade600,
+                    color: context.appTextMuted,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -685,9 +685,9 @@ class _ReportsScreenState extends State<ReportsScreen>
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
+                    color: context.appSurfaceAlt,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey.shade300),
+                    border: Border.all(color: context.appBorder),
                   ),
                   child: DropdownButton<String>(
                     value: _selectedReportType,
@@ -738,8 +738,8 @@ class _ReportsScreenState extends State<ReportsScreen>
                         padding: EdgeInsets.all(8),
                         constraints: BoxConstraints(),
                         style: IconButton.styleFrom(
-                          backgroundColor: Colors.grey.shade100,
-                          foregroundColor: Colors.grey.shade700,
+                          backgroundColor: context.appSurfaceAlt,
+                          foregroundColor: context.appTextMuted,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
                       ),
@@ -769,8 +769,8 @@ class _ReportsScreenState extends State<ReportsScreen>
                         padding: EdgeInsets.all(8),
                         constraints: BoxConstraints(),
                         style: IconButton.styleFrom(
-                          backgroundColor: Colors.grey.shade100,
-                          foregroundColor: Colors.grey.shade700,
+                          backgroundColor: context.appSurfaceAlt,
+                          foregroundColor: context.appTextMuted,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
                       ),
@@ -801,7 +801,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                       '${_formatDate(_dateFrom)} - ${_formatDate(_dateTo)}',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey.shade600,
+                        color: context.appTextMuted,
                       ),
                     ),
                   ],
@@ -812,9 +812,9 @@ class _ReportsScreenState extends State<ReportsScreen>
                 width: 200,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
+                  color: context.appSurfaceAlt,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade300),
+                  border: Border.all(color: context.appBorder),
                 ),
                 child: DropdownButton<String>(
                   value: _selectedReportType,
@@ -857,8 +857,8 @@ class _ReportsScreenState extends State<ReportsScreen>
                 onPressed: _loadData,
                 icon: const Icon(Icons.refresh, size: 20),
                 style: IconButton.styleFrom(
-                  backgroundColor: Colors.grey.shade100,
-                  foregroundColor: Colors.grey.shade700,
+                  backgroundColor: context.appSurfaceAlt,
+                  foregroundColor: context.appTextMuted,
                 ),
               ),
               const SizedBox(width: 8),
@@ -881,8 +881,8 @@ class _ReportsScreenState extends State<ReportsScreen>
                       )
                     : const Icon(Icons.print, size: 20),
                 style: IconButton.styleFrom(
-                  backgroundColor: Colors.grey.shade100,
-                  foregroundColor: Colors.grey.shade700,
+                  backgroundColor: context.appSurfaceAlt,
+                  foregroundColor: context.appTextMuted,
                 ),
               ),
             ],
@@ -1123,7 +1123,7 @@ class _ReportsScreenState extends State<ReportsScreen>
               ),
             ),
             const SizedBox(height: 16),
-            _buildStatisticsCards(statistics),
+            _buildStatisticsCards(context, statistics),
           ],
         ),
       );
@@ -1149,14 +1149,16 @@ class _ReportsScreenState extends State<ReportsScreen>
               width: double.infinity,
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF7ED),
+                color: context.isDark
+                    ? const Color(0xFFF58220).withValues(alpha: 0.15)
+                    : const Color(0xFFFFF7ED),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: const Color(0xFFF58220).withValues(alpha: 0.3)),
               ),
               child: Column(
                 children: [
                   Text(translationService.t('total_amount'),
-                      style: const TextStyle(fontSize: 14, color: Color(0xFF64748B))),
+                      style: TextStyle(fontSize: 14, color: context.appTextMuted)),
                   const SizedBox(height: 4),
                   Text('${fmt.format(total)} ${ApiConstants.currency}',
                       style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFFF58220))),
@@ -1181,20 +1183,20 @@ class _ReportsScreenState extends State<ReportsScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(line.label,
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: context.appText)),
                           const SizedBox(height: 4),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(4),
                             child: LinearProgressIndicator(
                               value: percent / 100,
-                              backgroundColor: const Color(0xFFE2E8F0),
+                              backgroundColor: context.appBorder,
                               valueColor: const AlwaysStoppedAnimation(Color(0xFFF58220)),
                               minHeight: 6,
                             ),
                           ),
                           const SizedBox(height: 4),
                           Text('${percent.toStringAsFixed(1)}%',
-                              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                              style: TextStyle(fontSize: 12, color: context.appTextMuted)),
                         ],
                       ),
                     ),
@@ -1213,7 +1215,7 @@ class _ReportsScreenState extends State<ReportsScreen>
     return _buildEmptyState();
   }
 
-  Widget _buildStatisticsCards(Map<String, dynamic> statistics) {
+  Widget _buildStatisticsCards(BuildContext context, Map<String, dynamic> statistics) {
     final cards = <Widget>[];
     
     // Map of payment methods to their display info
@@ -1275,8 +1277,8 @@ class _ReportsScreenState extends State<ReportsScreen>
       'tabby': {
         'label': translationService.t('tabby'),
         'icon': LucideIcons.creditCard,
-        'color': const Color(0xFF64748B),
-        'bgColor': const Color(0xFFE2E8F0),
+        'color': context.appTextMuted,
+        'bgColor': context.appSurfaceAlt,
       },
       'tamara': {
         'label': translationService.t('tamara'),
@@ -1324,19 +1326,25 @@ class _ReportsScreenState extends State<ReportsScreen>
         'label': translationService.t('hunger_station'),
         'icon': LucideIcons.truck,
         'color': const Color(0xFFEA580C),
-        'bgColor': const Color(0xFFFFF7ED),
+        'bgColor': context.isDark
+            ? const Color(0xFFF58220).withValues(alpha: 0.15)
+            : const Color(0xFFFFF7ED),
       },
       'hungerstation': {
         'label': translationService.t('hunger_station'),
         'icon': LucideIcons.truck,
         'color': const Color(0xFFEA580C),
-        'bgColor': const Color(0xFFFFF7ED),
+        'bgColor': context.isDark
+            ? const Color(0xFFF58220).withValues(alpha: 0.15)
+            : const Color(0xFFFFF7ED),
       },
       'total': {
         'label': translationService.t('total_amount'),
         'icon': LucideIcons.trendingUp,
         'color': const Color(0xFFF58220),
-        'bgColor': const Color(0xFFFFF7ED),
+        'bgColor': context.isDark
+            ? const Color(0xFFF58220).withValues(alpha: 0.15)
+            : const Color(0xFFFFF7ED),
       },
     };
 
@@ -1344,8 +1352,8 @@ class _ReportsScreenState extends State<ReportsScreen>
       final info = paymentMethodsInfo[key] ?? {
         'label': key,
         'icon': LucideIcons.dollarSign,
-        'color': const Color(0xFF64748B),
-        'bgColor': const Color(0xFFF1F5F9),
+        'color': context.appTextMuted,
+        'bgColor': context.appSurfaceAlt,
       };
 
       cards.add(
@@ -1402,7 +1410,7 @@ class _ReportsScreenState extends State<ReportsScreen>
           Icon(
             LucideIcons.fileText,
             size: 64,
-            color: Colors.grey.shade300,
+            color: context.appBorder,
           ),
           const SizedBox(height: 16),
           Text(
@@ -1410,7 +1418,7 @@ class _ReportsScreenState extends State<ReportsScreen>
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
-              color: Colors.grey.shade600,
+              color: context.appTextMuted,
             ),
           ),
           const SizedBox(height: 8),
@@ -1418,7 +1426,7 @@ class _ReportsScreenState extends State<ReportsScreen>
             translationService.t('select_period_to_view_reports'),
             style: TextStyle(
               fontSize: 14,
-              color: Colors.grey.shade500,
+              color: context.appTextSubtle,
             ),
           ),
         ],
@@ -1474,7 +1482,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                     Text(
                       title,
                       style: TextStyle(
-                        color: Colors.grey.shade600,
+                        color: context.appTextMuted,
                         fontSize: isSmallScreen ? 12 : 14,
                       ),
                     ),

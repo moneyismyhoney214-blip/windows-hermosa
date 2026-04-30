@@ -108,6 +108,7 @@ extension MainScreenBuildWidgets on _MainScreenState {
                                         product.id,
                                       ),
                                       taxRate: _isTaxEnabled ? _taxRate : 0.0,
+                                      priceIsTaxInclusive: _isSalonMode,
                                       placeholderImageUrl: _isSalonMode
                                           ? _salonBranchLogoUrl
                                           : null,

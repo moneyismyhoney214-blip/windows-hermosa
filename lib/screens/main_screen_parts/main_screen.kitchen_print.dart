@@ -1096,11 +1096,10 @@ extension MainScreenKitchenPrint on _MainScreenState {
     String? capturedTableNumber,
     String? carNumber,
   }) async {
-    if (!_printKitchenInvoices) return;
-
     // Salon mode replaces the kitchen ticket with one turn slip per booked
-    // service (طابعة الأدوار). Delegate immediately so none of the
-    // restaurant-specific grouping / kitchen-id resolution runs.
+    // service (طابعة الأدوار). Delegate BEFORE the `_printKitchenInvoices`
+    // guard — the cashier setting toggles restaurant kitchen tickets, not
+    // salon turn slips. Restaurant flow keeps its original gating.
     if (_isSalonMode) {
       await _triggerSalonTurnPrint(
         orderId: orderId,
@@ -1108,6 +1107,8 @@ extension MainScreenKitchenPrint on _MainScreenState {
       );
       return;
     }
+
+    if (!_printKitchenInvoices) return;
 
     List<DeviceConfig> kitchenPrinters = const [];
     try {
@@ -1455,19 +1456,33 @@ extension MainScreenKitchenPrint on _MainScreenState {
       final roleRegistry = getIt<PrinterRoleRegistry>();
       await roleRegistry.initialize();
 
-      var printers =
+      var allPrinters =
           (await deviceService.getDevices()).where(_isUsablePrinter).toList();
-      if (printers.isEmpty) {
-        printers = _devices.where(_isUsablePrinter).toList(growable: false);
+      if (allPrinters.isEmpty) {
+        allPrinters = _devices.where(_isUsablePrinter).toList(growable: false);
       }
-      printers = printers.where((p) {
+      var printers = allPrinters.where((p) {
         final role = roleRegistry.resolveRole(p);
         return role == PrinterRole.kitchen ||
             role == PrinterRole.kds ||
             role == PrinterRole.bar;
       }).toList(growable: false);
+      // Fallback: salon kiosks usually have a single printer assigned to
+      // the cashier role. Without this fallback the turn slip silently
+      // skips printing whenever the user hasn't tagged any printer with
+      // the Adwar/kitchen role. We still prefer dedicated kitchen
+      // printers when they exist.
       if (printers.isEmpty) {
-        debugPrint('ℹ️ No salon turn printer found, skipping turn slip');
+        printers = allPrinters;
+        if (printers.isNotEmpty) {
+          debugPrint(
+            'ℹ️ No printer tagged as أدوار/kitchen — using ${printers.length} '
+            'available printer(s) for the salon turn slip',
+          );
+        }
+      }
+      if (printers.isEmpty) {
+        debugPrint('ℹ️ No printers available — skipping salon turn slip');
         return;
       }
 
@@ -1554,7 +1569,7 @@ extension MainScreenKitchenPrint on _MainScreenState {
 
       for (var i = 0; i < salonServices.length; i++) {
         final row = salonServices[i];
-        final priceFormatted = row.price.toStringAsFixed(2);
+        final priceFormatted = row.price.toStringAsFixed(ApiConstants.digitsNumber);
         for (final printer in printers) {
           try {
             await printerService.printSalonTurnTicket(

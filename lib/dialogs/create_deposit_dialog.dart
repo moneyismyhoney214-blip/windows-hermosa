@@ -53,7 +53,10 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
       _langCode.startsWith('ar') || _langCode.startsWith('ur');
   String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
-  static const double _taxRate = 0.15;
+  // Tax rate now follows the active branch's `taxObject` via ApiConstants.
+  // Returns 0.0 when the branch has VAT disabled, so the deposit total
+  // collapses to the bare subtotal automatically.
+  double get _taxRate => ApiConstants.effectiveTaxRate;
 
   // Computed totals
   double get _subtotal {
@@ -178,7 +181,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
         }
       });
       // Auto-fill payment amount to total
-      _payAmountController.text = _total.toStringAsFixed(2);
+      _payAmountController.text = _total.toStringAsFixed(ApiConstants.digitsNumber);
     }
   }
 
@@ -215,8 +218,8 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
         'customer_id':
             (_selectedCustomer!['value'] ?? _selectedCustomer!['id'] ?? '')
                 .toString(),
-        'price': _subtotal.toStringAsFixed(2),
-        'total': _total.toStringAsFixed(2),
+        'price': _subtotal.toStringAsFixed(ApiConstants.digitsNumber),
+        'total': _total.toStringAsFixed(ApiConstants.digitsNumber),
         'date': dateStr,
         'booking_date': bookingDateStr,
         'booking_time': bookingTimeStr,
@@ -245,7 +248,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
 
         fields['pays[$payIndex][name]'] = label;
         fields['pays[$payIndex][pay_method]'] = key;
-        fields['pays[$payIndex][amount]'] = amount.toStringAsFixed(2);
+        fields['pays[$payIndex][amount]'] = amount.toStringAsFixed(ApiConstants.digitsNumber);
         fields['pays[$payIndex][index]'] = payIndex.toString();
         payIndex++;
       }
@@ -431,11 +434,16 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                             _tr('المجموع', 'Subtotal'),
                             '${_amountFormatter.format(_subtotal)} ${ApiConstants.currency}',
                           ),
-                          const SizedBox(height: 6),
-                          _buildTotalRow(
-                            _tr('الضريبة (15%)', 'Tax (15%)'),
-                            '${_amountFormatter.format(_tax)} ${ApiConstants.currency}',
-                          ),
+                          if (ApiConstants.isTaxActive) ...[
+                            const SizedBox(height: 6),
+                            _buildTotalRow(
+                              _tr(
+                                'الضريبة (${ApiConstants.taxPercentage}%)',
+                                'Tax (${ApiConstants.taxPercentage}%)',
+                              ),
+                              '${_amountFormatter.format(_tax)} ${ApiConstants.currency}',
+                            ),
+                          ],
                           const Divider(height: 16),
                           _buildTotalRow(
                             _tr('الإجمالي', 'Total'),
@@ -811,10 +819,10 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
               Expanded(
                 child: Text(
                   service.name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
+                    color: context.appText,
                   ),
                 ),
               ),
@@ -823,7 +831,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                   setState(() {
                     _selectedServices.remove(service);
                   });
-                  _payAmountController.text = _total.toStringAsFixed(2);
+                  _payAmountController.text = _total.toStringAsFixed(ApiConstants.digitsNumber);
                 },
                 icon: const Icon(LucideIcons.trash2, size: 16),
                 color: const Color(0xFFEF4444),
@@ -848,7 +856,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                             (service.quantity - 1).clamp(1, 9999);
                       });
                       _payAmountController.text =
-                          _total.toStringAsFixed(2);
+                          _total.toStringAsFixed(ApiConstants.digitsNumber);
                     },
                   ),
                   const SizedBox(width: 8),
@@ -865,7 +873,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                             (service.quantity + 1).clamp(1, 9999);
                       });
                       _payAmountController.text =
-                          _total.toStringAsFixed(2);
+                          _total.toStringAsFixed(ApiConstants.digitsNumber);
                     },
                   ),
                 ],
@@ -904,7 +912,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
           style: TextStyle(
             fontSize: isBold ? 15 : 13,
             fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
-            color: color ?? const Color(0xFF1E293B),
+            color: color ?? context.appText,
           ),
         ),
       ],
@@ -1027,7 +1035,7 @@ class _QtyButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: context.appBorder),
         ),
-        child: Icon(icon, size: 14, color: const Color(0xFF0F172A)),
+        child: Icon(icon, size: 14, color: context.appText),
       ),
     );
   }
@@ -1162,10 +1170,10 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                   Expanded(
                     child: Text(
                       widget.tr('اختيار خدمة', 'Select a Service'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E293B),
+                        color: context.appText,
                       ),
                     ),
                   ),
@@ -1187,7 +1195,7 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                   hintText: widget.tr('ابحث عن خدمة', 'Search services'),
                   prefixIcon: const Icon(Icons.search),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
+                  fillColor: context.appSurfaceAlt,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
@@ -1313,10 +1321,10 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                                     Expanded(
                                       child: Text(
                                         label,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w600,
-                                          color: Color(0xFF1E293B),
+                                          color: context.appText,
                                         ),
                                       ),
                                     ),

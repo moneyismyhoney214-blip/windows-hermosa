@@ -58,3 +58,149 @@ workflows:
         notify:
           success: true
           failure: true
+
+  # =====================================================================
+  # iOS workflow
+  # =====================================================================
+  # One-time Codemagic UI setup before the first run:
+  #   1. Teams → Integrations → "App Store Connect"
+  #      Connect with: Issuer ID, Key ID, and the .p8 private key file
+  #      (download from App Store Connect → Users and Access → Keys).
+  #      Name the integration EXACTLY:  codemagic_app_store
+  #      (matches `integrations.app_store_connect` below).
+  #   2. App settings → Environment variables, add a SECURE variable:
+  #        APP_STORE_APPLE_ID = <numeric Apple ID of the app>
+  #      Find it at App Store Connect → My Apps → Hermosa → App Information
+  #      → "Apple ID" (e.g. 6745123456).
+  #   3. Optional: add `DEVELOPER_CERT_PEM` (paste the full PEM file
+  #      contents) so NearPay works in production builds. Without it,
+  #      the build still succeeds and NearPay stays disabled at runtime.
+  #
+  # The first time this workflow runs, Codemagic uses your App Store
+  # Connect API key to:
+  #   • create / fetch a Distribution certificate,
+  #   • create / fetch a provisioning profile for `p.cash.hermosaapp.com`,
+  #   • upload the signed IPA to App Store Connect (TestFlight).
+  # No Mac required on your end.
+  # =====================================================================
+  ios-workflow:
+    name: Hermosa iOS Build
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+
+    integrations:
+      app_store_connect: codemagic_app_store
+
+    environment:
+      flutter: 3.41.1
+      xcode: 16.2
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: p.cash.hermosaapp.com
+      vars:
+        BUNDLE_ID: "p.cash.hermosaapp.com"
+        # Set this in Codemagic UI as a *secret* variable. Read by the
+        # publishing block below to attach the build to the correct
+        # App Store Connect record. Numeric value, e.g. 6745123456.
+        APP_STORE_APPLE_ID: $APP_STORE_APPLE_ID
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+        - pattern: release/*
+          include: true
+          source: true
+
+    scripts:
+      - name: Set up code signing (App Store)
+        script: |
+          set -e
+          # `keychain initialize` creates a temporary build keychain.
+          # `app-store-connect fetch-signing-files` uses the App Store
+          # Connect API key (configured via the `integrations:` block
+          # above) to download or create a Distribution certificate and
+          # an App Store provisioning profile for our bundle ID. The
+          # `--create` flag means: if either asset doesn't exist yet,
+          # make it on the fly.
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+              --type IOS_APP_STORE \
+              --create
+          keychain add-certificates
+          xcode-project use-profiles
+
+      - name: Bump build number from App Store Connect
+        script: |
+          set -e
+          # Pull the highest build number across TestFlight + App Store
+          # for this app, then increment by 1. Keeps Codemagic builds
+          # monotonic without us having to bump pubspec.yaml every time.
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo "0")
+          NEXT_BUILD=$(( LATEST_BUILD_NUMBER + 1 ))
+          echo "Latest App Store build: $LATEST_BUILD_NUMBER → using $NEXT_BUILD"
+          echo "BUILD_NUMBER=$NEXT_BUILD" >> $CM_ENV
+
+      - name: Restore NearPay developer cert (optional)
+        script: |
+          # See the Windows workflow above for context. The PEM file is
+          # NOT committed to the repo; provide it via Codemagic secret
+          # variable DEVELOPER_CERT_PEM if you want NearPay to work in
+          # this build. Otherwise the runtime loader gracefully treats
+          # NearPay as disabled.
+          mkdir -p assets/certs
+          if [ -n "$DEVELOPER_CERT_PEM" ]; then
+            echo "ℹ️ Restoring developer_cert.pem from DEVELOPER_CERT_PEM secret"
+            printf "%s" "$DEVELOPER_CERT_PEM" > assets/certs/developer_cert.pem
+          else
+            echo "⚠️ DEVELOPER_CERT_PEM not set — NearPay will run disabled in this build."
+          fi
+
+      - name: Flutter doctor
+        script: flutter doctor -v
+
+      - name: Get Flutter packages
+        script: flutter pub get
+
+      - name: Install CocoaPods dependencies
+        script: |
+          set -e
+          cd ios
+          pod install --repo-update
+
+      - name: Flutter build IPA
+        script: |
+          set -e
+          # Pull marketing version from pubspec.yaml so App Store
+          # Connect shows the correct CFBundleShortVersionString.
+          BUILD_NAME=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
+          flutter build ipa --release \
+              --build-name="$BUILD_NAME" \
+              --build-number="$BUILD_NUMBER" \
+              --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Upload to TestFlight automatically on every successful build.
+        # Flip `submit_to_app_store` to true and set release_type when
+        # you're ready to push a public release.
+        submit_to_testflight: true
+        beta_groups:
+          - Internal QA
+        submit_to_app_store: false
+      email:
+        recipients:
+          - support@hermosaapp.com
+        notify:
+          success: true
+          failure: true

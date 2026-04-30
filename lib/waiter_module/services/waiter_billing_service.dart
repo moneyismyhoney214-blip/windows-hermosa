@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../customer_display/nearpay/nearpay_bootstrap.dart';
 import '../../customer_display/nearpay/nearpay_config_service.dart';
 import '../../customer_display/nearpay/nearpay_service.dart';
+import '../../services/remote_nearpay_dispatcher.dart';
 // JWT helper (distinct from the SDK-wrapper NearPayService above) — the
 // cashier pre-warms its cache at login so the first AUTH_CHALLENGE gets
 // a token instantly. Aliased to avoid the name collision.
@@ -103,7 +104,7 @@ class WaiterBillingService {
           ? _round2(subtotal * _taxRate)
           : 0.0;
 
-  double _round2(double v) => double.parse(v.toStringAsFixed(2));
+  double _round2(double v) => double.parse(v.toStringAsFixed(ApiConstants.digitsNumber));
 
   WaiterBillingService({
     OrderService? orderService,
@@ -245,18 +246,32 @@ class WaiterBillingService {
     double? rate;
     bool? hasTax;
 
-    // Primary source: BranchService.getBranchSettings() — same as cashier.
+    // Primary source: authoritative `getTax` endpoint, which now also
+    // updates `ApiConstants` for the rest of the app.
     try {
-      final settings = await _branchService.getBranchSettings();
-      rate = _findTaxRateInPayload(settings);
-      hasTax = _findHasTaxInPayload(settings);
-      debugPrint('🧾 [Waiter] tax from settings: rate=$rate hasTax=$hasTax');
+      await _branchService.refreshTaxConfig();
+      rate = ApiConstants.taxRate;
+      hasTax = ApiConstants.hasTax;
+      debugPrint(
+          '🧾 [Waiter] tax from getTax endpoint: rate=$rate hasTax=$hasTax');
     } catch (e) {
-      debugPrint('⚠️ getBranchSettings failed: $e');
+      debugPrint('⚠️ refreshTaxConfig failed: $e');
     }
 
-    // Fallback: look up the current branch inside the raw branches list
-    // (same fallback the cashier uses in _loadTaxConfiguration).
+    // Secondary source: BranchService.getBranchSettings() — same as cashier.
+    if (rate == 0.0 && hasTax == false) {
+      try {
+        final settings = await _branchService.getBranchSettings();
+        rate = _findTaxRateInPayload(settings) ?? rate;
+        hasTax = _findHasTaxInPayload(settings) ?? hasTax;
+        debugPrint(
+            '🧾 [Waiter] tax from settings: rate=$rate hasTax=$hasTax');
+      } catch (e) {
+        debugPrint('⚠️ getBranchSettings failed: $e');
+      }
+    }
+
+    // Tertiary fallback: branches list (same as the cashier path).
     if (rate == null || hasTax == null) {
       try {
         final branches = await _authService.getBranchesRaw();
@@ -282,16 +297,9 @@ class WaiterBillingService {
       }
     }
 
-    // If we couldn't discover tax config anywhere, default to 15% VAT
-    // (Saudi POS norm for this app). The cashier's branch settings often
-    // expose the same value but under keys we don't know — without this
-    // default the backend rejects our invoice (expected tax-inclusive
-    // total ≠ pre-tax total we sent) and leaves a cancelled draft behind.
-    if (rate == null) {
-      rate = 0.15;
-      debugPrint('🧾 [Waiter] tax rate defaulted to 15%');
-    }
-    hasTax ??= rate > 0;
+    // Last-resort fallback — the global ApiConstants populated at login.
+    rate ??= ApiConstants.taxRate;
+    hasTax ??= ApiConstants.hasTax;
 
     _taxRate = rate.clamp(0.0, 1.0);
     _hasTax = hasTax && _taxRate > 0;
@@ -684,25 +692,40 @@ class WaiterBillingService {
         try {
           NearPayConfigService().setNearPayEnabled(true);
         } catch (_) {/* non-fatal */}
-        final initialized = await NearPayBootstrap.ensureInitialized();
-        if (!initialized) {
-          return WaiterBillResult.failure(
-            'NearPay SDK could not be initialized',
-            bookingId: bookingId,
-            invoiceId: invoiceId,
-            invoiceNumber: invoiceNumber,
-          );
+        // On platforms without the local SDK (iOS) the dispatcher
+        // forwards the request to the paired display_app over WS,
+        // so the local bootstrap is unnecessary.
+        if (!RemoteNearPayDispatcher.isRequired) {
+          final initialized = await NearPayBootstrap.ensureInitialized();
+          if (!initialized) {
+            return WaiterBillResult.failure(
+              'NearPay SDK could not be initialized',
+              bookingId: bookingId,
+              invoiceId: invoiceId,
+              invoiceNumber: invoiceNumber,
+            );
+          }
         }
         final referenceId = (bookingId ?? const Uuid().v4()).toString();
         final sessionId = const Uuid().v4();
         onStatus?.call('charging_card');
         final cardAmount = _cardAmountOf(pays, fallbackTotal: total);
-        final result = await _nearPay.executePurchaseWithSession(
-          amount: cardAmount,
-          sessionId: sessionId,
-          referenceId: referenceId,
-          onStatusUpdate: (s) => onStatus?.call(s),
-        );
+        final NearPayPaymentResult result;
+        if (RemoteNearPayDispatcher.isRequired) {
+          result = await RemoteNearPayDispatcher.instance.requestRemotePurchase(
+            amount: cardAmount,
+            sessionId: sessionId,
+            referenceId: referenceId,
+            onStatusUpdate: (s) => onStatus?.call(s),
+          );
+        } else {
+          result = await _nearPay.executePurchaseWithSession(
+            amount: cardAmount,
+            sessionId: sessionId,
+            referenceId: referenceId,
+            onStatusUpdate: (s) => onStatus?.call(s),
+          );
+        }
         if (!result.success) {
           return WaiterBillResult.failure(
             result.errorMessage ?? 'Card payment failed',
@@ -930,7 +953,7 @@ class WaiterBillingService {
     double invoiceTotal, {
     bool payLater = false,
   }) {
-    double round2(double v) => double.parse(v.toStringAsFixed(2));
+    double round2(double v) => double.parse(v.toStringAsFixed(ApiConstants.digitsNumber));
     num toBackendAmount(double v) {
       final r = round2(v);
       final i = r.roundToDouble();

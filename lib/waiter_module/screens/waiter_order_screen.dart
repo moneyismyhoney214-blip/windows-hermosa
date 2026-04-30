@@ -797,7 +797,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
             child: const Icon(LucideIcons.shoppingCart),
           ),
           label: Text(
-            '${_displayPrice(_cart.subtotalFor(widget.table.id)).toStringAsFixed(2)} ${ApiConstants.currency}',
+            '${_displayPrice(_cart.subtotalFor(widget.table.id)).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
           ),
         );
       }),
@@ -841,11 +841,11 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         style: TextStyle(color: context.appText),
       ),
       subtitle: Text(
-        '${item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1)} × ${_displayPrice(item.product.price).toStringAsFixed(2)}${item.notes.isNotEmpty ? "  •  ${item.notes}" : ""}',
+        '${item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1)} × ${_displayPrice(item.product.price).toStringAsFixed(ApiConstants.digitsNumber)}${item.notes.isNotEmpty ? "  •  ${item.notes}" : ""}',
         style: TextStyle(color: context.appTextMuted, fontSize: 11),
       ),
       trailing: Text(
-        _displayPrice(item.totalPrice).toStringAsFixed(2),
+        _displayPrice(item.totalPrice).toStringAsFixed(ApiConstants.digitsNumber),
         style: TextStyle(
           color: context.appTextMuted,
           fontWeight: FontWeight.w600,
@@ -865,8 +865,8 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         onTap: () => _editItemNotes(i, item),
         child: Text(
           item.notes.isEmpty
-              ? '${item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1)} × ${_displayPrice(item.product.price).toStringAsFixed(2)}'
-              : '${item.quantity.toStringAsFixed(0)} × ${_displayPrice(item.product.price).toStringAsFixed(2)}  •  ${item.notes}',
+              ? '${item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1)} × ${_displayPrice(item.product.price).toStringAsFixed(ApiConstants.digitsNumber)}'
+              : '${item.quantity.toStringAsFixed(0)} × ${_displayPrice(item.product.price).toStringAsFixed(ApiConstants.digitsNumber)}  •  ${item.notes}',
           style: TextStyle(
             color:
                 item.notes.isEmpty ? context.appTextMuted : context.appPrimary,
@@ -1438,7 +1438,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  '${_displayPrice(p.price).toStringAsFixed(2)} ${ApiConstants.currency}',
+                                  '${_displayPrice(p.price).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                                   style: TextStyle(
                                     color: context.appPrimary,
                                     fontSize: 12,
@@ -1568,7 +1568,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                       ),
                       const Spacer(),
                       Text(
-                        '${_displayPrice(subtotal - draftSubtotal).toStringAsFixed(2)} ${ApiConstants.currency}',
+                        '${_displayPrice(subtotal - draftSubtotal).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                         style: TextStyle(
                           color: context.appTextMuted,
                           fontSize: 12,
@@ -1586,7 +1586,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                     ),
                     const Spacer(),
                     Text(
-                      '${_displayPrice(subtotal).toStringAsFixed(2)} ${ApiConstants.currency}',
+                      '${_displayPrice(subtotal).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                       style: TextStyle(
                         color: context.appText,
                         fontWeight: FontWeight.w700,
@@ -1789,7 +1789,7 @@ class _BillPreview extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          displayPrice(it.totalPrice).toStringAsFixed(2),
+                          displayPrice(it.totalPrice).toStringAsFixed(ApiConstants.digitsNumber),
                           style: TextStyle(
                             color: context.appText,
                             fontWeight: FontWeight.w600,
@@ -1814,7 +1814,7 @@ class _BillPreview extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  '${total.toStringAsFixed(2)} ${ApiConstants.currency}',
+                  '${total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                   style: TextStyle(
                     color: context.appPrimary,
                     fontWeight: FontWeight.w800,

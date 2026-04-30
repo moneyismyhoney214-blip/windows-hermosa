@@ -6,6 +6,10 @@ extension OrdersScreenWidgets on _OrdersScreenState {
     final width = MediaQuery.sizeOf(context).width;
     final isCompact = width < 900;
     final searchWidth = (width * 0.25).clamp(180.0, 280.0).toDouble();
+    final isSalonMode = ApiConstants.branchModule == 'salons';
+    final headerTitle = isSalonMode
+        ? _tr('تذاكر مراجعه', 'Review Tickets')
+        : translationService.t('orders');
 
     final searchField = TextField(
       controller: _searchController,
@@ -74,7 +78,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                     ),
                     Expanded(
                       child: Text(
-                        translationService.t('orders'),
+                        headerTitle,
                         textAlign: TextAlign.center,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -115,7 +119,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                 ),
                 const Spacer(),
                 Text(
-                  translationService.t('orders'),
+                  headerTitle,
                   style: const TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w900,
@@ -329,16 +333,17 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                 Wrap(
                   spacing: 8,
                   children: [
-                    TextButton.icon(
-                      onPressed: () => _showBookingDetails(booking.id),
-                      icon: const Icon(LucideIcons.fileText, size: 16),
-                      label: Text(_tr('عرض التفاصيل', 'View details')),
-                      style: TextButton.styleFrom(
-                        foregroundColor: context.isDark
-                            ? const Color(0xFF60A5FA)
-                            : const Color(0xFF2563EB),
+                    if (ApiConstants.branchModule != 'salons')
+                      TextButton.icon(
+                        onPressed: () => _showBookingDetails(booking.id),
+                        icon: const Icon(LucideIcons.fileText, size: 16),
+                        label: Text(_tr('عرض التفاصيل', 'View details')),
+                        style: TextButton.styleFrom(
+                          foregroundColor: context.isDark
+                              ? const Color(0xFF60A5FA)
+                              : const Color(0xFF2563EB),
+                        ),
                       ),
-                    ),
                     if (canCreateInvoice)
                       OutlinedButton.icon(
                         onPressed: canEditOrder

@@ -80,7 +80,7 @@ enum DiscountType { amount, percentage }
 class CartItem {
   final String cartId;
   final Product product;
-  int quantity;
+  double quantity;
   final List<ProductExtra> selectedExtras;
   bool isBumped;
 
@@ -95,7 +95,7 @@ class CartItem {
   CartItem({
     required this.cartId,
     required this.product,
-    this.quantity = 1,
+    this.quantity = 1.0,
     this.selectedExtras = const [],
     this.isBumped = false,
     this.discount = 0.0,

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../services/bluetooth_print_channel.dart';
+
 class BluetoothSelection {
   final String name;
   final String address;
@@ -17,9 +19,13 @@ class BluetoothSelection {
 
 class BluetoothDevicePicker {
   static Future<BluetoothSelection?> show(BuildContext context) async {
-    // On Linux, print_bluetooth_thermal and flutter_bluetooth_serial are
-    // Android-only. Skip all BT API checks and go straight to manual entry.
-    if (!Platform.isAndroid && !Platform.isIOS) {
+    // On Linux/desktop, print_bluetooth_thermal and flutter_bluetooth_serial
+    // are unavailable. On iOS, the cashier's BT print bridge is implemented
+    // only in Kotlin (BluetoothPrintBridge.kt) — there is no CoreBluetooth
+    // counterpart, so a discovered printer would never actually print.
+    // Skip BT discovery in both cases and offer manual entry only, so the
+    // address can still be saved for use over Wi-Fi/network bridges.
+    if (!Platform.isAndroid) {
       if (!context.mounted) return null;
       return _showManualEntryDialog(context);
     }
@@ -105,13 +111,19 @@ class BluetoothDevicePicker {
                                   leading: const Icon(Icons.bluetooth),
                                   title: Text(device.name ?? 'طابعة بلوتوث'),
                                   subtitle: Text(device.address),
-                                  onTap: () => Navigator.pop(
-                                    context,
-                                    BluetoothSelection(
+                                  onTap: () async {
+                                    final selection = BluetoothSelection(
                                       name: device.name ?? 'BT Printer',
                                       address: device.address,
-                                    ),
-                                  ),
+                                    );
+                                    final paired = await _ensurePairedBeforeReturn(
+                                      sheetContext,
+                                      selection,
+                                    );
+                                    if (!paired) return;
+                                    if (!sheetContext.mounted) return;
+                                    Navigator.pop(sheetContext, selection);
+                                  },
                                 );
                               },
                             ),
@@ -200,6 +212,63 @@ class BluetoothDevicePicker {
     );
 
     return result;
+  }
+
+  /// Pairs the device with the OS if it isn't already, surfacing the system
+  /// PIN dialog. Required for thermal printers that ship with a PIN — the
+  /// RFCOMM connect at print time only works on bonded devices.
+  static Future<bool> _ensurePairedBeforeReturn(
+    BuildContext context,
+    BluetoothSelection selection,
+  ) async {
+    final alreadyBonded =
+        await BluetoothPrintChannel.isBonded(selection.address);
+    if (alreadyBonded) return true;
+
+    if (!context.mounted) return false;
+    // Visual cue that pairing is in flight — bondDevice() blocks up to 30s
+    // waiting on ACTION_BOND_STATE_CHANGED, and we don't want the cashier
+    // tapping again while the system dialog is still up.
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                'جاري إقران الطابعة... أدخل رمز PIN عند الطلب',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    bool ok = false;
+    try {
+      ok = await BluetoothPrintChannel.bondDevice(selection.address);
+    } catch (_) {
+      ok = false;
+    }
+
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذر إقران الطابعة. أعد المحاولة أو أقرن الجهاز يدوياً من إعدادات البلوتوث.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+    return ok;
   }
 
   static Future<bool> _ensureBluetoothPermissions(

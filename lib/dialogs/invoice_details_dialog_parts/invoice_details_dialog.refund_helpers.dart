@@ -148,7 +148,7 @@ extension InvoiceDetailsDialogRefundHelpers on _InvoiceDetailsDialogState {
               ),
               const SizedBox(height: 12),
               Text(
-                'المبلغ المتوقع للاسترجاع: ${refundAmount.toStringAsFixed(2)} ${ApiConstants.currency}',
+                'المبلغ المتوقع للاسترجاع: ${refundAmount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
               ),
               if (refundStatus != null && refundStatus.isNotEmpty) ...[
                 const SizedBox(height: 8),

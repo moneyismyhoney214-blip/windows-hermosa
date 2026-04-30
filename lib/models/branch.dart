@@ -16,6 +16,7 @@ class Branch {
   final String? taxNumber;
   final TaxObject taxObject;
   final bool printersSettings;
+  final bool haveWaiters;
   final List<SubscriptionFeature> subscription;
 
   Branch({
@@ -35,6 +36,7 @@ class Branch {
     this.taxNumber,
     required this.taxObject,
     required this.printersSettings,
+    this.haveWaiters = true,
     required this.subscription,
   });
 
@@ -66,7 +68,16 @@ class Branch {
       whatsappStatus: toBool(json['whatsapp_status']),
       countDays: json['count_days'] is num ? (json['count_days'] as num).toInt() : 0,
       countryId: json['country_id'] is num ? (json['country_id'] as num).toInt() : 0,
-      module: json['module']?.toString() ?? '',
+      module: () {
+        final top = json['module']?.toString().trim() ?? '';
+        if (top.isNotEmpty) return top;
+        final type = json['type'];
+        if (type is Map) {
+          final nested = type['module']?.toString().trim() ?? '';
+          if (nested.isNotEmpty) return nested;
+        }
+        return '';
+      }(),
       cityId: json['city_id'] is num ? (json['city_id'] as num).toInt() : 0,
       isValid: toBool(json['is_valid']),
       isBio: toBool(json['is_bio']),
@@ -76,6 +87,7 @@ class Branch {
       taxNumber: json['tax_number']?.toString(),
       taxObject: TaxObject.fromJson(json['taxObject'] ?? {}),
       printersSettings: toBool(json['printers_settings']),
+      haveWaiters: toBool(json['have_waiters'], fallback: true),
       subscription: (json['subscription'] as List?)
               ?.map((e) => SubscriptionFeature.fromJson(e))
               .toList() ??

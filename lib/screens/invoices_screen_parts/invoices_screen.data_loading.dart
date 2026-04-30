@@ -27,13 +27,45 @@ extension InvoicesScreenDataLoading on _InvoicesScreenState {
       _activeDate = todayDate;
     }
 
+    final isSalonMode = ApiConstants.branchModule == 'salons';
+
+    // PERF (salon-only): on a fresh load, paint the cached page-1 response
+    // immediately so the user doesn't stare at a 10-second spinner waiting
+    // for the slow `/seller/branches/{id}/invoices` round-trip. Restaurant
+    // module keeps the original "spinner-first" UX so its flow is untouched.
+    Map<String, dynamic>? salonCached;
+    if (shouldReset && isSalonMode) {
+      try {
+        salonCached = await _orderService.getCachedInvoices(
+          dateFrom: _activeDate,
+          dateTo: _activeDate,
+        );
+      } catch (_) {
+        salonCached = null;
+      }
+    }
+
     if (shouldReset) {
       setState(() {
-        _isLoading = true;
         _error = null;
         _page = 1;
         _hasMore = true;
+        if (salonCached != null) {
+          // Cache hit — show stale list now, refresh proceeds below.
+          _isLoading = false;
+        } else {
+          _isLoading = true;
+        }
       });
+      if (salonCached != null) {
+        final cachedInvoices = _invoicesFromResponse(salonCached);
+        if (mounted && cachedInvoices.isNotEmpty) {
+          setState(() {
+            _invoices = cachedInvoices;
+            _hasMore = _resolveHasMore(salonCached!, cachedInvoices.length);
+          });
+        }
+      }
     } else {
       setState(() => _isLoadingMore = true);
     }
@@ -67,7 +99,11 @@ extension InvoicesScreenDataLoading on _InvoicesScreenState {
       setState(() {
         _isLoading = false;
         _isLoadingMore = false;
-        _error = e.toString();
+        // Preserve any cached/optimistic data we already painted — only
+        // surface the error when we have nothing to show.
+        if (_invoices.isEmpty) {
+          _error = e.toString();
+        }
       });
     }
   }

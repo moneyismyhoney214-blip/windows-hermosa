@@ -8,6 +8,8 @@ import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/locator.dart';
+import 'package:hermosa_pos/services/whatsapp_service.dart';
+import 'auth_service.dart';
 
 /// Service for branch-specific operations and settings
 class BranchService {
@@ -162,7 +164,13 @@ class BranchService {
   /// value may be empty if the entry is missing or the call fails.
   Future<Map<String, String>> _fetchBranchSummary(int branchId) async {
     try {
-      final response = await _client.get(ApiConstants.branchesEndpoint);
+      // WAITER role can't read `/seller/branches` (401). The official
+      // frontend uses `/seller/profile/branches` for that user — same
+      // shape, includes the canonical `name` and `logo`.
+      final endpoint = _isWaiter()
+          ? ApiConstants.profileBranchesEndpoint
+          : ApiConstants.branchesEndpoint;
+      final response = await _client.get(endpoint);
       final list = _coerceBranchList(response);
       debugPrint(
           '🏷️ /seller/branches → ${list.length} entries, looking for id=$branchId');
@@ -283,6 +291,7 @@ class BranchService {
         _branchSettingsCacheTime != null &&
         DateTime.now().difference(_branchSettingsCacheTime!).inMinutes <
             _branchSettingsTtlMinutes) {
+      _seedWhatsAppCredsFromSettings(_cachedBranchSettings!);
       return _cachedBranchSettings!;
     }
 
@@ -295,6 +304,7 @@ class BranchService {
       final offline = await _getBranchSettingsOffline();
       _cachedBranchSettings = offline;
       _branchSettingsCacheTime = DateTime.now();
+      _seedWhatsAppCredsFromSettings(offline);
       return offline;
     }
 
@@ -304,16 +314,21 @@ class BranchService {
       final offline = await _getBranchSettingsOffline();
       _cachedBranchSettings = offline;
       _branchSettingsCacheTime = DateTime.now();
+      _seedWhatsAppCredsFromSettings(offline);
       return offline;
     }
 
-    // Race all endpoints in parallel — first successful response wins
-    final endpoints = [
-      '/seller/branches/${ApiConstants.branchId}/settings',
-      '/seller/branch-settings/${ApiConstants.branchId}',
-      '/seller/branch/setting/${ApiConstants.branchId}',
-      ApiConstants.branchSettingEndpoint,
-    ];
+    // Race all endpoints in parallel — first successful response wins.
+    // WAITER role only hits the canonical endpoint: the legacy fallbacks
+    // 404 noisily and the official frontend never tries them.
+    final endpoints = _isWaiter()
+        ? <String>['/seller/branches/${ApiConstants.branchId}/settings']
+        : <String>[
+            '/seller/branches/${ApiConstants.branchId}/settings',
+            '/seller/branch-settings/${ApiConstants.branchId}',
+            '/seller/branch/setting/${ApiConstants.branchId}',
+            ApiConstants.branchSettingEndpoint,
+          ];
 
     final completer = Completer<Map<String, dynamic>>();
     var failCount = 0;
@@ -328,6 +343,7 @@ class BranchService {
           if (kDebugMode) debugPrint('✅ Branch settings loaded from: $endpoint');
           _cachedBranchSettings = extracted;
           _branchSettingsCacheTime = DateTime.now();
+          _seedWhatsAppCredsFromSettings(extracted);
           completer.complete(extracted);
           // Save to SQLite for offline (fire-and-forget)
           _offlineDb.saveBranchSettings(ApiConstants.branchId, extracted);
@@ -337,6 +353,7 @@ class BranchService {
             _getBranchSettingsOffline().then((offline) {
               _cachedBranchSettings = offline;
               _branchSettingsCacheTime = DateTime.now();
+              _seedWhatsAppCredsFromSettings(offline);
               if (!completer.isCompleted) completer.complete(offline);
             });
           }
@@ -354,6 +371,32 @@ class BranchService {
     }
 
     return completer.future;
+  }
+
+  /// Pull `whatsapp.{instance_id, instance_token}` out of a settings
+  /// payload and seed `WhatsAppService` so the WAWP API call uses the
+  /// branch-owned credentials. When the new branch has no WhatsApp
+  /// configuration we explicitly clear the in-memory creds so the
+  /// previous branch's tokens don't leak through. User-tuned fields
+  /// (country code + message template) are preserved either way.
+  void _seedWhatsAppCredsFromSettings(Map<String, dynamic> settings) {
+    final raw = settings['whatsapp'];
+    if (raw is! Map) {
+      whatsAppService.clearBackendCredentials();
+      return;
+    }
+    final wa = raw.map((k, v) => MapEntry(k.toString(), v));
+    final instanceId = wa['instance_id']?.toString().trim() ?? '';
+    final accessToken =
+        (wa['instance_token'] ?? wa['access_token'])?.toString().trim() ?? '';
+    if (instanceId.isEmpty || accessToken.isEmpty) {
+      whatsAppService.clearBackendCredentials();
+      return;
+    }
+    whatsAppService.applyBackendCredentials(
+      instanceId: instanceId,
+      accessToken: accessToken,
+    );
   }
 
   /// Get invoice language settings from cached branch settings (async).
@@ -382,23 +425,25 @@ class BranchService {
   /// by callers that need to decide whether to add tax to a total without
   /// waiting for an API round-trip (e.g. Orders screen grand-total).
   ///
-  /// Defaults to `true` to stay backwards-compatible if the cache hasn't
-  /// hydrated yet; callers that care about correctness when offline should
-  /// gate their logic behind an explicit `await getBranchSettings()`.
+  /// Authoritative source is `ApiConstants.hasTax`, populated at login and
+  /// refreshed via `/seller/filters/branches/{id}/getTax`. The cached
+  /// settings/receipt-info payloads remain a fallback for older sessions
+  /// that haven't hydrated the global yet.
   bool get cachedHasTax {
     final flag = _findHasTax(_cachedBranchSettings) ??
         _findHasTax(_cachedBranchReceiptInfo);
-    return flag ?? true;
+    return flag ?? ApiConstants.hasTax;
   }
 
   /// Tax rate in the `0.0 – 1.0` range. Returns `0.0` when the branch has
-  /// tax disabled. Reads from the same cached payload as [cachedHasTax].
+  /// tax disabled. Authoritative value is `ApiConstants.effectiveTaxRate`;
+  /// cached payloads only matter when the global hasn't been hydrated.
   double get cachedTaxRate {
     if (!cachedHasTax) return 0.0;
     final rate = _findTaxRate(_cachedBranchSettings) ??
         _findTaxRate(_cachedBranchReceiptInfo);
-    if (rate == null) return 0.15; // legacy default
-    return rate.clamp(0.0, 1.0).toDouble();
+    if (rate != null) return rate.clamp(0.0, 1.0).toDouble();
+    return ApiConstants.effectiveTaxRate;
   }
 
   bool? _findHasTax(dynamic payload) {
@@ -483,7 +528,52 @@ class BranchService {
     return {};
   }
 
+  /// True when the signed-in user has the WAITER role. Several
+  /// cashier-flow endpoints (`/seller/get_branches/{id}`,
+  /// `/seller/branches/{id}/settings`, `/seller/filters/branches/{id}/getTax`,
+  /// `/seller/branches`) are not available to a WAITER — the official
+  /// frontend skips them and relies on the login payload + the
+  /// `/seller/profile/branches` endpoint instead. We mirror that here.
+  bool _isWaiter() {
+    try {
+      return AuthService().isWaiter();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Fetch a single branch entry from `/seller/profile/branches` —
+  /// the WAITER-safe replacement for `/seller/get_branches/{id}` and
+  /// `/seller/branches`. Returns the branch map (with seller-ish fields
+  /// the receipt-info builder cares about) or an empty map if the entry
+  /// isn't in the response.
+  Future<Map<String, dynamic>> _fetchProfileBranchEntry(int branchId) async {
+    final response =
+        await _client.get(ApiConstants.profileBranchesEndpoint);
+    final list = _coerceBranchList(response);
+    for (final item in list) {
+      final id = item['id'];
+      final isMatch = id is num
+          ? id.toInt() == branchId
+          : int.tryParse(id?.toString() ?? '') == branchId;
+      if (isMatch) return item;
+    }
+    return list.isNotEmpty ? list.first : const <String, dynamic>{};
+  }
+
   Future<Map<String, dynamic>> getBranchInfo(int branchId) async {
+    // WAITER role: `/seller/get_branches/{id}` returns 500 — the
+    // official frontend does not call it. Fall back to the branch
+    // summary derived from `/seller/profile/branches`.
+    if (_isWaiter()) {
+      try {
+        final summary = await _fetchProfileBranchEntry(branchId);
+        return summary;
+      } catch (e) {
+        if (kDebugMode) debugPrint('⚠️ getBranchInfo (waiter fallback) failed: $e');
+        return const {};
+      }
+    }
     final endpoint = '/seller/get_branches/$branchId';
     final response = await _client.get(endpoint);
     if (response is Map<String, dynamic>) {
@@ -493,6 +583,89 @@ class BranchService {
       return response.map((key, value) => MapEntry(key.toString(), value));
     }
     return {};
+  }
+
+  /// Hit `/seller/filters/branches/{id}/getTax` to refresh the global
+  /// tax config (`hasTax`, `taxPercentage`, `taxRate`, `digitsNumber`,
+  /// `currency`) from the authoritative server-side source. Best-effort:
+  /// returns the parsed payload on success or null on any failure — the
+  /// in-memory ApiConstants stay on whatever was loaded from login or
+  /// SharedPreferences when the call fails.
+  Future<Map<String, dynamic>?> refreshTaxConfig({int? branchId}) async {
+    final id = branchId ?? ApiConstants.branchId;
+    if (id <= 0) return null;
+    // WAITER role: `/seller/filters/branches/{id}/getTax` is not in
+    // the official post-login flow — tax is already hydrated from the
+    // login payload's `taxObject`. Skip to avoid a needless round-trip
+    // (and the corresponding 401 risk on stricter deployments).
+    if (_isWaiter()) return null;
+    try {
+      final response =
+          await _client.get(ApiConstants.getBranchTaxEndpoint(id));
+      final data = response is Map ? response['data'] : null;
+      if (data is Map) {
+        final tax = data.map((k, v) => MapEntry(k.toString(), v));
+        _applyTaxToApiConstants(tax);
+        await _persistTaxToPrefs();
+        if (kDebugMode) {
+          debugPrint(
+              '🏷️ Tax refreshed via getTax → hasTax=${ApiConstants.hasTax}, '
+              'percentage=${ApiConstants.taxPercentage}%, '
+              'currency=${ApiConstants.currency}');
+        }
+        return tax;
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('⚠️ refreshTaxConfig failed: $e');
+    }
+    return null;
+  }
+
+  void _applyTaxToApiConstants(Map<String, dynamic> tax) {
+    final hasTaxRaw = tax['has_tax'] ?? tax['hasTax'];
+    if (hasTaxRaw is bool) {
+      ApiConstants.hasTax = hasTaxRaw;
+    } else if (hasTaxRaw is num) {
+      ApiConstants.hasTax = hasTaxRaw != 0;
+    } else if (hasTaxRaw is String) {
+      final s = hasTaxRaw.trim().toLowerCase();
+      if (['1', 'true', 'yes', 'on', 'active'].contains(s)) {
+        ApiConstants.hasTax = true;
+      } else if (['0', 'false', 'no', 'off', 'inactive'].contains(s)) {
+        ApiConstants.hasTax = false;
+      }
+    }
+
+    final pctRaw = tax['tax_percentage'] ?? tax['taxPercentage'];
+    final pct = pctRaw is num
+        ? pctRaw.toDouble()
+        : double.tryParse(pctRaw?.toString() ?? '');
+    if (pct != null) {
+      final percent = pct > 1.0 ? pct : pct * 100.0;
+      ApiConstants.taxPercentage = percent.round();
+      ApiConstants.taxRate = (percent / 100.0).clamp(0.0, 1.0).toDouble();
+    }
+
+    final digitsRaw = tax['digits_number'] ?? tax['digitsNumber'];
+    final digits = digitsRaw is num
+        ? digitsRaw.toInt()
+        : int.tryParse(digitsRaw?.toString() ?? '');
+    if (digits != null) {
+      ApiConstants.digitsNumber = digits;
+    }
+
+    final currency = tax['currency']?.toString().trim();
+    if (currency != null && currency.isNotEmpty) {
+      ApiConstants.currency = currency;
+    }
+  }
+
+  Future<void> _persistTaxToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('has_tax', ApiConstants.hasTax);
+    await prefs.setInt('tax_percentage', ApiConstants.taxPercentage);
+    await prefs.setInt('digits_number', ApiConstants.digitsNumber);
+    await prefs.setString('currency', ApiConstants.currency);
   }
 
   Future<String> getBranchLogoUrl(int branchId) async {

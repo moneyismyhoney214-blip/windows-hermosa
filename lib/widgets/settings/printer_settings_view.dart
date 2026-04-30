@@ -1,6 +1,9 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../models.dart';
+import '../../services/api/api_constants.dart';
 import '../../services/app_themes.dart';
 import '../../services/display_app_service.dart';
 import '../../services/printer_service.dart';
@@ -574,7 +577,9 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                 children: [
                   buildSection(
                     title: 'الطابعات',
-                    subtitle: 'أجهزة الطباعة الخاصة بالفواتير والمطبخ',
+                    subtitle: ApiConstants.branchModule == 'salons'
+                        ? 'أجهزة الطباعة الخاصة بالفواتير والأدوار'
+                        : 'أجهزة الطباعة الخاصة بالفواتير والمطبخ',
                     icon: LucideIcons.printer,
                     iconColor: Colors.blue,
                     iconBackground: const Color(0xFFEFF6FF),
@@ -608,7 +613,9 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                   children: [
                     buildSection(
                       title: 'الطابعات',
-                      subtitle: 'أجهزة الطباعة الخاصة بالفواتير والمطبخ',
+                      subtitle: ApiConstants.branchModule == 'salons'
+                          ? 'أجهزة الطباعة الخاصة بالفواتير والأدوار'
+                          : 'أجهزة الطباعة الخاصة بالفواتير والمطبخ',
                       icon: LucideIcons.printer,
                       iconColor: Colors.blue,
                       iconBackground: const Color(0xFFEFF6FF),
@@ -828,18 +835,23 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                                   });
                                 },
                               ),
-                              ChoiceChip(
-                                label: const Text('بلوتوث'),
-                                selected: _connectionType ==
-                                    PrinterConnectionType.bluetooth,
-                                onSelected: (value) {
-                                  if (!value) return;
-                                  setState(() {
-                                    _connectionType =
-                                        PrinterConnectionType.bluetooth;
-                                  });
-                                },
-                              ),
+                              // Bluetooth printing depends on a Kotlin
+                              // bridge (BluetoothPrintBridge.kt) and
+                              // Sunmi/Centerm-specific drivers; neither
+                              // exists on iOS, so hide the chip there.
+                              if (Platform.isAndroid)
+                                ChoiceChip(
+                                  label: const Text('بلوتوث'),
+                                  selected: _connectionType ==
+                                      PrinterConnectionType.bluetooth,
+                                  onSelected: (value) {
+                                    if (!value) return;
+                                    setState(() {
+                                      _connectionType =
+                                          PrinterConnectionType.bluetooth;
+                                    });
+                                  },
+                                ),
                             ],
                           ),
                         ),
@@ -847,14 +859,22 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                         _buildDropdown(
                             'الموديل',
                             _model,
-                            [
-                              'default',
-                              'TM_T20',
-                              'TM_T88',
-                              'star',
-                              'espon',
-                              'Sunmi_V2'
-                            ],
+                            Platform.isAndroid
+                                ? const [
+                                    'default',
+                                    'TM_T20',
+                                    'TM_T88',
+                                    'star',
+                                    'espon',
+                                    'Sunmi_V2'
+                                  ]
+                                : const [
+                                    'default',
+                                    'TM_T20',
+                                    'TM_T88',
+                                    'star',
+                                    'espon',
+                                  ],
                             (val) => setState(() => _model = val!)),
                         const Divider(height: 1),
                         _buildTextField('الاسم', (val) => _name = val!),

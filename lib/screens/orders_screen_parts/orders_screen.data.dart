@@ -11,20 +11,53 @@ extension OrdersScreenData on _OrdersScreenState {
   Future<void> _loadData() async {
     _syncSearchQueryFromInput(normalizeController: true);
 
+    final isSalonMode = ApiConstants.branchModule == 'salons';
+    final todayDateStr = _todayForApi();
+    final orderIdSearch = _orderIdSearchValue;
+    final searchForApi =
+        _searchQueryForApi.isEmpty ? null : _searchQueryForApi;
+    final statusForApi = _selectedStatus == 'all' ? null : _selectedStatus;
+
+    // PERF (salon-only): paint cached bookings instantly so the user sees
+    // the list while the network call refreshes in background. The cashier
+    // (restaurant) module keeps its original behaviour — empty list +
+    // spinner — to avoid touching that flow.
+    Map<String, dynamic>? salonCached;
+    if (isSalonMode && orderIdSearch.isEmpty) {
+      try {
+        salonCached = await _orderService.getCachedBookings(
+          dateFrom: todayDateStr,
+          dateTo: todayDateStr,
+          search: searchForApi,
+          status: statusForApi,
+        );
+      } catch (_) {
+        salonCached = null;
+      }
+    }
+
     setState(() {
-      _isLoading = true;
       _error = null;
       _bookingPage = 1;
-      _bookings = [];
       _bookingsRawResponse = {};
       _hasMoreBookings = true;
       _selectedBookingIds.clear();
+      if (salonCached != null) {
+        // Show stale data immediately; refresh proceeds below without a
+        // blocking spinner. _processBookings will overwrite once the
+        // fresh response arrives.
+        _isLoading = false;
+      } else {
+        _isLoading = true;
+        _bookings = [];
+      }
     });
 
-    try {
-      final todayDateStr = _todayForApi();
-      final orderIdSearch = _orderIdSearchValue;
+    if (salonCached != null) {
+      _processBookings(salonCached, append: false);
+    }
 
+    try {
       Future<Map<String, dynamic>> bookingsFuture;
       if (orderIdSearch.isNotEmpty) {
         bookingsFuture = _loadBookingsForOrderSearch(
@@ -37,8 +70,8 @@ extension OrdersScreenData on _OrdersScreenState {
           page: 1,
           dateFrom: todayDateStr,
           dateTo: todayDateStr,
-          search: _searchQueryForApi.isEmpty ? null : _searchQueryForApi,
-          status: _selectedStatus == 'all' ? null : _selectedStatus,
+          search: searchForApi,
+          status: statusForApi,
         );
       }
 
@@ -53,7 +86,11 @@ extension OrdersScreenData on _OrdersScreenState {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Error: $e';
+          // Preserve any optimistic data we already painted from cache —
+          // only surface the error when we have nothing to show.
+          if (_bookings.isEmpty) {
+            _error = 'Error: $e';
+          }
           _isLoading = false;
         });
       }
@@ -226,7 +263,7 @@ extension OrdersScreenData on _OrdersScreenState {
 
     if (!mounted) return;
     double resolveInvoiceTotal() {
-      double round2(double v) => double.parse(v.toStringAsFixed(2));
+      double round2(double v) => double.parse(v.toStringAsFixed(ApiConstants.digitsNumber));
       return round2(_bookingGrandTotal(booking));
     }
 
@@ -276,7 +313,7 @@ extension OrdersScreenData on _OrdersScreenState {
         apiPays.add({
           'name': pays[i]['name'],
           'pay_method': pays[i]['pay_method'],
-          'amount': double.parse(amount.toStringAsFixed(2)),
+          'amount': double.parse(amount.toStringAsFixed(ApiConstants.digitsNumber)),
           'index': i,
         });
       }
@@ -306,9 +343,13 @@ extension OrdersScreenData on _OrdersScreenState {
           'booking_meals',
           'booking_products',
           'booking_items',
+          'services',
+          'booking_services',
+          'products',
           'items',
           'invoice_items',
           'sales_meals',
+          'order_items',
           'card',
           'cart',
         ];
@@ -333,10 +374,16 @@ extension OrdersScreenData on _OrdersScreenState {
           dynamic pick(dynamic value) => value == null ? null : value;
           final mealMap = (raw['meal'] is Map)
               ? (raw['meal'] as Map).map((k, v) => MapEntry(k.toString(), v))
-              : const <String, dynamic>{};
-          final mealId = pick(raw['meal_id'] ?? mealMap['id']);
+              : (raw['service'] is Map)
+                  ? (raw['service'] as Map)
+                      .map((k, v) => MapEntry(k.toString(), v))
+                  : const <String, dynamic>{};
+          final mealId = pick(
+            raw['meal_id'] ?? raw['service_id'] ?? mealMap['id'],
+          );
           final productId = pick(raw['product_id'] ?? raw['productId']);
-          final bookingMealId = pick(raw['booking_meal_id'] ?? raw['id']);
+          final bookingMealId =
+              pick(raw['booking_meal_id'] ?? raw['booking_service_id'] ?? raw['id']);
           final bookingProductId = pick(raw['booking_product_id'] ?? raw['id']);
           final fallbackId = pick(raw['id']);
           final quantityRaw = raw['quantity'] ?? raw['qty'] ?? raw['count'];
@@ -447,7 +494,7 @@ extension OrdersScreenData on _OrdersScreenState {
         throw Exception(_tr('الطلب بدون عناصر', 'Order has no items'));
       }
 
-      double round2(double v) => double.parse(v.toStringAsFixed(2));
+      double round2(double v) => double.parse(v.toStringAsFixed(ApiConstants.digitsNumber));
       double computeItemsSubtotal(List<Map<String, dynamic>> items) {
         double sum = 0.0;
         for (final item in items) {
@@ -556,7 +603,7 @@ extension OrdersScreenData on _OrdersScreenState {
               ? unitRaw.toDouble()
               : double.tryParse(unitRaw.toString()) ?? 0.0;
           final total = double.parse(
-            (unitPrice * quantity).toStringAsFixed(2),
+            (unitPrice * quantity).toStringAsFixed(ApiConstants.digitsNumber),
           );
           salesMeals.add({
             if (item['booking_meal_id'] != null)
@@ -608,7 +655,7 @@ extension OrdersScreenData on _OrdersScreenState {
         }
         final currentSum = nonZero.fold<double>(
             0, (s, p) => s + ((p['amount'] as num?)?.toDouble() ?? 0));
-        final diff = double.parse((target - currentSum).toStringAsFixed(2));
+        final diff = double.parse((target - currentSum).toStringAsFixed(ApiConstants.digitsNumber));
         if (diff.abs() >= 0.01) {
           final last = nonZero.last;
           nonZero[nonZero.length - 1] = {
@@ -616,7 +663,7 @@ extension OrdersScreenData on _OrdersScreenState {
             'amount': double.parse(
               (((last['amount'] as num?)?.toDouble() ?? 0) + diff)
                   .clamp(0.0, double.infinity)
-                  .toStringAsFixed(2),
+                  .toStringAsFixed(ApiConstants.digitsNumber),
             ),
           };
         }
@@ -972,7 +1019,7 @@ extension OrdersScreenData on _OrdersScreenState {
         branch['logo'], branch['image'],
       ]);
       if (logoUrl != null && logoUrl.startsWith('/')) {
-        logoUrl = 'https://portal.hermosaapp.com$logoUrl';
+        logoUrl = 'https://api.hermosaapp.com$logoUrl';
       }
 
       return OrderReceiptData(

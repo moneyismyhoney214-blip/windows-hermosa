@@ -301,7 +301,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
             hintText: '192.168.x.x',
             prefixIcon: const Icon(LucideIcons.wifi, size: 20),
             filled: true,
-            fillColor: const Color(0xFFF8FAFC),
+            fillColor: context.appSurfaceAlt,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
               borderSide: const BorderSide(color: Color(0xFFE2E8F0)),

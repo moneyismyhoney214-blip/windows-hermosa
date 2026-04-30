@@ -5,14 +5,19 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../dialogs/edit_order_dialog.dart';
+import '../../dialogs/waitlist_notify_dialog.dart';
 import '../../locator.dart';
 import '../../models.dart';
 import '../../models/booking_invoice.dart';
+import '../../models/waitlist_entry.dart';
 import '../../services/api/order_service.dart';
 import '../../services/api/table_service.dart';
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../../services/waitlist_assign_controller.dart';
+import '../../services/waitlist_service.dart';
 import '../../utils/order_status.dart';
+import '../../widgets/waitlist_assign_banner.dart';
 import '../models/table_migrate_event.dart';
 import '../models/waiter_table_event.dart';
 import '../services/waiter_billing_service.dart';
@@ -43,6 +48,7 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
   List<TableItem> _tables = const [];
   bool _loading = true;
   Object? _error;
+  String? _selectedSectionKey;
   StreamSubscription<TableMigrateEvent>? _migrateSub;
   StreamSubscription<WaiterTableEventEnvelope>? _lifecycleSub;
 
@@ -72,6 +78,13 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
     _migrateSub = widget.controller.onTableMigrate.listen(_onMigrate);
     _lifecycleSub =
         widget.controller.onTableEvent.listen(_onLifecycle);
+    // Re-render whenever the shared assign controller flips — we need
+    // to show/hide the banner and intercept tap routing.
+    waitlistAssignController.addListener(_onAssignModeChanged);
+    // Re-render when a waitlist entry is added / notified / seated so
+    // the holdingForName pill updates in real time when the change
+    // originated on a peer device.
+    waitlistService.addListener(_onAssignModeChanged);
   }
 
   @override
@@ -79,7 +92,44 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
     _registry.removeListener(_onRegistry);
     _migrateSub?.cancel();
     _lifecycleSub?.cancel();
+    waitlistAssignController.removeListener(_onAssignModeChanged);
+    waitlistService.removeListener(_onAssignModeChanged);
     super.dispose();
+  }
+
+  void _onAssignModeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Called instead of `_openTable` when the host has a pending
+  /// waitlist entry. Only free tables are valid targets; anything
+  /// else gets a soft error snack.
+  Future<void> _handleAssignTap(
+    WaitlistEntry entry,
+    TableItem table,
+  ) async {
+    final ownerId = _registry.ownerIdFor(table.id);
+    final isAvailable =
+        ownerId == null && table.status == TableStatus.available;
+    if (!isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFDC2626),
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            translationService.t('waitlist_assign_table_unavailable'),
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      );
+      return;
+    }
+    await WaitlistNotifyDialog.show(
+      context,
+      entry: entry,
+      tableId: table.id,
+      tableNumber: table.number,
+    );
   }
 
   void _onLifecycle(WaiterTableEventEnvelope envelope) {
@@ -226,6 +276,23 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
         _error = e;
         _loading = false;
       });
+    }
+  }
+
+  /// Single tap entry point — routes to either the waitlist assign
+  /// flow or the default "open table" flow, and marks any linked
+  /// waitlist entry as seated when the waiter is about to open the
+  /// table it was assigned to.
+  Future<void> _handleTap(TableItem table) async {
+    final pending = waitlistAssignController.pending;
+    if (pending != null) {
+      await _handleAssignTap(pending, table);
+      return;
+    }
+    final linked = waitlistService.entryForTable(table.id);
+    _openTable(table);
+    if (linked != null) {
+      unawaited(waitlistService.markSeated(linked.id));
     }
   }
 
@@ -910,6 +977,17 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const WaitlistAssignBanner(),
+        Expanded(child: _buildBody()),
+        if (!_loading && _error == null && _tables.isNotEmpty)
+          _buildSectionTabBar(),
+      ],
+    );
+  }
+
+  Widget _buildBody() {
     if (_loading) {
       return const SkeletonTablesGrid();
     }
@@ -919,14 +997,20 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
     if (_tables.isEmpty) {
       return _EmptyView(onRefresh: _load);
     }
+    final activeTables = _tablesForSelectedSection(_visibleTables());
     return RefreshIndicator(
       color: context.appPrimary,
       onRefresh: _load,
       child: LayoutBuilder(builder: (_, constraints) {
         // Uniform compact tiles — matches the reference layout where many
-        // tables fit per row on a tablet landscape.
+        // tables fit per row on a tablet landscape. Tile size scales up on
+        // desktop so card content (table number + handle icons) fits.
         final w = constraints.maxWidth;
-        final double maxExtent = w < 420 ? 110 : 130;
+        final double maxExtent = w < 420
+            ? 120
+            : w < 900
+                ? 140
+                : 170;
         return GridView.builder(
           padding: const EdgeInsets.all(WaiterSpacing.sm),
           gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
@@ -935,38 +1019,22 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
             crossAxisSpacing: WaiterSpacing.xs + 2,
             childAspectRatio: 1.0,
           ),
-          // Owner-hide rule: a waiter who has already submitted a
-          // "Pay Later" order shouldn't still see that table in their
-          // active grid — their work is done. Peers still see it as
-          // "Order Taken" (locked). Derived here so the grid
-          // re-renders whenever ownership/payment state changes.
-          itemCount: _visibleTables().length,
+          itemCount: activeTables.length,
           itemBuilder: (_, i) {
-            final t = _visibleTables()[i];
+            final t = activeTables[i];
             final ownerId = _registry.ownerIdFor(t.id);
             final ownerName = _registry.ownerNameFor(t.id) ??
                 (ownerId != null
                     ? widget.controller.roster.byId(ownerId)?.name
                     : null);
-            // Mirror the registry's ownership onto the TableItem's status
-            // so the card colors match even before the backend reflects
-            // it — but when no mesh owner is set, preserve whatever the
-            // backend already reports (occupied / printed / available).
-            // Forcing everything to "available" here is what made the
-            // waiter see a table as free while the cashier's screen had
-            // it locked as "غير متاحة" (e.g. order created cashier-side).
             final overlaid = t
-              ..status =
-                  ownerId != null ? TableStatus.occupied : t.status
+              ..status = ownerId != null ? TableStatus.occupied : t.status
               ..waiterName = ownerName ?? t.waiterName;
             final isMine = ownerId != null &&
                 ownerId == widget.controller.session.self!.id;
             final paymentPending = _registry.paymentPendingFor(t.id);
+            final waitlistHold = waitlistService.entryForTable(t.id);
             return WaiterTableCard(
-              // Stable per-table key lets Flutter reuse the underlying
-              // Element + State when the grid re-sorts (e.g. a peer
-              // HELLO shuffles ownership); without this the list can
-              // rebuild cards from scratch and flicker scroll state.
               key: ValueKey('waiter_table_${t.id}'),
               table: overlaid,
               currentWaiterId: widget.controller.session.self!.id,
@@ -975,30 +1043,128 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
               guestCount: _registry.guestCountFor(t.id),
               isTakingOrder: _registry.takingOrderFor(t.id),
               paymentPending: paymentPending,
-              // Only expose "نقل إلى طاولة أخرى" on tables this waiter
-              // actually owns and that aren't already paid/closed —
-              // migrating a paid bill is a backend-hostile no-op.
-              onMigrate: (isMine && !t.isPaid) ? () => _migrateTable(t) : null,
-              // Edit Order surfaces only on tables this waiter owns AND
-              // that have an active pay-later booking. Opens the same
-              // `EditOrderDialog` the cashier uses — so add/qty/delete
-              // operations run through the same diff engine and fire
-              // the same kitchen change ticket (ملغى / إلغاء جزئي /
-              // تعديل كمية / جديد).
+              holdingForName: waitlistHold?.customerName,
+              onMigrate:
+                  (isMine && !t.isPaid) ? () => _migrateTable(t) : null,
               onEditOrder: (isMine && paymentPending)
                   ? () => _openEditOrderDialog(t)
                   : null,
-              // Release Table: any table owned by me that's occupied
-              // (including paid-but-still-seated). Lets the waiter
-              // manually mark it "available" when guests leave.
               onReleaseTable: isMine ? () => _releaseTable(t) : null,
-              onTap: () => _openTable(t),
+              onTap: () => _handleTap(t),
             );
           },
         );
       }),
     );
   }
+
+  List<TableItem> _tablesForSelectedSection(List<TableItem> all) {
+    final sections = _groupBySection(all);
+    if (sections.isEmpty) return const [];
+    _selectedSectionKey ??= sections.first.key;
+    final active = sections.firstWhere(
+      (s) => s.key == _selectedSectionKey,
+      orElse: () => sections.first,
+    );
+    _selectedSectionKey = active.key;
+    return active.tables;
+  }
+
+  Widget _buildSectionTabBar() {
+    final sections = _groupBySection(_visibleTables());
+    if (sections.length <= 1) return const SizedBox.shrink();
+    final activeKey = _selectedSectionKey ?? sections.first.key;
+    return Container(
+      decoration: BoxDecoration(
+        color: context.appCardBg,
+        border: Border(
+          top: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              for (final section in sections)
+                Expanded(
+                  child: InkWell(
+                    onTap: () =>
+                        setState(() => _selectedSectionKey = section.key),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(
+                            color: section.key == activeKey
+                                ? context.appPrimary
+                                : Colors.transparent,
+                            width: 3,
+                          ),
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        section.title,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: section.key == activeKey
+                              ? context.appPrimary
+                              : context.appText,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Groups tables by `category_name` returned from the API. The "General"
+  // bucket is always present (even when empty) so refreshing while every
+  // table happens to have a category doesn't drop the General tab.
+  List<_TableSection> _groupBySection(List<TableItem> tables) {
+    const generalKey = '__none__';
+    final generalTitle = translationService.t('uncategorized_section');
+    final order = <String>[generalKey];
+    final byKey = <String, _TableSection>{
+      generalKey: _TableSection(
+        key: generalKey,
+        title: generalTitle,
+        tables: [],
+      ),
+    };
+    for (final t in tables) {
+      final raw = t.categoryName?.trim();
+      final isGeneral = raw == null || raw.isEmpty;
+      final key = isGeneral ? generalKey : raw;
+      final title = isGeneral ? generalTitle : raw;
+      final bucket = byKey.putIfAbsent(key, () {
+        order.add(key);
+        return _TableSection(key: key, title: title, tables: []);
+      });
+      bucket.tables.add(t);
+    }
+    return [for (final k in order) byKey[k]!];
+  }
+}
+
+class _TableSection {
+  final String key;
+  final String title;
+  final List<TableItem> tables;
+  _TableSection({
+    required this.key,
+    required this.title,
+    required this.tables,
+  });
 }
 
 class _ErrorView extends StatelessWidget {

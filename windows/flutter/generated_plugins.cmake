@@ -7,7 +7,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   bonsoir_windows
   charset_converter
   connectivity_plus
-  geolocator_windows
   permission_handler_windows
   printing
   sqlite3_flutter_libs

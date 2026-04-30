@@ -1,5 +1,6 @@
 import '../models/receipt_data.dart';
 import 'printer_language_settings_service.dart';
+import '../services/api/api_constants.dart';
 
 /// Shared receipt-building logic used by both the cashier (main screen)
 /// and the waiter module. Previously the cashier's
@@ -292,9 +293,9 @@ class ReceiptBuilderService {
         final amount = pay['amount'];
         if (amount != null) {
           final amountStr = (amount is num)
-              ? amount.toStringAsFixed(2)
+              ? amount.toStringAsFixed(ApiConstants.digitsNumber)
               : (double.tryParse(amount.toString()) ?? 0)
-                  .toStringAsFixed(2);
+                  .toStringAsFixed(ApiConstants.digitsNumber);
           return '$label ($amountStr)';
         }
         return label;
@@ -553,13 +554,13 @@ class ReceiptBuilderService {
       if (branchSeller is Map && branchSeller['logo'] != null) {
         final logo = branchSeller['logo'].toString();
         logoUrl = logo.startsWith('/')
-            ? 'https://portal.hermosaapp.com$logo'
+            ? 'https://api.hermosaapp.com$logo'
             : logo;
       } else if (branchOriginalSeller is Map &&
           branchOriginalSeller['logo'] != null) {
         final logo = branchOriginalSeller['logo'].toString();
         logoUrl = logo.startsWith('/')
-            ? 'https://portal.hermosaapp.com$logo'
+            ? 'https://api.hermosaapp.com$logo'
             : logo;
       }
     }

@@ -666,32 +666,35 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
                                 ? 'جارٍ الطباعة...'
                                 : 'طباعة الفاتورة'),
                           ),
-                          const SizedBox(height: 8),
-                          OutlinedButton.icon(
-                            onPressed: _isSendingWhatsApp
-                                ? null
-                                : _sendWhatsAppForInvoice,
-                            icon: _isSendingWhatsApp
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  )
-                                : const Icon(LucideIcons.messageCircle,
-                                    size: 18),
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(48),
-                              foregroundColor: const Color(0xFF16A34A),
-                              side: const BorderSide(color: Color(0xFF16A34A)),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                          if (ApiConstants.branchModule != 'salons') ...[
+                            const SizedBox(height: 8),
+                            OutlinedButton.icon(
+                              onPressed: _isSendingWhatsApp
+                                  ? null
+                                  : _sendWhatsAppForInvoice,
+                              icon: _isSendingWhatsApp
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Icon(LucideIcons.messageCircle,
+                                      size: 18),
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(48),
+                                foregroundColor: const Color(0xFF16A34A),
+                                side:
+                                    const BorderSide(color: Color(0xFF16A34A)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
                               ),
+                              label: Text(_isSendingWhatsApp
+                                  ? 'جارٍ الإرسال...'
+                                  : 'إرسال واتساب'),
                             ),
-                            label: Text(_isSendingWhatsApp
-                                ? 'جارٍ الإرسال...'
-                                : 'إرسال واتساب'),
-                          ),
+                          ],
                           const SizedBox(height: 8),
                           ElevatedButton(
                             onPressed: () => Navigator.pop(context),
@@ -772,35 +775,37 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
                                   : 'طباعة الفاتورة'),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _isSendingWhatsApp
-                                  ? null
-                                  : _sendWhatsAppForInvoice,
-                              icon: _isSendingWhatsApp
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
-                                    )
-                                  : const Icon(LucideIcons.messageCircle,
-                                      size: 18),
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size.fromHeight(50),
-                                foregroundColor: const Color(0xFF16A34A),
-                                side:
-                                    const BorderSide(color: Color(0xFF16A34A)),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                          if (ApiConstants.branchModule != 'salons') ...[
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _isSendingWhatsApp
+                                    ? null
+                                    : _sendWhatsAppForInvoice,
+                                icon: _isSendingWhatsApp
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Icon(LucideIcons.messageCircle,
+                                        size: 18),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(50),
+                                  foregroundColor: const Color(0xFF16A34A),
+                                  side: const BorderSide(
+                                      color: Color(0xFF16A34A)),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
                                 ),
+                                label: Text(_isSendingWhatsApp
+                                    ? 'جارٍ الإرسال...'
+                                    : 'إرسال واتساب'),
                               ),
-                              label: Text(_isSendingWhatsApp
-                                  ? 'جارٍ الإرسال...'
-                                  : 'إرسال واتساب'),
                             ),
-                          ),
+                          ],
                           const SizedBox(width: 12),
                           Expanded(
                             child: ElevatedButton(

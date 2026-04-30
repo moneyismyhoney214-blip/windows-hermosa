@@ -12,7 +12,12 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
       padding: const EdgeInsets.all(4),
       child: Column(
         children: [
-          _buildTotalRow(_ml(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), _sl(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), data!.totalExclVat),
+          // Pre-tax subtotal — only shown for tax-enabled branches. Tax-free
+          // branches collapse the receipt to a single grand total line.
+          if (ApiConstants.isTaxActive)
+            _buildTotalRow(_ml(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), _sl(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), data!.totalExclVat)
+          else
+            _buildTotalRow(_ml(ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam'), _sl(ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam'), data!.totalExclVat),
 
           // Order discount (promo code / manual / free)
           if (data!.hasOrderDiscount) ...[
@@ -41,7 +46,9 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
               _sl(ar: 'اجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹمز ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
               _impliedDiscount,
             ),
-          _buildTotalRow(_ml(ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı'), _sl(ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı'), data!.vatAmount),
+          // Tax amount row — only printed when the branch has VAT enabled.
+          if (ApiConstants.isTaxActive)
+            _buildTotalRow(_ml(ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)'), _sl(ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)'), data!.vatAmount),
           const Divider(height: 8, thickness: 1, color: Colors.black),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 3),
@@ -56,13 +63,24 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_ml(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam'),
+                      // Grand total label — "after tax" when VAT is on, plain
+                      // "Total" when the branch has no tax line on the receipt.
+                      Text(
+                          ApiConstants.isTaxActive
+                              ? _ml(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam')
+                              : _ml(ar: 'الإجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam'),
                           style: GoogleFonts.tajawal(
                               fontSize: 22,
                               fontWeight: FontWeight.w900,
                               color: Colors.black)),
-                      if (_sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam').isNotEmpty)
-                        Text(_sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam'),
+                      if ((ApiConstants.isTaxActive
+                              ? _sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam')
+                              : _sl(ar: 'الإجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam'))
+                          .isNotEmpty)
+                        Text(
+                            ApiConstants.isTaxActive
+                                ? _sl(ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total Después de Impuestos', tr: 'Vergi Sonrası Toplam')
+                                : _sl(ar: 'الإجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam'),
                             style: GoogleFonts.tajawal(
                                 fontSize: 17,
                                 fontWeight: FontWeight.bold,
@@ -75,7 +93,7 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      '${(data?.totalInclVat ?? 0.0).toStringAsFixed(2)} ${_ml(ar: 'ريال', en: 'SAR', hi: 'SAR', ur: 'SAR', es: 'SAR', tr: 'SAR')}',
+                      '${(data?.totalInclVat ?? 0.0).toStringAsFixed(ApiConstants.digitsNumber)} ${_translateCurrency(ApiConstants.currency)}',
                       style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 26,
@@ -161,7 +179,7 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    amount.toStringAsFixed(2),
+                    amount.toStringAsFixed(ApiConstants.digitsNumber),
                     style: const TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 21,
@@ -226,7 +244,7 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    '-${amount.toStringAsFixed(2)}',
+                    '-${amount.toStringAsFixed(ApiConstants.digitsNumber)}',
                     style: const TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 21,

@@ -214,7 +214,7 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              _displayPrice(it.lineTotal).toStringAsFixed(2),
+                              _displayPrice(it.lineTotal).toStringAsFixed(ApiConstants.digitsNumber),
                               style: TextStyle(
                                 color: context.appText,
                                 fontWeight: FontWeight.w600,
@@ -239,7 +239,7 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
                   ),
                   const Spacer(),
                   Text(
-                    '${_displayPrice(snapshot.total ?? 0).toStringAsFixed(2)} ${ApiConstants.currency}',
+                    '${_displayPrice(snapshot.total ?? 0).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                     style: TextStyle(
                       color: context.appPrimary,
                       fontWeight: FontWeight.w800,

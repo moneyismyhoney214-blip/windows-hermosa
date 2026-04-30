@@ -120,6 +120,26 @@ extension OrderServiceBookingApis on OrderService {
     return createBooking(payload);
   }
 
+  /// Synchronous-ish read of the most recent cached bookings response for
+  /// the same filters used by [getBookings]. Returns `null` when nothing is
+  /// cached yet. Intended for salon-mode optimistic UI: paint stale data
+  /// instantly while the network call refreshes in the background.
+  Future<Map<String, dynamic>?> getCachedBookings({
+    String? status,
+    String? type,
+    String? dateFrom,
+    String? dateTo,
+    String? search,
+  }) async {
+    final cacheKey = 'bookings_${[dateFrom, dateTo, status, search].join('_')}';
+    final cached = await _cache.get(cacheKey);
+    if (cached is Map<String, dynamic>) return cached;
+    if (cached is Map) {
+      return cached.map((k, v) => MapEntry(k.toString(), v));
+    }
+    return null;
+  }
+
   /// Get bookings list with filters (offline-first)
   Future<Map<String, dynamic>> getBookings({
     String? status,
@@ -130,6 +150,7 @@ extension OrderServiceBookingApis on OrderService {
     int page = 1,
     int perPage = 20,
     String platform = 'dashboard',
+    bool skipGlobalAuth = false,
   }) async {
     // OFFLINE MODE
     if (_connectivity.isOffline) {
@@ -161,7 +182,8 @@ extension OrderServiceBookingApis on OrderService {
     final cacheKey = 'bookings_${[dateFrom, dateTo, status, search].join('_')}';
 
     try {
-      final response = await _client.get(endpoint);
+      final response =
+          await _client.get(endpoint, skipGlobalAuth: skipGlobalAuth);
       final normalized = _rememberResponse('get_all_orders', response);
       if (response != null && page == 1) {
         // Cache the result for resilience
@@ -602,6 +624,21 @@ extension OrderServiceBookingApis on OrderService {
       );
       return _rememberResponse('calculate_invoice', response);
     }
+  }
+
+  /// Mirror of [getCachedBookings] for invoices: returns the most recent
+  /// cached page-1 response so the salon UI can paint instantly while a
+  /// fresh fetch runs in the background.
+  Future<Map<String, dynamic>?> getCachedInvoices({
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final cached = await _cache.get('invoices_${dateFrom}_$dateTo');
+    if (cached is Map<String, dynamic>) return cached;
+    if (cached is Map) {
+      return cached.map((k, v) => MapEntry(k.toString(), v));
+    }
+    return null;
   }
 
   /// Get invoices list

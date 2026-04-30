@@ -5,6 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'models.dart';
 import 'display_language_service.dart';
+import '../services/api/api_constants.dart';
+import '../services/app_themes.dart';
 
 class CustomerFacingScreen extends StatelessWidget {
   const CustomerFacingScreen({
@@ -118,7 +120,7 @@ class CustomerFacingScreen extends StatelessWidget {
       child: PopScope(
         canPop: false,
         child: Scaffold(
-          backgroundColor: const Color(0xFFF8FAFC),
+          backgroundColor: context.appBg,
           body: Stack(
             children: [
               Positioned(
@@ -422,7 +424,7 @@ class CustomerFacingScreen extends StatelessWidget {
                 textBaseline: TextBaseline.alphabetic,
                 children: [
                   Text(
-                    _afterDiscountTotal.toStringAsFixed(2),
+                    _afterDiscountTotal.toStringAsFixed(ApiConstants.digitsNumber),
                     style: TextStyle(fontFamily: 'Cairo',
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
@@ -548,7 +550,9 @@ class CustomerFacingScreen extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      item.quantity.toString(),
+                      item.quantity % 1 == 0
+                          ? item.quantity.toStringAsFixed(0)
+                          : item.quantity.toString(),
                       style: TextStyle(fontFamily: 'Cairo',
                         color: Color(0xFFF27D26),
                         fontWeight: FontWeight.bold,
@@ -641,7 +645,7 @@ class CustomerFacingScreen extends StatelessWidget {
                               // عرض السعر الأصلي شامل الضريبة مشطوب
                               if (item.originalPrice > rawTotal)
                                 Text(
-                                  (item.originalPrice + (item.originalPrice * _resolvedTaxRate)).toStringAsFixed(2),
+                                  (item.originalPrice + (item.originalPrice * _resolvedTaxRate)).toStringAsFixed(ApiConstants.digitsNumber),
                                   style: TextStyle(
                                     fontFamily: 'Cairo',
                                     fontSize: 12,
@@ -691,7 +695,7 @@ class CustomerFacingScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  effectiveFinalTotal.toStringAsFixed(2),
+                  effectiveFinalTotal.toStringAsFixed(ApiConstants.digitsNumber),
                   style: TextStyle(
                     fontFamily: 'Cairo',
                     fontWeight: FontWeight.bold,
@@ -899,7 +903,7 @@ class CustomerFacingScreen extends StatelessWidget {
       'currency_suffix',
       languageCode: lang,
       args: {
-        'value': value.toStringAsFixed(2),
+        'value': value.toStringAsFixed(ApiConstants.digitsNumber),
         'currency': _resolvedCurrency(lang),
       },
     );
@@ -907,6 +911,11 @@ class CustomerFacingScreen extends StatelessWidget {
 
   bool get _showPromo => promoCode?.trim().isNotEmpty == true;
 
+  // Welcome-screen fallback only — when the cashier pushes a cart, the
+  // real `taxRate` arrives via display_app_service's `pushToDisplay`
+  // (which sources `ApiConstants.taxRate` and `taxPercentage` from the
+  // active branch). The 0.15 here just keeps the label readable on the
+  // very first welcome frame before a cart push happens.
   double get _resolvedTaxRate => (taxRate ?? 0.15).clamp(0.0, 1.0).toDouble();
 
   String get _taxRateLabel {
@@ -914,7 +923,7 @@ class CustomerFacingScreen extends StatelessWidget {
     if ((percent - percent.roundToDouble()).abs() < 0.001) {
       return percent.round().toString();
     }
-    return percent.toStringAsFixed(2);
+    return percent.toStringAsFixed(ApiConstants.digitsNumber);
   }
 
   // ✅ الإجمالي الفرعي الأصلي قبل الخصم (للعرض)

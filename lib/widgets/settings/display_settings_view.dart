@@ -147,7 +147,9 @@ class _DisplaySettingsViewState extends State<DisplaySettingsView> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF0FDF4),
+                    color: context.isDark
+                        ? const Color(0xFF22C55E).withValues(alpha: 0.15)
+                        : const Color(0xFFF0FDF4),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(

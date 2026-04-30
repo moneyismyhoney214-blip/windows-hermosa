@@ -1,6 +1,7 @@
 import 'package:intl/intl.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import 'package:hermosa_pos/services/printer_language_settings_service.dart';
+import 'package:hermosa_pos/services/api/api_constants.dart';
 
 class DailyClosingReportLine {
   final String label;
@@ -150,11 +151,16 @@ class DailyClosingReportHtmlTemplate {
 
   static String _buildTable(
       DateTime dateFrom, DateTime dateTo, List<DailyClosingReportLine> rows) {
+    // Currency comes from the active branch's `taxObject` (set at login
+    // and refreshed via `getTax`). Falls back to "SAR" only if the
+    // global hasn't been hydrated yet.
+    final currencyLabel = _escapeHtml(
+        ApiConstants.currency.trim().isEmpty ? 'SAR' : ApiConstants.currency);
     final String rowsHtml = rows.map((line) => '''
       <tr>
         <td class="label-col">${_escapeHtml(line.label)}</td>
         <td class="val-col">${_numberFormatter.format(line.amount)}</td>
-        <td class="currency-col">SAR</td>
+        <td class="currency-col">$currencyLabel</td>
       </tr>
     ''').join('\n');
 
@@ -240,7 +246,7 @@ class DailyClosingReportHtmlTemplate {
     <div class="footer-text">
       $thanks<br>
       <strong>$tagline</strong><br>
-      <span dir="ltr">https://portal.hermosaapp.com</span>
+      <span dir="ltr">https://api.hermosaapp.com</span>
     </div>
     ''';
   }

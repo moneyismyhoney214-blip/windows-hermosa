@@ -107,7 +107,7 @@ class _RefundedMealsDialog extends StatelessWidget {
                     const Divider(height: 20, color: Color(0xFFE2E8F0)),
                 itemBuilder: (context, index) {
                   final meal = refundedMeals[index];
-                  return _buildMealRow(meal);
+                  return _buildMealRow(context, meal);
                 },
               ),
             ),
@@ -136,7 +136,7 @@ class _RefundedMealsDialog extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '${totalRefunded.toStringAsFixed(2)} ${ApiConstants.currency}',
+                        '${totalRefunded.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -173,7 +173,7 @@ class _RefundedMealsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildMealRow(Map<String, dynamic> meal) {
+  Widget _buildMealRow(BuildContext context, Map<String, dynamic> meal) {
     final name = meal['meal_name']?.toString() ??
         meal['name']?.toString() ??
         _tr('صنف غير معروف', 'Unknown item');
@@ -209,16 +209,16 @@ class _RefundedMealsDialog extends StatelessWidget {
             Expanded(
               child: Text(
                 name,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF1E293B),
+                  color: context.appText,
                   decoration: TextDecoration.lineThrough,
                 ),
               ),
             ),
             Text(
-              '${total.toStringAsFixed(2)} ${ApiConstants.currency}',
+              '${total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
               style: const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
@@ -264,9 +264,9 @@ class _RefundedMealsDialog extends StatelessWidget {
             child: Text(
               [
                 if (discount > 0)
-                  '${_tr('خصم', 'Discount')}: ${discount.toStringAsFixed(2)}',
+                  '${_tr('خصم', 'Discount')}: ${discount.toStringAsFixed(ApiConstants.digitsNumber)}',
                 if (tax > 0)
-                  '${_tr('ضريبة', 'Tax')}: ${tax.toStringAsFixed(2)}',
+                  '${_tr('ضريبة', 'Tax')}: ${tax.toStringAsFixed(ApiConstants.digitsNumber)}',
               ].join(' | '),
               style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
             ),

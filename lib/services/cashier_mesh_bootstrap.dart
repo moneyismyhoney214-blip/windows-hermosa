@@ -10,6 +10,8 @@ import 'category_printer_route_registry.dart';
 import 'display_app_service.dart';
 import 'kitchen_printer_route_registry.dart';
 import 'printer_role_registry.dart';
+import 'waitlist_mesh_bridge.dart';
+import 'waitlist_service.dart';
 
 typedef DevicesProvider = List<DeviceConfig> Function();
 
@@ -78,6 +80,12 @@ class CashierMeshBootstrap {
 
     _started = true;
 
+    // Wire the waitlist service to the mesh. Safe to call on every
+    // start — attach() is a no-op if the same controller is already
+    // bound, and it tears down old subs before re-wiring.
+    unawaited(waitlistService.initialize());
+    waitlistMeshBridge.attach(controller);
+
     // Push a first snapshot so a cashier that came up AFTER waiters have
     // been running doesn't leave them stuck on stale config.
     unawaited(broadcastKitchenPrintersConfig());
@@ -100,6 +108,7 @@ class CashierMeshBootstrap {
       } catch (_) {}
       _displayListener = null;
     }
+    waitlistMeshBridge.detach();
     try {
       await controller.stop();
     } catch (_) {}

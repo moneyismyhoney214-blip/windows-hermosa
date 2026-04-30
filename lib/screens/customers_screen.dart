@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models/customer.dart';
 import '../services/api/customer_service.dart';
+import '../services/api/country_code_service.dart';
 import '../locator.dart';
 import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/whatsapp_service.dart';
+import '../widgets/country_code_picker.dart';
 
 class CustomersScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -166,7 +169,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
         hintText: _t('customers_search_hint'),
         prefixIcon: const Icon(LucideIcons.search, size: 20),
         filled: true,
-        fillColor: const Color(0xFFF1F5F9),
+        fillColor: context.appSurfaceAlt,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -431,6 +434,7 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
 
   late TextEditingController _nameController;
   late TextEditingController _mobileController;
+  late CountryOption _country;
 
   bool _isLoading = false;
 
@@ -443,6 +447,20 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.customer?.name);
     _mobileController = TextEditingController(text: widget.customer?.mobile);
+
+    // Resolve initial country: if the existing mobile carries a known
+    // dial prefix, match it; otherwise fall back to the active branch.
+    _country = countryCodeService.defaultForBranch();
+    final existingDigits =
+        widget.customer?.mobile?.replaceAll(RegExp(r'\D'), '') ?? '';
+    if (existingDigits.isNotEmpty) {
+      for (final option in countryCodeService.options) {
+        if (existingDigits.startsWith(option.digits)) {
+          _country = option;
+          break;
+        }
+      }
+    }
   }
 
   @override
@@ -458,10 +476,16 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
     setState(() => _isLoading = true);
 
     final existingType = (widget.customer?.type ?? '').trim();
+    final normalizedMobile = whatsAppService.normalizePhone(
+      _mobileController.text.trim(),
+      countryCodeOverride: _country.areaCode,
+    );
     final data = <String, String>{
       'name': _nameController.text,
-      'mobile': _mobileController.text,
-      'country_id': '1', // Default
+      'mobile': normalizedMobile.isEmpty
+          ? _mobileController.text.trim()
+          : normalizedMobile,
+      'country_id': '${_country.value}',
       'city_id': '1', // Default
       'type': existingType.isNotEmpty ? existingType : 'individual',
     };
@@ -541,15 +565,54 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
                       v?.isEmpty == true ? _t('customer_name_required') : null,
                 ),
                 const SizedBox(height: 16),
-                _buildTextField(
-                  controller: _mobileController,
-                  label: _t('phone_number'),
-                  hint: '05xxxxxxxx',
-                  keyboardType: TextInputType.phone,
-                  validator: (v) {
-                    if (v?.isEmpty == true) return _t('phone_required');
-                    return null;
-                  },
+                Text(
+                  _t('phone_number'),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CountryCodePicker(
+                      initial: _country,
+                      onChanged: (c) => setState(() => _country = c),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _mobileController,
+                        validator: (v) {
+                          if (v?.isEmpty == true) return _t('phone_required');
+                          return null;
+                        },
+                        keyboardType: TextInputType.phone,
+                        decoration: InputDecoration(
+                          hintText: '5xxxxxxxx',
+                          filled: true,
+                          fillColor: context.appSurfaceAlt,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide:
+                                const BorderSide(color: Color(0xFFE2E8F0)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide:
+                                const BorderSide(color: Color(0xFFE2E8F0)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide:
+                                const BorderSide(color: Color(0xFFF58220)),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 32),
                 isCompact
@@ -653,7 +716,7 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
           decoration: InputDecoration(
             hintText: hint,
             filled: true,
-            fillColor: const Color(0xFFF8FAFC),
+            fillColor: context.appSurfaceAlt,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: const BorderSide(color: Color(0xFFE2E8F0)),

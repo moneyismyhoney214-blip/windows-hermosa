@@ -1,7 +1,7 @@
 name: hermosa_pos
 description: A modern POS system converted from React.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.2+22
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -37,7 +37,11 @@ dependencies:
   dart_jsonwebtoken: ^3.2.0
   permission_handler: ^11.3.1
   uuid: ^4.5.1
-  geolocator: ^12.0.0
+  # geolocator was previously listed but is not referenced anywhere in
+  # lib/. Linking it forces iOS to ship CoreLocation symbols and demand
+  # NSLocationWhenInUseUsageDescription, which Apple flags during review
+  # for unused capabilities. Re-add here only if a feature genuinely needs
+  # device location.
   audioplayers: ^6.0.0
   url_launcher: ^6.3.1
   webview_flutter: ^4.13.0

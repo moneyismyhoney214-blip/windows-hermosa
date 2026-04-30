@@ -79,7 +79,7 @@ class InvoiceHtmlTemplate {
       if (item.addons != null && item.addons!.isNotEmpty) {
         for (var addon in item.addons!) {
           addonsHtml +=
-              '<div class="flex justify-between text-[9px] pl-2" style="font-size: 10px; color: #000000;"><span>${addon.nameAr}</span><span>${addon.price.toStringAsFixed(2)}</span></div>';
+              '<div class="flex justify-between text-[9px] pl-2" style="font-size: 10px; color: #000000;"><span>${addon.nameAr}</span><span>${addon.price.toStringAsFixed(ApiConstants.digitsNumber)}</span></div>';
         }
       }
 
@@ -89,13 +89,13 @@ class InvoiceHtmlTemplate {
             <div class="w-full">
               <div class="flex justify-between">
                 <p class="font-bold">${item.nameAr}</p>
-                <p>${item.unitPrice.toStringAsFixed(2)}</p>
+                <p>${item.unitPrice.toStringAsFixed(ApiConstants.digitsNumber)}</p>
               </div>
               $addonsHtml
             </div>
           </td>
-          <td class="text-center py-1 align-top">${item.quantity}</td>
-          <td class="text-left py-1 align-top font-mono">${item.total.toStringAsFixed(2)}</td>
+          <td class="text-center py-1 align-top">${item.quantity % 1 == 0 ? item.quantity.toStringAsFixed(0) : item.quantity.toString()}</td>
+          <td class="text-left py-1 align-top font-mono">${item.total.toStringAsFixed(ApiConstants.digitsNumber)}</td>
         </tr>
       ''';
     }
@@ -295,39 +295,50 @@ class InvoiceHtmlTemplate {
           </table>
         </div>
         <div class="invoice-details">
-          <div class="invoice-details-item">
+          ${ApiConstants.isTaxActive ? '''<div class="invoice-details-item">
             <div class="invoice-item-title">
               <p>${_m(p, ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total antes de Impuesto', tr: 'Vergi Öncesi Toplam')}</p>
               <p class="label-en">${_s(p, s, a, ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total antes de Impuesto', tr: 'Vergi Öncesi Toplam')}</p>
             </div>
             <div class="flex items-center text-left">
-              <p class="price">${data.totalExclVat.toStringAsFixed(2)}</p>
+              <p class="price">${data.totalExclVat.toStringAsFixed(ApiConstants.digitsNumber)}</p>
               <div class="currency-area">
                 <p>${ApiConstants.currency}</p>
               </div>
             </div>
-          </div>
-          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>${_m(p, ar: 'قيمة الخصم', en: 'Discount Amount', hi: 'छूट राशि', ur: 'ڈسکاؤنٹ رقم', es: 'Monto de Descuento', tr: 'İndirim Tutarı')}</p><p class="label-en">${_s(p, s, a, ar: 'قيمة الخصم', en: 'Discount Amount', hi: 'छूट राशि', ur: 'ڈسکاؤنٹ رقم', es: 'Monto de Descuento', tr: 'İndirim Tutarı')}</p></div><div class="flex items-center text-left"><p class="price">${discountAmount.toStringAsFixed(2)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
-          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>${_m(p, ar: 'الاجمالي بعد الخصم', en: 'Total After Discount', hi: 'छूट के बाद कुल', ur: 'ڈسکاؤنٹ کے بعد کل', es: 'Total después del Descuento', tr: 'İndirim Sonrası Toplam')}</p><p class="label-en">${_s(p, s, a, ar: 'الاجمالي بعد الخصم', en: 'Total After Discount', hi: 'छूट के बाद कुल', ur: 'ڈسکاؤنٹ کے بعد کل', es: 'Total después del Descuento', tr: 'İndirim Sonrası Toplam')}</p></div><div class="flex items-center text-left"><p class="price">${totalAfterDiscount.toStringAsFixed(2)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
-          <div class="invoice-details-item">
+          </div>''' : '''<div class="invoice-details-item">
             <div class="invoice-item-title">
-              <p>${_m(p, ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı')}</p>
-              <p class="label-en">${_s(p, s, a, ar: 'قيمة الضريبة', en: 'Tax Amount', hi: 'कर राशि', ur: 'ٹیکس رقم', es: 'Monto del Impuesto', tr: 'Vergi Tutarı')}</p>
+              <p>${_m(p, ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam')}</p>
+              <p class="label-en">${_s(p, s, a, ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam')}</p>
             </div>
             <div class="flex items-center text-left">
-              <p class="price">${data.vatAmount.toStringAsFixed(2)}</p>
+              <p class="price">${data.totalExclVat.toStringAsFixed(ApiConstants.digitsNumber)}</p>
               <div class="currency-area">
                 <p>${ApiConstants.currency}</p>
               </div>
             </div>
-          </div>
+          </div>'''}
+          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>${_m(p, ar: 'قيمة الخصم', en: 'Discount Amount', hi: 'छूट राशि', ur: 'ڈسکاؤنٹ رقم', es: 'Monto de Descuento', tr: 'İndirim Tutarı')}</p><p class="label-en">${_s(p, s, a, ar: 'قيمة الخصم', en: 'Discount Amount', hi: 'छूट राशि', ur: 'ڈسکاؤنٹ رقم', es: 'Monto de Descuento', tr: 'İndirim Tutarı')}</p></div><div class="flex items-center text-left"><p class="price">${discountAmount.toStringAsFixed(ApiConstants.digitsNumber)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
+          ${discountAmount > 0 ? '<div class="invoice-details-item"><div class="invoice-item-title"><p>${_m(p, ar: 'الاجمالي بعد الخصم', en: 'Total After Discount', hi: 'छूट के बाद कुल', ur: 'ڈسکاؤنٹ کے بعد کل', es: 'Total después del Descuento', tr: 'İndirim Sonrası Toplam')}</p><p class="label-en">${_s(p, s, a, ar: 'الاجمالي بعد الخصم', en: 'Total After Discount', hi: 'छूट के बाद कुल', ur: 'ڈسکاؤنٹ کے بعد کل', es: 'Total después del Descuento', tr: 'İndirim Sonrası Toplam')}</p></div><div class="flex items-center text-left"><p class="price">${totalAfterDiscount.toStringAsFixed(ApiConstants.digitsNumber)}</p><div class="currency-area"><p>${ApiConstants.currency}</p></div></div></div>' : ''}
+          ${ApiConstants.isTaxActive ? '''<div class="invoice-details-item">
+            <div class="invoice-item-title">
+              <p>${_m(p, ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)')}</p>
+              <p class="label-en">${_s(p, s, a, ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)')}</p>
+            </div>
+            <div class="flex items-center text-left">
+              <p class="price">${data.vatAmount.toStringAsFixed(ApiConstants.digitsNumber)}</p>
+              <div class="currency-area">
+                <p>${ApiConstants.currency}</p>
+              </div>
+            </div>
+          </div>''' : ''}
           <div class="invoice-details-item" style="border-top: 1px solid #000; margin-top: 4px; padding-top: 8px;">
             <div class="invoice-item-title">
-              <p class="font-bold" style="font-size: 16px;">${_m(p, ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total con Impuesto', tr: 'Vergi Dahil Toplam')}</p>
-              <p class="label-en">${_s(p, s, a, ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total con Impuesto', tr: 'Vergi Dahil Toplam')}</p>
+              <p class="font-bold" style="font-size: 16px;">${ApiConstants.isTaxActive ? _m(p, ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total con Impuesto', tr: 'Vergi Dahil Toplam') : _m(p, ar: 'الإجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam')}</p>
+              <p class="label-en">${ApiConstants.isTaxActive ? _s(p, s, a, ar: 'الاجمالي بعد الضريبة', en: 'Total After Tax', hi: 'कर के बाद कुल', ur: 'ٹیکس کے بعد کل', es: 'Total con Impuesto', tr: 'Vergi Dahil Toplam') : _s(p, s, a, ar: 'الإجمالي', en: 'Total', hi: 'कुल', ur: 'کل', es: 'Total', tr: 'Toplam')}</p>
             </div>
             <div class="flex items-center text-left">
-              <p class="price" style="font-size: 18px;">${data.totalInclVat.toStringAsFixed(2)}</p>
+              <p class="price" style="font-size: 18px;">${data.totalInclVat.toStringAsFixed(ApiConstants.digitsNumber)}</p>
               <div class="currency-area">
                 <p>${ApiConstants.currency}</p>
               </div>

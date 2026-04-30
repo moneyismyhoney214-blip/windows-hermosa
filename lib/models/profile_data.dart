@@ -143,7 +143,7 @@ class ProfileData {
 
   String getAvatarUrl() {
     if (avatar == null || avatar!.isEmpty) return '';
-    return 'https://portal.hermosaapp.com$avatar';
+    return 'https://api.hermosaapp.com$avatar';
   }
 }
 

@@ -9,6 +9,12 @@ final Map<String, String> _enTranslations = {
     'password': 'Password',
     'remember_me': 'Remember me',
     'forgot_password': 'Forgot password?',
+    'privacy_policy': 'Privacy Policy',
+    'terms_conditions': 'Terms & Conditions',
+    'open_in_browser': 'Open in browser',
+    'country_code_picker_title': 'Country code',
+    'country_code_picker_search': 'Search by country or code',
+    'country_code_picker_empty': 'No results',
     'submit': 'Submit',
     'cancel': 'Cancel',
     'save': 'Save',
@@ -347,6 +353,7 @@ final Map<String, String> _enTranslations = {
     'test': 'Test',
     'print_test': 'Print Test',
     'sections': 'Sections',
+    'uncategorized_section': 'General',
     'add_printer_title': 'Add Printer',
     'printer_name': 'Name',
     'ip_label': 'IP',
@@ -652,4 +659,100 @@ final Map<String, String> _enTranslations = {
     'waiter_bill_printing_receipt': 'Preparing receipt…',
     'waiter_call_offline_warning':
         '{name} is offline. They may not get the call right away. Send anyway?',
+
+    // ---- Waitlist ----
+    'waitlist_title': 'Waitlist',
+    'waitlist_subtitle_count': '{count} parties waiting',
+    'waitlist_tooltip': 'Waitlist',
+    'waitlist_empty_title': 'No parties waiting',
+    'waitlist_empty_body':
+        'Tap "Add to waitlist" to queue the first walk-in customer.',
+    'waitlist_add_cta': 'Add to waitlist',
+    'waitlist_add_title': 'Add to waitlist',
+    'waitlist_edit_title': 'Edit party',
+    'waitlist_add_submit': 'Add',
+    'waitlist_field_name': 'Customer name',
+    'waitlist_field_name_hint': 'e.g. Ahmed',
+    'waitlist_field_phone': 'Phone number',
+    'waitlist_field_party_size': 'Party size',
+    'waitlist_field_channel': 'Channel',
+    'waitlist_field_notes': 'Notes',
+    'waitlist_field_notes_hint': 'Prefers window, non-smoker, …',
+    'waitlist_validation_name_required': 'Name is required',
+    'waitlist_validation_phone_required': 'Please enter a valid phone',
+    'waitlist_party_of': '{count} guests',
+    'waitlist_waited_minutes': '{count} min ago',
+    'waitlist_status_notified': 'Notified',
+    'waitlist_notified_to': 'Table {table}',
+    'waitlist_assign_cta': 'Assign table & notify',
+    'waitlist_reassign_cta': 'Re-assign',
+    'waitlist_revert_to_waiting': 'Move back to waiting',
+    'waitlist_remove': 'Remove',
+    'waitlist_remove_title': 'Remove from waitlist',
+    'waitlist_remove_body': 'Remove {name} from the waitlist?',
+    'waitlist_remove_confirm': 'Remove',
+    'waitlist_assign_banner_title': 'Pick a free table for {name}',
+    'waitlist_assign_banner_hint':
+        'Party of {count} — only green (available) tables are selectable',
+    'waitlist_assign_table_unavailable':
+        'Table not available. Pick a green (free) one.',
+    'waitlist_notify_title': 'Notify customer',
+    'waitlist_notify_table_label': 'Table',
+    'waitlist_notify_channel_label': 'Send via',
+    'waitlist_notify_preview_label': 'Message preview',
+    'waitlist_notify_send': 'Send message',
+    'waitlist_send_success_api':
+        'Notification sent to {name} for table {table}',
+    'waitlist_send_success_whatsapp':
+        'WhatsApp opened — tap send to notify {name}',
+    'waitlist_send_success_sms':
+        'SMS opened — tap send to notify {name}',
+    'waitlist_send_error_phone': 'Invalid phone number',
+    'waitlist_send_error_whatsapp_missing':
+        'WhatsApp is not installed. Try SMS instead.',
+    'waitlist_send_error_sms': 'Could not open the SMS app',
+    'waitlist_send_error_timeout': 'WAWP request timed out',
+    'waitlist_send_error_generic': 'Could not send the message',
+    'waitlist_table_pill_waiting_for': 'Holding for: {name}',
+
+    // ---- Waitlist history ----
+    'waitlist_history_title': 'Waitlist history',
+    'waitlist_history_tab_seated': 'Seated ({count})',
+    'waitlist_history_tab_cancelled': 'Cancelled ({count})',
+    'waitlist_history_empty_seated': 'No seated parties yet',
+    'waitlist_history_empty_cancelled': 'No cancelled parties yet',
+    'waitlist_history_outcome_seated': 'Seated',
+    'waitlist_history_outcome_cancelled': 'Cancelled',
+    'waitlist_history_wait': 'Waited {count} min',
+    'waitlist_history_today_at': 'Today at {time}',
+    'waitlist_history_clear_title': 'Clear history',
+    'waitlist_history_clear_body':
+        'This will remove all past parties (seated + cancelled). Cannot be undone.',
+    'waitlist_history_clear_confirm': 'Clear all',
+
+    // ---- WhatsApp / WAWP settings ----
+    'whatsapp_settings_title': 'WhatsApp settings (WAWP)',
+    'whatsapp_settings_creds_synced_title': 'WhatsApp link is ready',
+    'whatsapp_settings_creds_synced_body':
+        'Credentials were pulled automatically from the branch settings on the server.',
+    'whatsapp_settings_creds_missing_title': 'WhatsApp credentials not set',
+    'whatsapp_settings_creds_missing_body':
+        'Set instance_id and instance_token from the server dashboard to enable automatic sending.',
+    'whatsapp_settings_country_code': 'Default country code',
+    'whatsapp_settings_template': 'Message template',
+    'whatsapp_settings_template_hint':
+        'Hi {name}, your table {table} is ready…',
+    'whatsapp_settings_template_help':
+        'Use {name} for the customer and {table} for the table number.',
+    'whatsapp_settings_test_title': 'Send a test message',
+    'whatsapp_settings_test_button': 'Test',
+    'whatsapp_settings_test_customer': 'Test customer',
+    'whatsapp_settings_test_empty': 'Enter a phone to test',
+    'whatsapp_settings_test_api_ok': 'Test message sent through WAWP',
+    'whatsapp_settings_test_deeplink_ok':
+        'WhatsApp opened — confirm sending on the device',
+    'whatsapp_settings_test_failed': 'Send failed: {reason}',
+
+    // ---- Shared ----
+    'options': 'Options',
 };

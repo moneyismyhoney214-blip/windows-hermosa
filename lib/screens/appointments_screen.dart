@@ -6,6 +6,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../services/api/base_client.dart';
 import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 
 /// Salon Appointments Calendar Screen.
 ///
@@ -429,10 +430,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                     textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF1E293B),
+                      color: context.appText,
                     ),
                   ),
                 ),
@@ -466,10 +467,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                 ),
                 Text(
                   _tr('مواعيد الصالون', 'Salon Appointments'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF1E293B),
+                    color: context.appText,
                   ),
                 ),
                 _HeaderActionBtn(
@@ -510,7 +511,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: context.appSurfaceAlt,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: const Color(0xFFCBD5E1)),
               ),
@@ -521,10 +522,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                   const SizedBox(width: 8),
                   Text(
                     isToday ? _tr('اليوم ($dateLabel)', 'Today ($dateLabel)') : dateLabel,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF1E293B),
+                      color: context.appText,
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -580,7 +581,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: context.appSurfaceAlt,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: const Color(0xFFCBD5E1)),
               ),
@@ -804,10 +805,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
             Expanded(
               child: Text(
                 time,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF1E293B),
+                  color: context.appText,
                 ),
               ),
             ),
@@ -877,10 +878,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                   Flexible(
                     child: Text(
                       time,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF1E293B),
+                        color: context.appText,
                       ),
                     ),
                   ),
@@ -1115,7 +1116,7 @@ class _SmallIconBtn extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
-            color: const Color(0xFFF1F5F9),
+            color: context.appSurfaceAlt,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: const Color(0xFFCBD5E1)),
           ),
@@ -1194,10 +1195,10 @@ class _InfoRow extends StatelessWidget {
         Flexible(
           child: Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF334155),
+              color: context.appTextMuted,
             ),
             overflow: TextOverflow.ellipsis,
           ),

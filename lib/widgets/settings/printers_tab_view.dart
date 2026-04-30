@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../locator.dart';
 import '../../models.dart';
 import '../../services/app_themes.dart';
+import '../../services/api/api_constants.dart';
 import '../../services/api/device_service.dart';
 import '../../services/api/filter_service.dart';
 import '../../services/cashier_mesh_bootstrap.dart';
@@ -247,7 +249,10 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     if (role == PrinterRole.cashierReceipt || role == PrinterRole.general) {
       return 'كاشير';
     }
-    return 'مطبخ';
+    // Salon branches print per-service turn slips (تذكرة الدور), not kitchen
+    // tickets — surface the role label accordingly. Restaurant wording is
+    // unchanged.
+    return ApiConstants.branchModule == 'salons' ? 'أدوار' : 'مطبخ';
   }
 
   int _normalizePaperWidthMm(dynamic value) {
@@ -1025,7 +1030,11 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                   itemBuilder: (_) {
                     return [
                       PopupMenuItem(value: 'role_cashier', child: Text('كاشير${isCashierRole ? ' ✓' : ''}')),
-                      PopupMenuItem(value: 'role_kitchen', child: Text('مطبخ${isKitchenRole ? ' ✓' : ''}')),
+                      PopupMenuItem(
+                        value: 'role_kitchen',
+                        child: Text(
+                            '${ApiConstants.branchModule == 'salons' ? 'أدوار' : 'مطبخ'}${isKitchenRole ? ' ✓' : ''}'),
+                      ),
                       const PopupMenuDivider(),
                       PopupMenuItem(value: 'paper58', child: Text('58mm${paperWidth == 58 ? ' ✓' : ''}')),
                       PopupMenuItem(value: 'paper80', child: Text('80mm${paperWidth == 80 ? ' ✓' : ''}')),
@@ -1225,7 +1234,9 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                   runSpacing: 8,
                   children: [
                     _buildStatChip(
-                      _t('kds_printers_count'),
+                      ApiConstants.branchModule == 'salons'
+                          ? 'طابعات الأدوار'
+                          : _t('kds_printers_count'),
                       '$kdsPrinterCount',
                       const Color(0xFF7C3AED),
                     ),
@@ -1529,34 +1540,39 @@ class _AddPrinterDialogState extends State<_AddPrinterDialog> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 6),
                       ),
-                      ChoiceChip(
-                        label: const Text('بلوتوث'),
-                        selected:
-                            _connectionType == PrinterConnectionType.bluetooth,
-                        onSelected: (value) {
-                          if (!value) return;
-                          setState(() {
-                            _connectionType = PrinterConnectionType.bluetooth;
-                          });
-                        },
-                        selectedColor: const Color(0xFFF58220),
-                        backgroundColor: Colors.transparent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          side: const BorderSide(
-                              color: Color(0xFFF58220), width: 1.5),
+                      // BT printer support is Android-only — see
+                      // BluetoothPrintBridge.kt. Hide the chip on iOS so
+                      // the user can't add a printer that would never
+                      // print.
+                      if (Platform.isAndroid)
+                        ChoiceChip(
+                          label: const Text('بلوتوث'),
+                          selected:
+                              _connectionType == PrinterConnectionType.bluetooth,
+                          onSelected: (value) {
+                            if (!value) return;
+                            setState(() {
+                              _connectionType = PrinterConnectionType.bluetooth;
+                            });
+                          },
+                          selectedColor: const Color(0xFFF58220),
+                          backgroundColor: Colors.transparent,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: const BorderSide(
+                                color: Color(0xFFF58220), width: 1.5),
+                          ),
+                          showCheckmark: false,
+                          labelStyle: TextStyle(
+                            color: _connectionType ==
+                                    PrinterConnectionType.bluetooth
+                                ? Colors.white
+                                : const Color(0xFFF58220),
+                            fontWeight: FontWeight.w600,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
                         ),
-                        showCheckmark: false,
-                        labelStyle: TextStyle(
-                          color:
-                              _connectionType == PrinterConnectionType.bluetooth
-                                  ? Colors.white
-                                  : const Color(0xFFF58220),
-                          fontWeight: FontWeight.w600,
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                      ),
                     ],
                   ),
                 ),

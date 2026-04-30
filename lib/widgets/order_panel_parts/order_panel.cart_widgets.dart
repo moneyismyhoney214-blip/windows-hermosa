@@ -186,7 +186,7 @@ extension OrderPanelCartWidgets on _OrderPanelState {
     if (hasPromo) {
       final discountText = promoCode!.type == DiscountType.percentage
           ? '${promoCode.discount.toStringAsFixed(0)}%'
-          : '${promoCode.discount.toStringAsFixed(2)} ${ApiConstants.currency}';
+          : '${promoCode.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
       displayText = '${promoCode.code} ($discountText)';
     } else {
       displayText = _tr('كود الكوبون - اضغط للبحث', 'Coupon Code - Tap to search');
@@ -312,12 +312,13 @@ extension OrderPanelCartWidgets on _OrderPanelState {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appCardBg,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFF1F5F9)),
+          border: Border.all(color: context.appBorder),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.01), blurRadius: 4)
+                color: Colors.black.withValues(alpha: context.isDark ? 0.25 : 0.01),
+                blurRadius: 4)
           ],
         ),
         child: Column(
@@ -329,14 +330,14 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                 Expanded(
                   child: Text(
                     item.product.name,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
-                        color: Color(0xFF1E293B)),
+                        color: context.appText),
                   ),
                 ),
                 Text(
-                  item.totalPrice.toStringAsFixed(2),
+                  item.totalPrice.toStringAsFixed(ApiConstants.digitsNumber),
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, color: Color(0xFFF58220)),
                 ),
@@ -361,19 +362,19 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: context.appSurfaceAlt,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: context.appBorder),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         _tr('الإضافات', 'Add-ons'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFF64748B),
+                          color: context.appTextMuted,
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -456,12 +457,13 @@ extension OrderPanelCartWidgets on _OrderPanelState {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appCardBg,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFF1F5F9)),
+          border: Border.all(color: context.appBorder),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.01), blurRadius: 4)
+                color: Colors.black.withValues(alpha: context.isDark ? 0.25 : 0.01),
+                blurRadius: 4)
           ],
         ),
         child: Column(
@@ -474,14 +476,14 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                 Expanded(
                   child: Text(
                     item.product.name,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
-                        color: Color(0xFF1E293B)),
+                        color: context.appText),
                   ),
                 ),
                 Text(
-                  item.totalPrice.toStringAsFixed(2),
+                  item.totalPrice.toStringAsFixed(ApiConstants.digitsNumber),
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, color: Color(0xFFF58220)),
                 ),
@@ -493,15 +495,15 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                 padding: const EdgeInsets.only(top: 6),
                 child: Row(
                   children: [
-                    const Icon(LucideIcons.user,
-                        size: 13, color: Color(0xFF64748B)),
+                    Icon(LucideIcons.user,
+                        size: 13, color: context.appTextMuted),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
                         employeeName,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF64748B),
+                          color: context.appTextMuted,
                           fontWeight: FontWeight.w600,
                         ),
                         overflow: TextOverflow.ellipsis,
@@ -516,14 +518,14 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                 padding: const EdgeInsets.only(top: 4),
                 child: Row(
                   children: [
-                    const Icon(LucideIcons.calendar,
-                        size: 13, color: Color(0xFF64748B)),
+                    Icon(LucideIcons.calendar,
+                        size: 13, color: context.appTextMuted),
                     const SizedBox(width: 4),
                     Text(
                       dateTimeDisplay,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF64748B),
+                        color: context.appTextMuted,
                       ),
                     ),
                   ],

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../services/language_service.dart';
+import '../services/api/api_constants.dart';
 import '../services/api/salon_employee_service.dart';
 import '../locator.dart';
 import '../services/app_themes.dart';
@@ -228,15 +229,14 @@ class _SalonPackageSelectionDialogState
       firstDate: DateTime.now(),
       lastDate: DateTime.now().add(const Duration(days: 365)),
       locale: _useArabicUi ? const Locale('ar') : const Locale('en'),
-      builder: (context, child) {
+      builder: (ctx, child) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: _brand,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black87,
-            ),
+          data: Theme.of(ctx).copyWith(
+            colorScheme: (isDark
+                    ? const ColorScheme.dark()
+                    : const ColorScheme.light())
+                .copyWith(primary: _brand, onPrimary: Colors.white),
           ),
           child: child!,
         );
@@ -253,15 +253,14 @@ class _SalonPackageSelectionDialogState
     final picked = await showTimePicker(
       context: context,
       initialTime: _selectedTimes[index],
-      builder: (context, child) {
+      builder: (ctx, child) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: _brand,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black87,
-            ),
+          data: Theme.of(ctx).copyWith(
+            colorScheme: (isDark
+                    ? const ColorScheme.dark()
+                    : const ColorScheme.light())
+                .copyWith(primary: _brand, onPrimary: Colors.white),
           ),
           child: Directionality(
             textDirection:
@@ -345,7 +344,7 @@ class _SalonPackageSelectionDialogState
             ? (screen.width * 0.85).clamp(700.0, 1200.0)
             : screen.width,
         height: (screen.height * 0.92).clamp(500.0, double.infinity),
-        color: const Color(0xFFF4F4F4),
+        color: context.appBg,
         child: Column(
           children: [
             _header(),
@@ -361,7 +360,7 @@ class _SalonPackageSelectionDialogState
   Widget _header() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      color: Colors.white,
+      color: context.appHeaderBg,
       child: Row(
         children: [
           Container(
@@ -369,7 +368,7 @@ class _SalonPackageSelectionDialogState
             height: 30,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.grey.shade400),
+              border: Border.all(color: context.appBorder),
             ),
             child: const Center(
               child: Icon(LucideIcons.package2, size: 16, color: _brand),
@@ -382,8 +381,8 @@ class _SalonPackageSelectionDialogState
               children: [
                 Text(
                   _packageName,
-                  style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      fontSize: 17, fontWeight: FontWeight.bold, color: context.appText),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -393,7 +392,7 @@ class _SalonPackageSelectionDialogState
                     _infoBadge(
                       icon: LucideIcons.banknote,
                       label:
-                          '${_packagePrice.toStringAsFixed(2)} ${_tr('ر.س', 'SAR')}',
+                          '${_packagePrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                     ),
                     if (_minutesFormat.isNotEmpty) ...[
                       const SizedBox(width: 8),
@@ -419,10 +418,10 @@ class _SalonPackageSelectionDialogState
               width: 34,
               height: 34,
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: context.appSurfaceAlt,
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const Icon(LucideIcons.x, size: 20),
+              child: Icon(LucideIcons.x, size: 20, color: context.appText),
             ),
           ),
         ],
@@ -459,11 +458,11 @@ class _SalonPackageSelectionDialogState
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(LucideIcons.packageOpen, size: 48, color: Colors.grey[300]),
+            Icon(LucideIcons.packageOpen, size: 48, color: context.appTextSubtle),
             const SizedBox(height: 12),
             Text(
               _tr('لا توجد خدمات في هذه الباقة', 'No services in this package'),
-              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+              style: TextStyle(fontSize: 14, color: context.appTextMuted),
             ),
           ],
         ),
@@ -491,10 +490,10 @@ class _SalonPackageSelectionDialogState
       decoration: BoxDecoration(
         color: context.appCardBg,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: context.appBorder),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
+            color: Colors.black.withValues(alpha: context.isDark ? 0.25 : 0.04),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -530,8 +529,8 @@ class _SalonPackageSelectionDialogState
                   children: [
                     Text(
                       serviceName,
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w600, color: context.appText),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -540,23 +539,23 @@ class _SalonPackageSelectionDialogState
                       children: [
                         if (minutes > 0) ...[
                           Icon(LucideIcons.clock,
-                              size: 13, color: Colors.grey[500]),
+                              size: 13, color: context.appTextMuted),
                           const SizedBox(width: 4),
                           Text(
                             '$minutes ${_tr('دقيقة', 'min')}',
                             style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600]),
+                                fontSize: 12, color: context.appTextMuted),
                           ),
                           const SizedBox(width: 12),
                         ],
                         if (servicePrice > 0) ...[
                           Icon(LucideIcons.banknote,
-                              size: 13, color: Colors.grey[500]),
+                              size: 13, color: context.appTextMuted),
                           const SizedBox(width: 4),
                           Text(
-                            '${servicePrice.toStringAsFixed(2)} ${_tr('ر.س', 'SAR')}',
+                            '${servicePrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                             style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600]),
+                                fontSize: 12, color: context.appTextMuted),
                           ),
                         ],
                       ],
@@ -567,40 +566,41 @@ class _SalonPackageSelectionDialogState
             ],
           ),
           const SizedBox(height: 12),
-          const Divider(height: 1),
+          Divider(height: 1, color: context.appDivider),
           const SizedBox(height: 12),
 
           // Employee dropdown
           Text(
             _tr('الموظف', 'Employee'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF555555)),
+                color: context.appTextMuted),
           ),
           const SizedBox(height: 6),
           Container(
             decoration: BoxDecoration(
-              color: const Color(0xFFFAFAFA),
+              color: context.appSurfaceAlt,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey[300]!),
+              border: Border.all(color: context.appBorder),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<Map<String, dynamic>>(
                 value: _selectedEmployees[index],
                 isExpanded: true,
+                dropdownColor: context.appSurface,
                 hint: Text(
                   _tr('اختر الموظف', 'Select employee'),
-                  style: TextStyle(color: Colors.grey[400], fontSize: 14),
+                  style: TextStyle(color: context.appTextSubtle, fontSize: 14),
                 ),
-                icon: const Icon(LucideIcons.chevronDown, size: 18),
+                icon: Icon(LucideIcons.chevronDown, size: 18, color: context.appTextMuted),
                 items: employees.map((emp) {
                   return DropdownMenuItem<Map<String, dynamic>>(
                     value: emp,
                     child: Text(
                       emp['name']?.toString() ?? '',
-                      style: const TextStyle(fontSize: 14),
+                      style: TextStyle(fontSize: 14, color: context.appText),
                     ),
                   );
                 }).toList(),
@@ -616,10 +616,10 @@ class _SalonPackageSelectionDialogState
           // Date picker
           Text(
             _tr('التاريخ', 'Date'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF555555)),
+                color: context.appTextMuted),
           ),
           const SizedBox(height: 6),
           _pickerTile(
@@ -632,10 +632,10 @@ class _SalonPackageSelectionDialogState
           // Time: available slots dropdown or manual picker
           Text(
             _tr('الوقت المتاح', 'Available Time'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF555555)),
+                color: context.appTextMuted),
           ),
           const SizedBox(height: 6),
           _buildTimeSelector(index),
@@ -649,9 +649,9 @@ class _SalonPackageSelectionDialogState
       return Container(
         height: 44,
         decoration: BoxDecoration(
-          color: const Color(0xFFFAFAFA),
+          color: context.appSurfaceAlt,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey[300]!),
+          border: Border.all(color: context.appBorder),
         ),
         child: const Center(
           child: SizedBox(width: 18, height: 18,
@@ -665,21 +665,22 @@ class _SalonPackageSelectionDialogState
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFFAFAFA),
+          color: context.appSurfaceAlt,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey[300]!),
+          border: Border.all(color: context.appBorder),
         ),
         child: DropdownButtonHideUnderline(
           child: DropdownButton<String>(
             value: _selectedTimeSlots[index],
             isExpanded: true,
+            dropdownColor: context.appSurface,
             icon: const Icon(LucideIcons.clock, size: 18, color: _brand),
             hint: Text(_tr('اختر الوقت', 'Select time'),
-              style: TextStyle(color: Colors.grey[400], fontSize: 14)),
+              style: TextStyle(color: context.appTextSubtle, fontSize: 14)),
             items: _availableTimes[index].map((t) {
               final val = t['value']?.toString() ?? '';
               final lbl = t['label']?.toString() ?? val;
-              return DropdownMenuItem<String>(value: val, child: Text(lbl, style: const TextStyle(fontSize: 14)));
+              return DropdownMenuItem<String>(value: val, child: Text(lbl, style: TextStyle(fontSize: 14, color: context.appText)));
             }).toList(),
             onChanged: (val) {
               setState(() {
@@ -714,9 +715,9 @@ class _SalonPackageSelectionDialogState
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFFAFAFA),
+          color: context.appSurfaceAlt,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey[300]!),
+          border: Border.all(color: context.appBorder),
         ),
         child: Row(
           children: [
@@ -725,11 +726,10 @@ class _SalonPackageSelectionDialogState
             Expanded(
               child: Text(
                 label,
-                style:
-                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: context.appText),
               ),
             ),
-            Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey[400]),
+            Icon(LucideIcons.chevronDown, size: 14, color: context.appTextSubtle),
           ],
         ),
       ),
@@ -740,7 +740,7 @@ class _SalonPackageSelectionDialogState
   Widget _footer() {
     return Container(
       width: double.infinity,
-      color: Colors.white,
+      color: context.appHeaderBg,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -753,11 +753,11 @@ class _SalonPackageSelectionDialogState
               children: [
                 Text(
                   _tr('سعر الباقة', 'Package Price'),
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600, color: context.appText),
                 ),
                 Text(
-                  '${_packagePrice.toStringAsFixed(2)} ${_tr('ر.س', 'SAR')}',
+                  '${_packagePrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                   style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,

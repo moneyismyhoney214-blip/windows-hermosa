@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../locator.dart';
 import '../../models/booking_invoice.dart';
+import '../../models/waitlist_mesh_event.dart';
 import '../../services/api/branch_service.dart';
 import '../../services/api/order_service.dart';
 import '../models/network_message.dart';
@@ -131,6 +132,27 @@ class WaiterController extends ChangeNotifier {
   /// sees it. The owner of `oldTableId` also performs the cart+registry
   /// shuffle; other peers just log it for UI/audit.
   Stream<TableMigrateEvent> get onTableMigrate => _tableMigrateStream.stream;
+
+  final StreamController<WaitlistMeshEventEnvelope> _waitlistEventStream =
+      StreamController<WaitlistMeshEventEnvelope>.broadcast();
+
+  /// Fires for every waitlist delta (added/updated/removed/notified/
+  /// seated/cancelled). Includes self-echoes via the envelope's
+  /// [WaitlistMeshEventEnvelope.fromSelf] flag so the local service can
+  /// skip its own broadcasts and remote peers can apply deltas without
+  /// re-broadcasting.
+  Stream<WaitlistMeshEventEnvelope> get onWaitlistEvent =>
+      _waitlistEventStream.stream;
+
+  final StreamController<WaitlistMeshSnapshot> _waitlistSnapshotStream =
+      StreamController<WaitlistMeshSnapshot>.broadcast();
+
+  /// Full-queue snapshots received from a peer catch-up (typically
+  /// fired when a new device joins the mesh). The local service
+  /// reconciles its in-memory list with the received snapshot on a
+  /// last-write-wins basis.
+  Stream<WaitlistMeshSnapshot> get onWaitlistSnapshot =>
+      _waitlistSnapshotStream.stream;
 
   bool _running = false;
   bool get isRunning => _running;
@@ -303,6 +325,7 @@ class WaiterController extends ChangeNotifier {
       // the fetch is still in flight.
       try {
         unawaited(getIt<BranchService>().fetchAndCacheBranchReceiptInfo());
+        unawaited(getIt<BranchService>().refreshTaxConfig());
       } catch (e) {
         debugPrint('⚠️ waiter: fetchAndCacheBranchReceiptInfo failed: $e');
       }
@@ -370,6 +393,10 @@ class WaiterController extends ChangeNotifier {
         final resp = await orderService.getBookings(
           page: page,
           perPage: perPage,
+          // Best-effort background reconcile — a 401 here (e.g. WAITER
+          // role isn't allowed to list bookings on this branch) must not
+          // tear down the freshly-established session.
+          skipGlobalAuth: true,
         );
         final data = resp['data'];
         if (data is! List) break;
@@ -599,6 +626,50 @@ class WaiterController extends ChangeNotifier {
       branchId: self.branchId,
       data: event.toJson(),
     ));
+  }
+
+  /// Broadcast a waitlist delta to every connected peer. The local
+  /// [WaitlistService] calls this via the mesh bridge for every mutation
+  /// so both the cashier and every waiter see the same queue.
+  ///
+  /// A self-echo is emitted on [onWaitlistEvent] so any other local
+  /// listener (e.g. a badge counter that watches the stream rather than
+  /// the service directly) gets a uniform signal regardless of origin.
+  void broadcastWaitlistEvent(WaitlistMeshEvent event) {
+    _waitlistEventStream.add(
+      WaitlistMeshEventEnvelope(event: event, fromSelf: true),
+    );
+    final self = session.self;
+    if (self == null) return;
+    _net?.broadcast(WireMessage(
+      type: WireMessageType.waitlistEvent,
+      senderId: self.id,
+      senderName: self.name,
+      branchId: self.branchId,
+      data: event.toJson(),
+    ));
+  }
+
+  /// Send a full-queue snapshot to a specific peer. Used as HELLO
+  /// catch-up so a freshly joined device starts with the same waitlist
+  /// the rest of the LAN already has — without waiting for the next
+  /// mutation.
+  void pushWaitlistSnapshotTo(
+    String peerId,
+    WaitlistMeshSnapshot snapshot,
+  ) {
+    final self = session.self;
+    if (self == null) return;
+    _net?.sendTo(
+      peerId,
+      WireMessage(
+        type: WireMessageType.waitlistSnapshot,
+        senderId: self.id,
+        senderName: self.name,
+        branchId: self.branchId,
+        data: snapshot.toJson(),
+      ),
+    );
   }
 
   /// Fan out a fresh kitchen-printer snapshot to every connected waiter.
@@ -1223,6 +1294,22 @@ class WaiterController extends ChangeNotifier {
           if (ownerId != null && ownerId == self.id) {
             _applyMigrateAsOwner(event);
           }
+        } catch (_) {}
+        break;
+
+      case WireMessageType.waitlistEvent:
+        try {
+          final event = WaitlistMeshEvent.fromJson(msg.data);
+          _waitlistEventStream.add(
+            WaitlistMeshEventEnvelope(event: event, fromSelf: false),
+          );
+        } catch (_) {}
+        break;
+
+      case WireMessageType.waitlistSnapshot:
+        try {
+          final snapshot = WaitlistMeshSnapshot.fromJson(msg.data);
+          _waitlistSnapshotStream.add(snapshot);
         } catch (_) {}
         break;
 

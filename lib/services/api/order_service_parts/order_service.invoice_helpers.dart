@@ -331,9 +331,12 @@ extension OrderServiceInvoiceHelpers on OrderService {
       final serviceTime = pick(raw['time']);
       final fallbackId = pick(raw['id']);
       final quantityRaw = raw['quantity'] ?? raw['qty'] ?? raw['count'];
-      final quantity = (quantityRaw is num)
-          ? quantityRaw.toInt()
-          : int.tryParse('$quantityRaw') ?? 1;
+      final quantityNum = (quantityRaw is num)
+          ? quantityRaw
+          : (num.tryParse('$quantityRaw') ?? 1);
+      final quantity = (quantityNum % 1 == 0)
+          ? quantityNum.toInt()
+          : quantityNum.toDouble();
       final totalRaw = raw['total'] ?? raw['line_total'];
       final unitRaw = raw['unit_price'] ??
           raw['unitPrice'] ??
@@ -386,16 +389,23 @@ extension OrderServiceInvoiceHelpers on OrderService {
           if (resolvedItemName != null) 'service_name': resolvedItemName,
           if (resolvedItemName != null) 'item_name': resolvedItemName,
           if (employeeId != null) 'employee_id': employeeId,
-          if (packageServiceId != null) 'package_service_id': packageServiceId,
+          // Backend requires these keys to be present on every salon item
+          // (PHP `Undefined array key` 422 otherwise). Send null/0 defaults
+          // for standalone services.
+          'package_service_id': packageServiceId,
           if (serviceDate != null) 'date': serviceDate,
           if (serviceTime != null) 'time': serviceTime,
           'quantity': quantity,
           'price': unitPrice,
           'unit_price': unitPrice,
-          if (raw['modified_unit_price'] != null) 'modified_unit_price': raw['modified_unit_price'],
-          if (raw['discount'] != null) 'discount': raw['discount'],
-          if (raw['discount_type'] != null) 'discount_type': raw['discount_type'],
-          if (raw['session_numbers'] != null) 'session_numbers': raw['session_numbers'],
+          'modified_unit_price': raw['modified_unit_price'],
+          'discount': raw['discount'] ?? 0,
+          // Backend validation rejects discount_type when there's no discount
+          // (الحقل لاغٍ). Only send it alongside a non-zero discount, and use
+          // the same `%` token the working salon checkout path sends.
+          if (_parseFlexibleDouble(raw['discount']) > 0)
+            'discount_type': raw['discount_type'] ?? '%',
+          'session_numbers': raw['session_numbers'],
         });
       } else {
         items.add({
@@ -424,9 +434,12 @@ extension OrderServiceInvoiceHelpers on OrderService {
     for (final item in itemsPayload) {
       final name = item['service_name'] ?? item['item_name'] ?? item['meal_name'] ?? item['name'];
       final quantityRaw = item['quantity'] ?? 1;
-      final quantity = (quantityRaw is num)
-          ? quantityRaw.toInt()
-          : int.tryParse('$quantityRaw') ?? 1;
+      final quantityNum = (quantityRaw is num)
+          ? quantityRaw
+          : (num.tryParse('$quantityRaw') ?? 1);
+      final quantity = (quantityNum % 1 == 0)
+          ? quantityNum.toInt()
+          : quantityNum.toDouble();
       final unitRaw =
           item['unit_price'] ?? item['unitPrice'] ?? item['price'] ?? 0;
       final unitPrice = _parseFlexibleDouble(unitRaw);
@@ -445,21 +458,19 @@ extension OrderServiceInvoiceHelpers on OrderService {
           if (item['booking_service_id'] != null)
             'booking_service_id': item['booking_service_id'],
           if (item['employee_id'] != null) 'employee_id': item['employee_id'],
-          if (item['package_service_id'] != null)
-            'package_service_id': item['package_service_id'],
+          // See _mapItemsToInvoicePayload — backend requires the key always.
+          'package_service_id': item['package_service_id'],
           if (name != null) 'service_name': name,
           'quantity': quantity,
           'price': unitPrice,
           'unit_price': unitPrice,
-          if (item['modified_unit_price'] != null)
-            'modified_unit_price': item['modified_unit_price'],
+          'modified_unit_price': item['modified_unit_price'],
           if (item['date'] != null) 'date': item['date'],
           if (item['time'] != null) 'time': item['time'],
-          if (item['session_numbers'] != null)
-            'session_numbers': item['session_numbers'],
-          if (item['discount'] != null) 'discount': item['discount'],
-          if (item['discount_type'] != null)
-            'discount_type': item['discount_type'],
+          'session_numbers': item['session_numbers'],
+          'discount': item['discount'] ?? 0,
+          if (_parseFlexibleDouble(item['discount']) > 0)
+            'discount_type': item['discount_type'] ?? '%',
         });
       } else {
         salesMeals.add({

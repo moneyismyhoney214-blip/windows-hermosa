@@ -72,10 +72,10 @@ class PaymentSuccessView extends StatelessWidget {
                         isPayment
                             ? translationService.t('payment_success')
                             : translationService.t('order_saved_success'),
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF1E293B))),
+                            color: context.appText)),
                     const SizedBox(height: 8),
                     Text(
                         isPayment
@@ -114,7 +114,7 @@ class PaymentSuccessView extends StatelessWidget {
                                   style: const TextStyle(
                                       color: Color(0xFF64748B))),
                               Text(
-                                  '${amount.toStringAsFixed(2)} ${ApiConstants.currency}',
+                                  '${amount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                                   style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 24,

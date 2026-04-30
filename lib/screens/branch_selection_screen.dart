@@ -3,6 +3,7 @@ import '../models/branch.dart';
 import '../services/api/auth_service.dart';
 import '../services/api/api_constants.dart';
 import '../services/language_service.dart';
+import '../services/app_themes.dart';
 import '../locator.dart';
 import 'main_screen.dart';
 import '../waiter_module/waiter_module_entry.dart';
@@ -75,7 +76,7 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
     final isRTL = translationService.isRTL;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.appBg,
       body: SafeArea(
         child: Center(
           child: Container(
@@ -87,10 +88,10 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
               children: [
                 Text(
                   translationService.t('choose_branch_title'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
+                    color: context.appText,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -119,7 +120,7 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                            border: Border.all(color: context.appBorder),
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withValues(alpha: 0.02),
@@ -149,10 +150,10 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
                                   children: [
                                     Text(
                                       branch.name,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 18,
                                         fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1E293B),
+                                        color: context.appText,
                                       ),
                                     ),
                                     Text(

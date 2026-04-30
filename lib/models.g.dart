@@ -134,6 +134,7 @@ Map<String, dynamic> _$DeviceConfigToJson(DeviceConfig instance) =>
 const _$PrinterConnectionTypeEnumMap = {
   PrinterConnectionType.wifi: 'wifi',
   PrinterConnectionType.bluetooth: 'bluetooth',
+  PrinterConnectionType.q7Builtin: 'q7_builtin',
 };
 
 TableItem _$TableItemFromJson(Map<String, dynamic> json) => TableItem(
@@ -148,6 +149,8 @@ TableItem _$TableItemFromJson(Map<String, dynamic> json) => TableItem(
       isPaid: json['isPaid'] as bool? ?? false,
       qrImage: json['qr_image'] as String?,
       isActive: json['is_active'] as bool? ?? true,
+      categoryId: json['restaurant_table_category_id']?.toString(),
+      categoryName: json['category_name'] as String?,
     );
 
 Map<String, dynamic> _$TableItemToJson(TableItem instance) => <String, dynamic>{
@@ -161,6 +164,8 @@ Map<String, dynamic> _$TableItemToJson(TableItem instance) => <String, dynamic>{
       'isPaid': instance.isPaid,
       'qr_image': instance.qrImage,
       'is_active': instance.isActive,
+      'restaurant_table_category_id': instance.categoryId,
+      'category_name': instance.categoryName,
     };
 
 const _$TableStatusEnumMap = {

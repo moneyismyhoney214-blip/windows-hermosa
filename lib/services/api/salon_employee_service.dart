@@ -126,12 +126,21 @@ class SalonEmployeeService {
     return [];
   }
 
+  // PERF: per-employee service-id cache. Populated by `buildServiceEmployeeMap`
+  // so reopening the service-selection dialog reuses prior results instead of
+  // re-hammering `/seller/services/employees/{id}/branches/{branchId}/edit`
+  // (which is aggressively rate-limited and returns 422 "Too Many Attempts").
+  static const Duration _employeeServicesTtl = Duration(minutes: 5);
+  final Map<int, _CachedEntry<List<int>>> _employeeServicesCache = {};
+
+  void invalidateEmployeeServicesCache() => _employeeServicesCache.clear();
+
   /// Load service→employees mapping for all employees.
   /// Returns a map: { serviceId: [employeeMap, ...] }
   ///
-  /// PERF: runs all `getEmployeeServiceIds` calls in parallel with Future.wait
-  /// instead of sequentially awaiting each one (previous N+1 pattern took
-  /// N × round-trip-latency; now takes ~1 round-trip total).
+  /// Throttled: caps concurrent in-flight requests to avoid the backend's
+  /// rate limiter (which returns 422 "Too Many Attempts" when too many
+  /// `/seller/services/employees/.../edit` calls land at once).
   Future<Map<int, List<Map<String, dynamic>>>> buildServiceEmployeeMap(
     List<Map<String, dynamic>> employees,
   ) async {
@@ -143,16 +152,35 @@ class SalonEmployeeService {
       if (empId > 0) validEmployees.add(MapEntry(empId, emp));
     }
 
-    final results = await Future.wait(
-      validEmployees.map((e) async {
-        try {
-          return await getEmployeeServiceIds(e.key);
-        } catch (_) {
-          return <int>[];
+    const maxConcurrent = 3;
+    final results = List<List<int>>.filled(validEmployees.length, const []);
+    var nextIndex = 0;
+
+    Future<void> worker() async {
+      while (true) {
+        final i = nextIndex++;
+        if (i >= validEmployees.length) return;
+        final empId = validEmployees[i].key;
+
+        final cached = _employeeServicesCache[empId];
+        if (cached != null && !cached.isExpired(_employeeServicesTtl)) {
+          results[i] = cached.value;
+          continue;
         }
-      }),
-      eagerError: false,
-    );
+
+        try {
+          final ids = await getEmployeeServiceIds(empId);
+          _employeeServicesCache[empId] = _CachedEntry(ids);
+          results[i] = ids;
+        } catch (_) {
+          results[i] = const [];
+        }
+      }
+    }
+
+    final workerCount =
+        validEmployees.length < maxConcurrent ? validEmployees.length : maxConcurrent;
+    await Future.wait(List.generate(workerCount, (_) => worker()));
 
     final map = <int, List<Map<String, dynamic>>>{};
     for (var i = 0; i < validEmployees.length; i++) {
