@@ -132,7 +132,7 @@ printing.
 
 ## Build info
 
-- Bundle ID: `p.cash.hermosaapp.com`
+- Bundle ID: `com.hermosa.hermosaapp`
 - Version: matches `pubspec.yaml` `version` field
 - Min iOS: 13.0
 - Targeted device: iPad only

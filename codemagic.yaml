@@ -79,7 +79,7 @@ workflows:
   # The first time this workflow runs, Codemagic uses your App Store
   # Connect API key to:
   #   • create / fetch a Distribution certificate,
-  #   • create / fetch a provisioning profile for `p.cash.hermosaapp.com`,
+  #   • create / fetch a provisioning profile for `com.hermosa.hermosaapp`,
   #   • upload the signed IPA to App Store Connect (TestFlight).
   # No Mac required on your end.
   # =====================================================================
@@ -105,7 +105,7 @@ workflows:
       groups:
         - default
       vars:
-        BUNDLE_ID: "p.cash.hermosaapp.com"
+        BUNDLE_ID: "com.hermosa.hermosaapp"
         APP_STORE_APPLE_ID: $APP_STORE_APPLE_ID
 
     triggering:
