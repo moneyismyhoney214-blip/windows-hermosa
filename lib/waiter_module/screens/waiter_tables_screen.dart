@@ -217,6 +217,140 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
   /// strand the Edit Order button on a card the waiter can't reach.
   List<TableItem> _visibleTables() => _tables;
 
+  /// Cancel a pay-later booking — mirrors the cashier's `_cancelBooking`
+  /// flow (orders_screen.actions.dart): confirmation prompt → PATCH
+  /// status=8 on the backend → fire-and-forget kitchen cancel ticket →
+  /// flip the table to released so peers see it free immediately.
+  Future<void> _cancelBookingForTable(TableItem table) async {
+    final me = widget.controller.session.self;
+    if (me == null) return;
+    final bookingId = _registry.bookingIdFor(table.id);
+    if (bookingId == null || bookingId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(translationService.t('waiter_no_active_booking')),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.appSurface,
+        title: Text(
+          'إلغاء الحجز',
+          style: TextStyle(color: context.appText),
+        ),
+        content: Text(
+          'هل أنت متأكد من إلغاء حجز الطاولة ${table.number}؟',
+          style: TextStyle(color: context.appText),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(translationService.t('waiter_cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('نعم، إلغاء'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      // Status 8 = cancelled — same code the cashier uses in
+      // orders_screen.actions.dart:_cancelBooking.
+      await getIt<OrderService>().updateBookingStatus(
+        orderId: bookingId,
+        status: 8,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('فشل إلغاء الحجز: $e'),
+          backgroundColor: const Color(0xFFDC2626),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    // Fire-and-forget cancellation ticket so the kitchen knows to drop
+    // any items still in prep. Same shape the cashier uses via
+    // onPrintOrderChanges → printKitchenChangeTicket.
+    try {
+      final details = await getIt<OrderService>().getBookingDetails(bookingId);
+      final detailData = details['data'] is Map
+          ? (details['data'] as Map).map((k, v) => MapEntry(k.toString(), v))
+          : details;
+      final bookingNode = detailData['booking'] is Map
+          ? (detailData['booking'] as Map)
+              .map((k, v) => MapEntry(k.toString(), v))
+          : detailData;
+      final mealsList = (bookingNode['booking_meals'] ??
+          bookingNode['meals'] ??
+          bookingNode['items'] ??
+          detailData['booking_meals']) as List?;
+      if (mealsList != null && mealsList.isNotEmpty) {
+        final cancelChanges = mealsList.map((meal) {
+          final m = meal is Map
+              ? meal.map((k, v) => MapEntry(k.toString(), v))
+              : <String, dynamic>{};
+          final name = (m['meal_name'] ??
+                  m['name'] ??
+                  m['item_name'] ??
+                  '')
+              .toString();
+          final qty = int.tryParse(m['quantity']?.toString() ?? '1') ?? 1;
+          return OrderChange(type: 'cancel', name: name, quantity: qty);
+        }).toList();
+        final orderNum = (bookingNode['daily_order_number'] ??
+                bookingNode['order_number'] ??
+                bookingId)
+            .toString();
+        unawaited(getIt<WaiterPrintDispatcher>().printKitchenChangeTicket(
+          changes: cancelChanges,
+          orderNumber: orderNum,
+          isFullCancel: true,
+        ));
+      }
+    } catch (e) {
+      debugPrint('⚠️ Could not print waiter cancellation ticket: $e');
+    }
+
+    // Flush local cart + broadcast released so peers (cashier + other
+    // waiters) flip the card back to free without waiting for the next
+    // getTables() poll.
+    try {
+      getIt<WaiterCartStore>().clearTable(table.id);
+    } catch (_) {}
+    widget.controller.broadcastTableEvent(TableLifecycleEvent(
+      kind: TableLifecycleKind.released,
+      tableId: table.id,
+      tableNumber: table.number,
+      waiterId: me.id,
+      waiterName: me.name,
+    ));
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('تم إلغاء حجز الطاولة ${table.number}'),
+        backgroundColor: const Color(0xFF10B981),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   void _releaseTable(TableItem table) {
     final me = widget.controller.session.self;
     if (me == null) return;
@@ -1030,14 +1164,23 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
             final overlaid = t
               ..status = ownerId != null ? TableStatus.occupied : t.status
               ..waiterName = ownerName ?? t.waiterName;
-            final isMine = ownerId != null &&
-                ownerId == widget.controller.session.self!.id;
+            // Null-guard the session: if a logout fires while this grid
+            // is still rendering (e.g. session timeout in background),
+            // `session.self` flips to null mid-frame. Rendering with a
+            // bang would crash the screen instead of degrading
+            // gracefully. We treat a missing self as "I own nothing"
+            // — the card stays read-only until the next frame after
+            // re-login.
+            final selfId = widget.controller.session.self?.id ?? '';
+            final isMine = ownerId != null && selfId.isNotEmpty
+                ? ownerId == selfId
+                : false;
             final paymentPending = _registry.paymentPendingFor(t.id);
             final waitlistHold = waitlistService.entryForTable(t.id);
             return WaiterTableCard(
               key: ValueKey('waiter_table_${t.id}'),
               table: overlaid,
-              currentWaiterId: widget.controller.session.self!.id,
+              currentWaiterId: selfId,
               ownerWaiterId: ownerId,
               ownerWaiterName: ownerName,
               guestCount: _registry.guestCountFor(t.id),
@@ -1048,6 +1191,13 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
                   (isMine && !t.isPaid) ? () => _migrateTable(t) : null,
               onEditOrder: (isMine && paymentPending)
                   ? () => _openEditOrderDialog(t)
+                  : null,
+              // Cancel only when there's a live pay-later booking owned
+              // by us. After payment is taken the booking is locked on
+              // the backend (status > 0) and a status=8 PATCH would be
+              // rejected — same gate the cashier's actions menu uses.
+              onCancelBooking: (isMine && paymentPending && !t.isPaid)
+                  ? () => _cancelBookingForTable(t)
                   : null,
               onReleaseTable: isMine ? () => _releaseTable(t) : null,
               onTap: () => _handleTap(t),

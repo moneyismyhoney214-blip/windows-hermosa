@@ -306,15 +306,22 @@ class WaiterTableRegistry extends ChangeNotifier {
   /// freely available. Used after `getTables()` to evict ghost entries
   /// from the persisted snapshot when the source of truth has moved
   /// on — e.g. the cashier closed a pay-later booking on this device's
-  /// behalf while the waiter was offline. Only evicts `paid` / `paymentPending`
-  /// rows; `takingOrder` is transient local-only state.
+  /// behalf while the waiter was offline.
+  ///
+  /// Evicts `paid`, `paymentPending` AND `takingOrder` rows. `takingOrder`
+  /// was previously skipped on the assumption it's transient local-only
+  /// state, but the order screen broadcasts and persists it before the
+  /// waiter has placed any items — leaving a waiter who walks away from
+  /// the order screen with a permanent ghost claim. The backend is the
+  /// authority on whether a table is free; if it says `available` we
+  /// drop our local opinion.
   void reconcileWithBackend(Iterable<String> availableTableIds) {
     if (_byTableId.isEmpty) return;
     final evicted = <String>[];
     for (final id in availableTableIds) {
       final row = _byTableId[id];
       if (row == null) continue;
-      if (row.paid || row.paymentPending) {
+      if (row.paid || row.paymentPending || row.takingOrder) {
         _byTableId.remove(id);
         evicted.add(id);
       }

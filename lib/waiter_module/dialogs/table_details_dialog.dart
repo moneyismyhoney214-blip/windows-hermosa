@@ -310,7 +310,17 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
   }
 
   Future<void> _createInvoice() async {
+    // Re-entrancy guard — without this, a double-tap on the "Create
+    // Invoice" button while we're awaiting refreshPayMethods or while
+    // the tender dialog is mounted spawns two parallel `_createInvoice`
+    // runs, both of which call `processBill` once the user confirms
+    // tender → two invoices on the backend, customer charged twice.
+    // The button itself is disabled when `_working == true` but only
+    // AFTER `setState(() => _working = true)` runs, which used to be
+    // post-tender. Guard the entry point too.
+    if (_working) return;
     if (snapshot.items.isEmpty) return;
+    setState(() => _working = true);
     // Pull the latest enabled pay methods + tax config from branch
     // settings — mirrors the cashier's behavior on opening the tender dialog.
     await _billing.refreshPayMethods();
@@ -327,9 +337,10 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
         onConfirmWithPays: (p) => Navigator.of(context).pop(p),
       ),
     );
-    if (pays == null || pays.isEmpty) return;
-
-    setState(() => _working = true);
+    if (pays == null || pays.isEmpty) {
+      if (mounted) setState(() => _working = false);
+      return;
+    }
     final result = await _billing.processBillFromSnapshot(
       table: widget.table,
       items: snapshot.items,

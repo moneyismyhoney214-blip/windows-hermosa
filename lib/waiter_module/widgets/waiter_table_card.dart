@@ -21,6 +21,10 @@ class WaiterTableCard extends StatelessWidget {
   final VoidCallback? onMigrate;
   final VoidCallback? onEditOrder;
   final VoidCallback? onReleaseTable;
+  /// Cancel a pay-later booking: PATCHes status=8 on the backend and
+  /// flips the table back to free. Only offered when the table has an
+  /// active paymentPending booking owned by the current waiter.
+  final VoidCallback? onCancelBooking;
   /// When non-null, the table was assigned to this waitlist party but
   /// they haven't arrived yet. We overlay a small orange "holding"
   /// pill so the host doesn't accidentally give the table to someone
@@ -40,6 +44,7 @@ class WaiterTableCard extends StatelessWidget {
     this.onMigrate,
     this.onEditOrder,
     this.onReleaseTable,
+    this.onCancelBooking,
     this.holdingForName,
   });
 
@@ -131,7 +136,8 @@ class WaiterTableCard extends StatelessWidget {
                   ),
                 if (onMigrate != null ||
                     onReleaseTable != null ||
-                    onEditOrder != null)
+                    onEditOrder != null ||
+                    onCancelBooking != null)
                   PositionedDirectional(
                     top: -2,
                     end: -2,
@@ -202,6 +208,7 @@ class WaiterTableCard extends StatelessWidget {
           if (value == 'edit' && onEditOrder != null) onEditOrder!();
           if (value == 'migrate' && onMigrate != null) onMigrate!();
           if (value == 'release' && onReleaseTable != null) onReleaseTable!();
+          if (value == 'cancel' && onCancelBooking != null) onCancelBooking!();
         },
         itemBuilder: (_) => [
           if (onEditOrder != null)
@@ -236,6 +243,25 @@ class WaiterTableCard extends StatelessWidget {
                     'نقل إلى طاولة أخرى',
                     style: TextStyle(
                       color: Color(0xFF2563EB),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (onCancelBooking != null)
+            const PopupMenuItem<String>(
+              value: 'cancel',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.xCircle,
+                      size: 16, color: Color(0xFFDC2626)),
+                  SizedBox(width: 8),
+                  Text(
+                    'إلغاء الحجز',
+                    style: TextStyle(
+                      color: Color(0xFFDC2626),
                       fontWeight: FontWeight.w700,
                     ),
                   ),

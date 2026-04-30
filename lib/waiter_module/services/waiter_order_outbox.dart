@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../services/offline/connectivity_service.dart';
 import '../models/waiter.dart';
@@ -90,6 +91,12 @@ class WaiterOrderOutbox {
       'branch_id': branchId,
       if (note != null) 'note': note,
       'queued_at': DateTime.now().toIso8601String(),
+      // Stable client-generated dedupe key. The KDS bridge can use this
+      // to discard duplicate sends caused by a kill mid-flush (order
+      // hit the wire, local SharedPreferences write didn't land → next
+      // launch's flush would resend the same row). Same UUID across
+      // every retry of the same entry.
+      'idempotency_key': const Uuid().v4(),
     });
     await _write(list);
     if (!connectivity.isOffline) {
@@ -105,7 +112,22 @@ class WaiterOrderOutbox {
       final list = await _read();
       if (list.isEmpty) return;
       final remaining = <Map<String, dynamic>>[];
-      for (final entry in list) {
+      var aborted = false;
+      for (var i = 0; i < list.length; i++) {
+        final entry = list[i];
+        // Mid-flush guard: if the KDS socket dropped between iterations
+        // we'd otherwise hammer every remaining entry with a guaranteed-
+        // failure send, all of which would bump their retry counter for
+        // nothing. Bail out and keep the rest of the queue intact for
+        // the next reconnect — the connection-changes listener will
+        // re-trigger flush.
+        if (!bridge.isConnected) {
+          aborted = true;
+          remaining.addAll(list.sublist(i).cast<Map<String, dynamic>>());
+          debugPrint(
+              '⏸️ Outbox aborted mid-flush at $i/${list.length} — KDS dropped');
+          break;
+        }
         try {
           final waiter = Waiter(
             id: entry['waiter_id']?.toString() ?? '',
@@ -137,6 +159,10 @@ class WaiterOrderOutbox {
             remaining.add({...entry, '_retries': retries});
           }
         }
+      }
+      if (!aborted) {
+        // Normal completion — `remaining` only holds the entries that
+        // failed mid-iteration (their retry counter was bumped above).
       }
       await _write(remaining);
     } finally {

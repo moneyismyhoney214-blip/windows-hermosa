@@ -299,6 +299,35 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
     // Scoped to this table id — guards against a nav race where screen
     // A's dispose fires after screen B's init.
     widget.controller.clearActiveOrderingTable(widget.table.id);
+    // If we leave the screen without composing any order — empty cart,
+    // no sent items, and only the optimistic `takingOrder` flag we
+    // broadcast in initState is alive on peers — emit `released` so the
+    // table flips back to free. Without this, peering devices keep the
+    // table locked at "جاري اخذ الطلب" forever even though the waiter
+    // walked away. Skip when the table is paymentPending/paid (real
+    // booking exists) or when the registry shows another waiter has
+    // already claimed it.
+    final me = widget.controller.session.self;
+    final ownerId = _registry.ownerIdFor(widget.table.id);
+    final iAmOwner = me != null && (ownerId == null || ownerId == me.id);
+    final cartEmpty = _cart.allItemsFor(widget.table.id).isEmpty;
+    final notCommitted = !_registry.paymentPendingFor(widget.table.id) &&
+        !_registry.paidFor(widget.table.id);
+    final wasJustTakingOrder =
+        _registry.takingOrderFor(widget.table.id) || cartEmpty;
+    if (me != null &&
+        iAmOwner &&
+        cartEmpty &&
+        notCommitted &&
+        wasJustTakingOrder) {
+      widget.controller.broadcastTableEvent(TableLifecycleEvent(
+        kind: TableLifecycleKind.released,
+        tableId: widget.table.id,
+        tableNumber: widget.table.number,
+        waiterId: me.id,
+        waiterName: me.name,
+      ));
+    }
     super.dispose();
   }
 
