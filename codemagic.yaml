@@ -102,6 +102,8 @@ workflows:
       # PERSISTENT private key stored in IOS_DIST_PRIVATE_KEY (secure
       # Codemagic env var), so the Distribution cert at Apple is reusable
       # across builds instead of being orphaned every run.
+      groups:
+        - default
       vars:
         BUNDLE_ID: "p.cash.hermosaapp.com"
         APP_STORE_APPLE_ID: $APP_STORE_APPLE_ID
