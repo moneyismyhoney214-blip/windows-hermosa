@@ -200,21 +200,32 @@ workflows:
       - name: Publish to App Store Connect (TestFlight)
         script: |
           set -e
-          # Use the API key explicitly to avoid altool falling back to
-          # an Apple-ID + app-specific-password lookup that fails with
-          # "No suitable application records were found" when the
-          # default sign-in environment is empty. Codemagic exposes
-          # the connected `codemagic_app_store` integration via
-          # APP_STORE_CONNECT_* env vars.
-          app-store-connect publish \
-              --path "$(find $CM_BUILD_DIR/build/ios/ipa -name '*.ipa' -print -quit)" \
-              --testflight \
-              --apple-id="$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-              --asc-key-id="$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-              --asc-issuer-id="$APP_STORE_CONNECT_ISSUER_ID" \
-              --asc-private-key=@env:APP_STORE_CONNECT_PRIVATE_KEY \
-              --enable-package-validation \
-              --max-find-build-wait=15
+
+          # `app-store-connect publish` shells out to Apple's `altool`,
+          # which doesn't read the Codemagic env vars. The standard
+          # workaround is the well-known `private_keys/` path: altool
+          # automatically picks up `~/.appstoreconnect/private_keys/
+          # AuthKey_<KEYID>.p8`. We materialize the key there from the
+          # Codemagic integration env var on every build.
+          PRIVATE_KEYS_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$PRIVATE_KEYS_DIR"
+          KEY_PATH="$PRIVATE_KEYS_DIR/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
+          printf "%s" "$APP_STORE_CONNECT_PRIVATE_KEY" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+
+          IPA=$(find "$CM_BUILD_DIR/build/ios/ipa" -name '*.ipa' -print -quit)
+          if [ -z "$IPA" ]; then
+            echo "❌ No IPA found under $CM_BUILD_DIR/build/ios/ipa"
+            exit 1
+          fi
+          echo "Uploading $IPA to App Store Connect (TestFlight)…"
+
+          xcrun altool --upload-app \
+              --type ios \
+              --file "$IPA" \
+              --apiKey "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+              --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          echo "✅ Upload finished. Build will appear in TestFlight after Apple processing (5-30 min)."
 
     artifacts:
       - build/ios/ipa/*.ipa
