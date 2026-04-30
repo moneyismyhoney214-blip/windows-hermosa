@@ -120,17 +120,45 @@ workflows:
       - name: Set up code signing (App Store)
         script: |
           set -e
-          # `keychain initialize` creates a temporary build keychain.
-          # `app-store-connect fetch-signing-files` uses the App Store
-          # Connect API key (configured via the `integrations:` block
-          # above) to download or create a Distribution certificate and
-          # an App Store provisioning profile for our bundle ID. The
-          # `--create` flag means: if either asset doesn't exist yet,
-          # make it on the fly.
           keychain initialize
+
+          # ---- Diagnostics ----------------------------------------------
+          # When fetch-signing-files fails the message is opaque ("No
+          # matching profiles found"). The most common causes are:
+          #   1. The App Store Connect API key registered in Codemagic
+          #      does not have Admin role — it cannot CREATE assets.
+          #   2. The bundle ID is registered to a different team than
+          #      the one the API key belongs to.
+          #   3. The `integrations.app_store_connect` value does not
+          #      match the integration name in Codemagic UI.
+          # The next 3 commands surface what the API key CAN see, which
+          # makes the failure actionable instead of cryptic.
+          echo "→ Bundle IDs visible to this API key:"
+          app-store-connect list-bundle-ids --filter-identifier "$BUNDLE_ID" || true
+          echo "→ Distribution certificates visible to this API key:"
+          app-store-connect list-certificates --type IOS_DISTRIBUTION || true
+          echo "→ Provisioning profiles for $BUNDLE_ID:"
+          app-store-connect list-profiles --bundle-id-identifier "$BUNDLE_ID" || true
+          echo "----------------------------------------------------------"
+
+          # If a Distribution cert doesn't exist yet, create one. We do
+          # this explicitly (instead of relying on `--create` inside the
+          # next step) so the error message is precise when this is the
+          # blocker.
+          app-store-connect certificates create \
+              --type IOS_DISTRIBUTION \
+              --save || echo "⚠️ certificate creation skipped (likely already exists)"
+
+          # Same for the bundle ID — if it's not yet registered to this
+          # team, register it. No-op if it already exists.
+          app-store-connect bundle-ids register "$BUNDLE_ID" \
+              --name "Hermosa POS" || echo "⚠️ bundle id registration skipped (likely already exists)"
+
+          # Finally fetch / create the provisioning profile.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
               --type IOS_APP_STORE \
               --create
+
           keychain add-certificates
           xcode-project use-profiles
 
