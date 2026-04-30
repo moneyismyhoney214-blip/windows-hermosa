@@ -197,21 +197,33 @@ workflows:
               --build-number="$BUILD_NUMBER" \
               --export-options-plist=/Users/builder/export_options.plist
 
+      - name: Publish to App Store Connect (TestFlight)
+        script: |
+          set -e
+          # Use the API key explicitly to avoid altool falling back to
+          # an Apple-ID + app-specific-password lookup that fails with
+          # "No suitable application records were found" when the
+          # default sign-in environment is empty. Codemagic exposes
+          # the connected `codemagic_app_store` integration via
+          # APP_STORE_CONNECT_* env vars.
+          app-store-connect publish \
+              --path "$(find $CM_BUILD_DIR/build/ios/ipa -name '*.ipa' -print -quit)" \
+              --testflight \
+              --apple-id="$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+              --asc-key-id="$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+              --asc-issuer-id="$APP_STORE_CONNECT_ISSUER_ID" \
+              --asc-private-key=@env:APP_STORE_CONNECT_PRIVATE_KEY \
+              --enable-package-validation \
+              --max-find-build-wait=15
+
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - flutter_drive.log
 
     publishing:
-      app_store_connect:
-        auth: integration
-        # Upload to TestFlight automatically on every successful build.
-        # Flip `submit_to_app_store` to true and set release_type when
-        # you're ready to push a public release.
-        submit_to_testflight: true
-        beta_groups:
-          - Internal QA
-        submit_to_app_store: false
+      # Custom `Publish to App Store Connect` step above replaces the
+      # built-in publishing block. We keep email notifications only.
       email:
         recipients:
           - support@hermosaapp.com
