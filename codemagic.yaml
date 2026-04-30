@@ -93,7 +93,12 @@ workflows:
 
     environment:
       flutter: 3.41.1
-      xcode: 16.2
+      # Apple now rejects uploads built with anything older than the
+      # iOS 26 SDK (Xcode 26+). Build #18 failed App Store Connect
+      # validation with "SDK version issue. This app was built with
+      # the iOS 18.2 SDK." Use Codemagic's `latest` Xcode image so we
+      # always pick up whatever Xcode 26.x is current on the runner.
+      xcode: latest
       cocoapods: default
       # NOTE: `ios_signing` block intentionally OMITTED. It auto-fetches
       # an existing provisioning profile but cannot CREATE one when none
