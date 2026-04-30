@@ -95,14 +95,13 @@ workflows:
       flutter: 3.41.1
       xcode: 16.2
       cocoapods: default
-      # Codemagic-managed signing. Codemagic stores the Distribution
-      # certificate's private key in its own signing-certificate DB and
-      # reuses it across builds, so we don't have to ship a private key
-      # in env vars or regenerate one per build (which orphans the cert
-      # at Apple — that bit us in build #12 → #13).
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: p.cash.hermosaapp.com
+      # NOTE: `ios_signing` block intentionally OMITTED. It auto-fetches
+      # an existing provisioning profile but cannot CREATE one when none
+      # exists yet (build #14 failed: "No matching profiles found").
+      # We handle full create-or-fetch flow manually below using a
+      # PERSISTENT private key stored in IOS_DIST_PRIVATE_KEY (secure
+      # Codemagic env var), so the Distribution cert at Apple is reusable
+      # across builds instead of being orphaned every run.
       vars:
         BUNDLE_ID: "p.cash.hermosaapp.com"
         APP_STORE_APPLE_ID: $APP_STORE_APPLE_ID
@@ -119,6 +118,35 @@ workflows:
           source: true
 
     scripts:
+      - name: Set up code signing (App Store)
+        script: |
+          set -e
+          keychain initialize
+
+          # The Distribution-cert private key lives in the Codemagic
+          # secure env var IOS_DIST_PRIVATE_KEY (uploaded once via API).
+          # Persisting it across builds means: if the cert already
+          # exists at Apple from a previous build, fetch-signing-files
+          # finds the matching pair and reuses it; if not, it creates
+          # a new cert against this same key, so future builds also
+          # match. Either way no orphaned certs accumulate.
+          if [ -z "$IOS_DIST_PRIVATE_KEY" ]; then
+            echo "❌ IOS_DIST_PRIVATE_KEY env var missing"
+            exit 1
+          fi
+          CERT_KEY=/tmp/cert_private_key.pem
+          printf "%s" "$IOS_DIST_PRIVATE_KEY" > "$CERT_KEY"
+          chmod 600 "$CERT_KEY"
+
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+              --type IOS_APP_STORE \
+              --certificate-key=@file:"$CERT_KEY" \
+              --create
+
+          keychain add-certificates
+          xcode-project use-profiles
+          echo "✅ Code signing ready."
+
       - name: Bump build number from App Store Connect
         script: |
           set -e
