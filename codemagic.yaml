@@ -122,23 +122,26 @@ workflows:
           set -e
           keychain initialize
 
-          # `fetch-signing-files --create` is the canonical Codemagic
-          # one-liner. With our App Store Connect API integration in
-          # `integrations:` above, it:
-          #   - registers the bundle ID if missing,
-          #   - creates an IOS_DISTRIBUTION certificate if none exists,
-          #   - creates an App Store provisioning profile,
-          #   - downloads cert + profile into the working directory,
-          # all in one call. Failed earlier when the implicit
-          # `environment.ios_signing` block tried to fetch a profile
-          # BEFORE this step ran; with that block removed (see comment
-          # in `environment:`), this command runs first and succeeds.
+          # Apple's Distribution certificate is generated from a CSR
+          # signed by a private key that *we* must own. Codemagic does
+          # not auto-generate it: when `fetch-signing-files --create`
+          # decides it needs to register a new certificate, it requires
+          # the private key to be passed explicitly. We generate a
+          # 2048-bit RSA key once per build (acceptable because we never
+          # ship the private key — Apple only stores the cert it signs).
+          CERT_KEY=/tmp/cert_private_key.pem
+          if [ ! -f "$CERT_KEY" ]; then
+            echo "Generating per-build RSA private key for the Distribution certificate."
+            openssl genrsa -out "$CERT_KEY" 2048
+          fi
+
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
               --type IOS_APP_STORE \
+              --certificate-key-path="$CERT_KEY" \
               --create \
               --verbose
 
-          keychain add-certificates
+          keychain add-certificates --certificate-key-path="$CERT_KEY"
           xcode-project use-profiles
           echo "✅ Code signing ready."
 
