@@ -1,11 +1,11 @@
 class ApiConstants {
   // Base URLs
-  static const String authBaseUrl = 'https://api.hermosaapp.com';
-  static const String baseUrl = 'https://api.hermosaapp.com';
-  static const String testBaseUrl = 'https://api.hermosaapp.com';
-  static const String customersBaseUrl = 'https://api.hermosaapp.com';
+  static const String authBaseUrl = 'https://portal.hermosaapp.com';
+  static const String baseUrl = 'https://portal.hermosaapp.com';
+  static const String testBaseUrl = 'https://portal.hermosaapp.com';
+  static const String customersBaseUrl = 'https://portal.hermosaapp.com';
   // Forgot-password flow lives on the public API host (see HAR capture).
-  static const String forgotBaseUrl = 'https://api.hermosaapp.com';
+  static const String forgotBaseUrl = 'https://portal.hermosaapp.com';
 
   // API Headers
   static const String _defaultAcceptLanguage = 'ar';
@@ -82,7 +82,7 @@ class ApiConstants {
   static String branchModule = '';
 
   // Country id of the active branch (matches `value` in
-  // `api.hermosaapp.com/countries/cities`). Drives the default
+  // `portal.hermosaapp.com/countries/cities`). Drives the default
   // country code on phone-input pickers — Saudi (1) is the safe
   // fallback when the branch hasn't been resolved yet.
   static int branchCountryId = 1;

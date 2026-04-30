@@ -57,6 +57,16 @@ class WaiterPrintDispatcher {
   final AuthService _authService;
   final BranchService _branchService;
 
+  /// Session-scoped cache of seller/branch fields the receipt builder
+  /// pulls out of the canonical `getInvoice` response. The cashier owns
+  /// an equivalent cache on its main-screen state; without one, every
+  /// waiter print starts cold and, if the current invoice payload
+  /// happens to nest seller info inconsistently, the printed header
+  /// loses logo/tax/CR fields and the receipt comes out shorter than
+  /// the cashier's. Pre-warmed by the first successful build and
+  /// reused on every subsequent call.
+  final ReceiptBuilderCache _receiptCache = ReceiptBuilderCache();
+
   // ---------------------------------------------------------------------------
   // Preferences
   // ---------------------------------------------------------------------------
@@ -817,13 +827,17 @@ class WaiterPrintDispatcher {
     // this is the SAME cache the cashier prewarms at session start.
     // Without it (and if `getInvoice` returned a payload that doesn't
     // nest branch.seller), the printed header loses the logo, tax
-    // number, and commercial register. Awaited with a short timeout
-    // so a slow /seller/branches call can't block the print job.
+    // number, and commercial register, and the receipt comes out
+    // shorter than the cashier's. Bumped to 12s (was 4s) because the
+    // cold-cache path must succeed before we print — printing an
+    // incomplete header is worse than waiting a few extra seconds.
+    // The print itself still runs even if this throws; the cache miss
+    // just means the receipt may render shorter for this one print.
     if (_branchService.cachedBranchReceiptInfo == null) {
       try {
         await _branchService
             .fetchAndCacheBranchReceiptInfo()
-            .timeout(const Duration(seconds: 4));
+            .timeout(const Duration(seconds: 12));
       } catch (e) {
         debugPrint('⚠️ waiter branch receipt cache warm-up failed: $e');
       }
@@ -970,7 +984,16 @@ class WaiterPrintDispatcher {
       isTaxEnabled: vatRate > 0,
       taxRate: vatRate,
       userNameFallback: waiterName.isEmpty ? null : waiterName,
-      // Waiter-specific fallbacks:
+      // Session-scoped cache — same role the cashier's
+      // `_cachedSellerInfo / _cachedBranchMap / ...` plays. The service
+      // will read it as a fallback when the current invoice payload
+      // doesn't nest seller info AND will write fresh values into it
+      // on each call, so the next print on the same session keeps the
+      // header complete (logo, tax number, commercial register).
+      cache: _receiptCache,
+      // Waiter-specific fallbacks (offline-first auth profile, plus the
+      // BranchService-warmed receipt cache that supplies the uploaded
+      // logo URL on first print before any invoice has nested it).
       authUser: _authService.getUser(),
       branchReceiptCache: _branchService.cachedBranchReceiptInfo,
     );

@@ -1019,7 +1019,7 @@ extension OrdersScreenData on _OrdersScreenState {
         branch['logo'], branch['image'],
       ]);
       if (logoUrl != null && logoUrl.startsWith('/')) {
-        logoUrl = 'https://api.hermosaapp.com$logoUrl';
+        logoUrl = 'https://portal.hermosaapp.com$logoUrl';
       }
 
       return OrderReceiptData(

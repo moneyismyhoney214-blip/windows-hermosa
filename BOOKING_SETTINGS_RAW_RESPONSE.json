@@ -50,7 +50,7 @@
       "daily_order_number": 1,
       "customer": {
         "name": "فيصل",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -119,7 +119,7 @@
       "daily_order_number": 12,
       "customer": {
         "name": "فيصل",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -144,7 +144,7 @@
       "daily_order_number": 11,
       "customer": {
         "name": "علي   نص",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -191,7 +191,7 @@
       "daily_order_number": 9,
       "customer": {
         "name": "فيصل",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -216,7 +216,7 @@
       "daily_order_number": 8,
       "customer": {
         "name": "علي   نص",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -263,7 +263,7 @@
       "daily_order_number": 6,
       "customer": {
         "name": "علي   نص",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -288,7 +288,7 @@
       "daily_order_number": 5,
       "customer": {
         "name": "علي   نص",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -313,7 +313,7 @@
       "daily_order_number": 4,
       "customer": {
         "name": "علي   نص",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -338,7 +338,7 @@
       "daily_order_number": 3,
       "customer": {
         "name": "فيصل",
-        "avatar": "https://api.hermosaapp.com/logo.png"
+        "avatar": "https://portal.hermosaapp.com/logo.png"
       },
       "platform": "dashboard",
       "type": "services",
@@ -359,10 +359,10 @@
     }
   ],
   "links": {
-    "first": "https://api.hermosaapp.com/seller/branches/63/bookings?page=1",
-    "last": "https://api.hermosaapp.com/seller/branches/63/bookings?page=90",
+    "first": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=1",
+    "last": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=90",
     "prev": null,
-    "next": "https://api.hermosaapp.com/seller/branches/63/bookings?page=2"
+    "next": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=2"
   },
   "meta": {
     "current_page": 1,
@@ -375,52 +375,52 @@
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=1",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=1",
         "label": "1",
         "active": true
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=2",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=2",
         "label": "2",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=3",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=3",
         "label": "3",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=4",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=4",
         "label": "4",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=5",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=5",
         "label": "5",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=6",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=6",
         "label": "6",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=7",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=7",
         "label": "7",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=8",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=8",
         "label": "8",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=9",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=9",
         "label": "9",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=10",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=10",
         "label": "10",
         "active": false
       },
@@ -430,22 +430,22 @@
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=89",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=89",
         "label": "89",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=90",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=90",
         "label": "90",
         "active": false
       },
       {
-        "url": "https://api.hermosaapp.com/seller/branches/63/bookings?page=2",
+        "url": "https://portal.hermosaapp.com/seller/branches/63/bookings?page=2",
         "label": "Next &raquo;",
         "active": false
       }
     ],
-    "path": "https://api.hermosaapp.com/seller/branches/63/bookings",
+    "path": "https://portal.hermosaapp.com/seller/branches/63/bookings",
     "per_page": 15,
     "to": 15,
     "total": 1338

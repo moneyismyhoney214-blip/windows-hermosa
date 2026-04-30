@@ -147,7 +147,7 @@ extension MainScreenSalon on _MainScreenState {
 
       if (url.isEmpty) return;
       if (url.startsWith('/')) {
-        url = 'https://api.hermosaapp.com$url';
+        url = 'https://portal.hermosaapp.com$url';
       }
 
       if (!mounted) return;

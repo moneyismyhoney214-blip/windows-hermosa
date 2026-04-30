@@ -598,7 +598,7 @@ class AuthService {
 
   // ──────────────────────────── Forgot password ────────────────────────────
   //
-  // Three-step flow backed by `api.hermosaapp.com`. The first step accepts
+  // Three-step flow backed by `portal.hermosaapp.com`. The first step accepts
   // either a mobile number or an email — the backend keys both into the
   // same signed-route response so steps 2/3 are identical regardless:
   //   1. POST /seller/forgot           body: mobile=... | email=... → signed_route for step 2

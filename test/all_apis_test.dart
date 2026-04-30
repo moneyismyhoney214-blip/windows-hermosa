@@ -34,7 +34,7 @@ class ApiTestResult {
 }
 
 class ApiTestingSuite {
-  static const String baseUrl = 'https://api.hermosaapp.com';
+  static const String baseUrl = 'https://portal.hermosaapp.com';
   static const Duration timeout = Duration(seconds: 10);
 
   final List<ApiTestResult> results = [];
