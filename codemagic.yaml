@@ -177,21 +177,18 @@ workflows:
           xcode-project use-profiles
           echo "✅ Code signing ready."
 
-      - name: Bump build number from App Store Connect
+      - name: Resolve build number
         script: |
           set -e
-          # Pull the highest build number across TestFlight + App Store
-          # for this app, then increment by 1. Keeps Codemagic builds
-          # monotonic without us having to bump pubspec.yaml every time.
-          #
-          # Use `get-latest-build-number` (not `get-latest-app-store-...`)
-          # because the App Store-only variant ignores TestFlight builds
-          # that are still processing — that gave us a duplicate build #1
-          # collision in build #20 right after #19 had just uploaded.
-          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo "0")
-          NEXT_BUILD=$(( LATEST_BUILD_NUMBER + 1 ))
-          echo "Latest build across TestFlight+AppStore: $LATEST_BUILD_NUMBER → using $NEXT_BUILD"
-          echo "BUILD_NUMBER=$NEXT_BUILD" >> $CM_ENV
+          # Use Codemagic's own auto-incrementing $PROJECT_BUILD_NUMBER
+          # (the Codemagic build #) instead of asking App Store Connect.
+          # Every previous attempt to query Apple silently fell back to
+          # 0 → 1 and collided with the already-uploaded build 1 (see
+          # builds #20, #22, #23). $PROJECT_BUILD_NUMBER is monotonic
+          # per workflow, so it always beats the previous successful
+          # upload — and we're already past 20+.
+          echo "BUILD_NUMBER=$PROJECT_BUILD_NUMBER" >> $CM_ENV
+          echo "Using build number $PROJECT_BUILD_NUMBER (Codemagic counter)"
 
       - name: Restore NearPay developer cert (optional)
         script: |
