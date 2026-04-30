@@ -201,17 +201,42 @@ workflows:
         script: |
           set -e
 
-          # `app-store-connect publish` shells out to Apple's `altool`,
-          # which doesn't read the Codemagic env vars. The standard
-          # workaround is the well-known `private_keys/` path: altool
-          # automatically picks up `~/.appstoreconnect/private_keys/
-          # AuthKey_<KEYID>.p8`. We materialize the key there from the
-          # Codemagic integration env var on every build.
+          # altool reads its API key from the well-known
+          # ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8 path.
+          # We materialize the key there from the Codemagic env var.
+          # Using Python instead of `printf` because shell tools
+          # sometimes mangle multi-line PEM content (newlines get
+          # collapsed to spaces or backslash-n escape sequences).
           PRIVATE_KEYS_DIR="$HOME/.appstoreconnect/private_keys"
           mkdir -p "$PRIVATE_KEYS_DIR"
           KEY_PATH="$PRIVATE_KEYS_DIR/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
-          printf "%s" "$APP_STORE_CONNECT_PRIVATE_KEY" > "$KEY_PATH"
-          chmod 600 "$KEY_PATH"
+
+          python3 - <<'PY'
+          import os, sys
+          key = os.environ.get("APP_STORE_CONNECT_PRIVATE_KEY", "")
+          # Some CI envs deliver the key with literal "\n" sequences
+          # rather than real newlines — normalize either form.
+          if "\\n" in key and "\n" not in key:
+              key = key.replace("\\n", "\n")
+          if not key.startswith("-----BEGIN"):
+              sys.stderr.write("APP_STORE_CONNECT_PRIVATE_KEY does not look like a PEM key.\n")
+              sys.stderr.write(f"length={len(key)}, first 40 chars={key[:40]!r}\n")
+              sys.exit(1)
+          if not key.endswith("\n"):
+              key += "\n"
+          path = os.path.expanduser(f"~/.appstoreconnect/private_keys/AuthKey_{os.environ['APP_STORE_CONNECT_KEY_IDENTIFIER']}.p8")
+          with open(path, "w") as f:
+              f.write(key)
+          os.chmod(path, 0o600)
+          print(f"✓ wrote {len(key)} bytes to {path}")
+          PY
+
+          # Sanity-check the file altool will read.
+          echo "─── Auth key file head/tail ───"
+          head -1 "$KEY_PATH"
+          tail -1 "$KEY_PATH"
+          echo "Lines: $(wc -l < "$KEY_PATH"), bytes: $(wc -c < "$KEY_PATH")"
+          echo "───────────────────────────────"
 
           IPA=$(find "$CM_BUILD_DIR/build/ios/ipa" -name '*.ipa' -print -quit)
           if [ -z "$IPA" ]; then
