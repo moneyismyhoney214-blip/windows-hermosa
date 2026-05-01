@@ -98,9 +98,19 @@ printing.
 | Camera | QR code scanning for product / invoice lookup |
 | Bluetooth | Listed for cross-platform compatibility; iPad UI does NOT expose Bluetooth printing — only Wi-Fi printers are selectable on iPad |
 | Local Network | Discover Wi-Fi receipt printers and the Sunmi card terminal on the merchant's local network |
-| NFC | Compatibility check for NearPay (returns "unsupported" on iPad and the SDK is then bypassed) |
 | Photo Library | Save invoice/receipt PDFs to the iPad photo library on demand |
 | Microphone | Listed for plugin compatibility; not actively used |
+
+**No NFC on iOS.** Earlier builds shipped with `NFCReaderUsageDescription`
+to support a future Tap-to-Pay-on-iPhone integration, but that path
+is not implemented in 1.0.2 and the NFC string has been removed. The
+iPad never reads cards, never scans NFC tags, and the iPad app does
+not pair with any external NFC reader. All card-acceptance happens
+on a separate Sunmi Android POS terminal that is itself certified
+with NearPay (see "Hardware-Specific Content" above) — the iPad only
+talks to that terminal over the merchant's local Wi-Fi using a
+WebSocket message ("please charge the customer"). No NFC API on iOS
+is exercised, so there is nothing to film.
 
 ---
 

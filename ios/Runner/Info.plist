@@ -64,9 +64,6 @@
 		<string>_hermosa-display._tcp</string>
 	</array>
 
-	<key>NFCReaderUsageDescription</key>
-	<string>يستخدم Hermosa NFC للتحقق من التوافق مع NearPay وقراءة بطاقات الدفع غير التلامسية عند الإتاحة.</string>
-
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>يحفظ Hermosa صور الإيصالات وكشوف الإغلاق اليومي في معرض الصور لإعادة الطباعة أو المشاركة.</string>
 
