@@ -538,7 +538,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   /// Open the static legal page in-app. Content is fetched from
-  /// `api.hermosaapp.com/staticPages/<slug>` (locale follows the
+  /// `portal.hermosaapp.com/staticPages/<slug>` (locale follows the
   /// active `Accept-Language`) and rendered as HTML. The screen also
   /// exposes an "open in browser" action that points at the canonical
   /// `v2.hermosaapp.com/pages/<slug>` web copy.

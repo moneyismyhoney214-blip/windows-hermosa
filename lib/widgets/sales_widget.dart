@@ -327,7 +327,7 @@ class DailyClosingReceiptWidget extends StatelessWidget {
           style: GoogleFonts.cairo(fontSize: 14, fontWeight: FontWeight.bold, color: _primaryText),
         ),
         Text(
-          'https://api.hermosaapp.com',
+          'https://portal.hermosaapp.com',
           textAlign: TextAlign.center,
           style: GoogleFonts.inter(fontSize: 12, color: _secondaryText),
         ),

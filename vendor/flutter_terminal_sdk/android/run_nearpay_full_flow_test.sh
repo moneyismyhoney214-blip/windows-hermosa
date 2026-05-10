@@ -7,7 +7,7 @@ mkdir -p "$TMP_DIR"
 
 EMAIL="${1:-${NEARPAY_TEST_EMAIL:-}}"
 PASSWORD="${2:-${NEARPAY_TEST_PASSWORD:-}}"
-BASE_URL="${NEARPAY_BASE_URL:-https:// api.hermosaapp.com}"
+BASE_URL="${NEARPAY_BASE_URL:-https:// portal.hermosaapp.com}"
 BRANCH_ID="${NEARPAY_BRANCH_ID:-}"
 
 if [[ -z "${EMAIL}" || -z "${PASSWORD}" ]]; then

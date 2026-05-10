@@ -82,7 +82,7 @@ class ConnectivityService extends ChangeNotifier {
   /// Perform a real connectivity check by pinging a reliable host.
   Future<bool> _checkConnectivity() async {
     try {
-      final result = await InternetAddress.lookup('api.hermosaapp.com')
+      final result = await InternetAddress.lookup('portal.hermosaapp.com')
           .timeout(const Duration(seconds: 5));
       final online = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
       _updateStatus(online);

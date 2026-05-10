@@ -69,8 +69,8 @@ class NearPayService {
   String? _normalizeBackendUrl(String? value) {
     final raw = value?.toString().trim();
     if (raw == null || raw.isEmpty) return null;
-    if (raw.contains('api.hermosaapp.com')) {
-      return 'https://api.hermosaapp.com';
+    if (raw.contains('portal.hermosaapp.com')) {
+      return 'https://portal.hermosaapp.com';
     }
     if (raw.endsWith('/seller')) {
       return raw.substring(0, raw.length - '/seller'.length);
@@ -446,7 +446,7 @@ class NearPayService {
   ///   'type': 'nearpay_init',
   ///   'data': {
   ///     'branch_id': 60,
-  ///     'backend_url': 'https://api.hermosaapp.com',
+  ///     'backend_url': 'https://portal.hermosaapp.com',
   ///     'auth_token': 'bearer_token_here'
   ///   }
   /// }
@@ -1267,7 +1267,7 @@ class NearPayService {
           'issue': 'Cannot reach NearPay servers',
           'check_1': 'Device has WiFi/Mobile data enabled',
           'check_2': 'No firewall blocking port 443',
-          'check_3': 'DNS is resolving api.hermosaapp.com',
+          'check_3': 'DNS is resolving portal.hermosaapp.com',
           'check_4': 'Try connecting to a different network',
           'contact': 'Reach out to NearPay support if issue persists',
         });

@@ -134,7 +134,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         url = await branchService.getBranchLogoUrl(ApiConstants.branchId);
       }
       if (url.isEmpty) return;
-      if (url.startsWith('/')) url = 'https://api.hermosaapp.com$url';
+      if (url.startsWith('/')) url = 'https://portal.hermosaapp.com$url';
       if (!mounted) return;
       setState(() => _branchLogoUrl = url);
     } catch (_) {

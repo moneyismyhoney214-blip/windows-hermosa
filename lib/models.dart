@@ -501,14 +501,14 @@ class Product {
       normalized['unit_price'] ?? normalized['price'],
     );
 
-    // Handle image path normalization - Meals use api.hermosaapp.com
+    // Handle image path normalization - Meals use portal.hermosaapp.com
     if (normalized['image'] != null && normalized['image'] is String) {
       String imagePath = normalized['image'];
       if (imagePath.isNotEmpty && !imagePath.startsWith('http')) {
         if (!imagePath.startsWith('/')) {
           imagePath = '/$imagePath';
         }
-        normalized['image'] = 'https://api.hermosaapp.com$imagePath';
+        normalized['image'] = 'https://portal.hermosaapp.com$imagePath';
       }
     }
 

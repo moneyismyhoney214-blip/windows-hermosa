@@ -560,13 +560,13 @@ class ReceiptBuilderService {
       if (branchSeller is Map && branchSeller['logo'] != null) {
         final logo = branchSeller['logo'].toString();
         logoUrl = logo.startsWith('/')
-            ? 'https://api.hermosaapp.com$logo'
+            ? 'https://portal.hermosaapp.com$logo'
             : logo;
       } else if (branchOriginalSeller is Map &&
           branchOriginalSeller['logo'] != null) {
         final logo = branchOriginalSeller['logo'].toString();
         logoUrl = logo.startsWith('/')
-            ? 'https://api.hermosaapp.com$logo'
+            ? 'https://portal.hermosaapp.com$logo'
             : logo;
       }
     }

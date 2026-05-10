@@ -294,7 +294,7 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
       _asMap(branchMap?['original_seller'])?['logo'],
     ]);
     if (logoUrl != null && logoUrl.startsWith('/')) {
-      logoUrl = 'https://api.hermosaapp.com$logoUrl';
+      logoUrl = 'https://portal.hermosaapp.com$logoUrl';
     }
 
     return OrderReceiptData(
