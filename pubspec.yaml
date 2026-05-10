@@ -1,7 +1,7 @@
 name: hermosa_pos
 description: A modern POS system converted from React.
 publish_to: 'none'
-version: 1.0.2+22
+version: 1.0.3+23
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
