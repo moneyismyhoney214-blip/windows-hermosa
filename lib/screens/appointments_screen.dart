@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:lucide_icons/lucide_icons.dart';
+import '../locator.dart';
 import '../services/api/base_client.dart';
 import '../services/api/api_constants.dart';
+import '../services/cache_service.dart';
 import '../services/language_service.dart';
 import '../services/app_themes.dart';
 
@@ -26,6 +28,7 @@ class AppointmentsScreen extends StatefulWidget {
 
 class _AppointmentsScreenState extends State<AppointmentsScreen> {
   final BaseClient _client = BaseClient();
+  final CacheService _cache = getIt<CacheService>();
   final NumberFormat _amountFormatter = NumberFormat('#,##0.##');
 
   // ── State ────────────────────────────────────────────────────────────────
@@ -66,20 +69,56 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
   }
 
   // ── Data loading ─────────────────────────────────────────────────────────
+  // Cache key for the current (date, employee) filter pair. Used to paint
+  // the last-seen response instantly while the network call refreshes in
+  // the background — same pattern as `OrdersScreenData._loadData` for
+  // restaurant bookings, since the user reported the spinner-blocking
+  // delay made the salon screen feel slower than orders despite the
+  // matching API.
+  String get _appointmentsCacheKey {
+    final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+    final emp =
+        (_selectedEmployeeId == null || _selectedEmployeeId!.isEmpty)
+            ? 'all'
+            : _selectedEmployeeId!;
+    return 'salon_appointments_${dateStr}_$emp';
+  }
+
   Future<void> _loadAppointments() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+    String endpoint =
+        '${ApiConstants.salonAppointmentsCalendarEndpoint}?date_from=$dateStr&date_to=$dateStr';
+    if (_selectedEmployeeId != null && _selectedEmployeeId!.isNotEmpty) {
+      endpoint += '&employee_id=$_selectedEmployeeId';
+    }
+
+    // Paint the cached response (if any) immediately so the user sees
+    // their appointments while the fresh request is still in flight.
+    Map<String, dynamic>? cached;
+    try {
+      final raw = await _cache.get(_appointmentsCacheKey);
+      if (raw is Map) {
+        cached = Map<String, dynamic>.from(raw);
+      }
+    } catch (_) {
+      cached = null;
+    }
+    if (!mounted) return;
+
+    if (cached != null) {
+      _parseResponse(cached);
+      setState(() {
+        _isLoading = false;
+        _error = null;
+      });
+    } else {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
 
     try {
-      final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
-      String endpoint =
-          '${ApiConstants.salonAppointmentsCalendarEndpoint}?date_from=$dateStr&date_to=$dateStr';
-      if (_selectedEmployeeId != null && _selectedEmployeeId!.isNotEmpty) {
-        endpoint += '&employee_id=$_selectedEmployeeId';
-      }
-
       final response = await _client.get(endpoint);
       if (!mounted) return;
 
@@ -88,13 +127,26 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
 
       _parseResponse(responseMap);
 
+      // Persist for next open. 6h expiry is well past a typical salon
+      // shift and short enough that a stale entry won't outlive the day's
+      // schedule changes by much.
+      unawaited(_cache.set(
+        _appointmentsCacheKey,
+        responseMap,
+        expiry: const Duration(hours: 6),
+      ));
+
       setState(() {
         _isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        // Keep the cached list visible if we already painted it; only
+        // surface the error when there's nothing on screen.
+        if (_appointments.isEmpty) {
+          _error = e.toString();
+        }
         _isLoading = false;
       });
     }

@@ -33,6 +33,9 @@ final Map<String, String> _hiTranslations = {
     'profile': 'प्रोफाइल',
     'products': 'उत्पाद',
     'categories': 'श्रेणियां',
+    'employees': 'कर्मचारी',
+    'employees_income': 'कर्मचारी आय',
+    'no_employee_data': 'कर्मचारी डेटा नहीं',
     'all': 'सभी',
     'price': 'कीमत',
     'quantity': 'मात्रा',
@@ -94,6 +97,8 @@ final Map<String, String> _hiTranslations = {
     'customers': 'ग्राहक',
     'devices': 'डिवाइस',
     'cashier': 'कैशियर',
+    'all_cashiers': 'सभी कैशियर',
+    'filter_by_cashier': 'कैशियर के अनुसार समापन फ़िल्टर करें',
     'printers': 'प्रिंटर',
     'cds_kds_devices': 'CDS / KDS डिवाइस',
     'logout_confirm_title': 'लॉग आउट',
@@ -447,6 +452,13 @@ final Map<String, String> _hiTranslations = {
     'phone_required': 'कृपया फोन नंबर दर्ज करें',
     'update_data': 'डेटा अपडेट करें',
     'save_customer': 'ग्राहक सेव करें',
+    'customer_type': 'ग्राहक प्रकार',
+    'type_individual': 'व्यक्तिगत',
+    'type_company': 'कंपनी',
+    'tax_number': 'कर संख्या',
+    'tax_number_hint': 'उदा. 300000000000003',
+    'commercial_register': 'वाणिज्यिक रजिस्टर',
+    'commercial_register_hint': 'वाणिज्यिक रजिस्टर संख्या',
 
     // Display Device Management
     'display_devices_management_title':
@@ -506,9 +518,9 @@ final Map<String, String> _hiTranslations = {
     'meal_icon_size': 'भोजन आइकन आकार',
     'meal_icon_size_hint':
         'उत्पाद ग्रिड में भोजन कार्ड का आकार समायोजित करें।',
-    'sidebar_icon_size': 'साइडबार आइकन आकार',
+    'sidebar_icon_size': 'शीर्ष बार आइकन आकार',
     'sidebar_icon_size_hint':
-        'साइडबार में श्रेणी आइकन का आकार समायोजित करें।',
+        'शीर्ष बार में श्रेणी आइकन का आकार समायोजित करें।',
     'category_layout': 'श्रेणी प्रदर्शन',
     'category_layout_hint': 'चुनें कि श्रेणियाँ कैसे प्रदर्शित हों: क्षैतिज या लंबवत साइडबार।',
     'category_layout_horizontal': 'क्षैतिज',

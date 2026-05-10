@@ -175,6 +175,23 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                       : null,
                 ),
               ),
+              if (widget.onAddBooking != null) ...[
+                const SizedBox(width: 4),
+                // Add Booking — salon-only. Confirms the cart as a booked
+                // appointment (`?book_appointment&create_order`) and the
+                // host screen routes to the "الحجوزات" tab.
+                Expanded(
+                  flex: 2,
+                  child: _buildActionButton(
+                    label: _tr('إضافة حجز', 'Add Booking'),
+                    icon: LucideIcons.calendarCheck,
+                    color: const Color(0xFF6366F1),
+                    onPressed: hasItems
+                        ? () => _ensureCustomer(widget.onAddBooking!)
+                        : null,
+                  ),
+                ),
+              ],
               const SizedBox(width: 4),
               // Pay Now
               Expanded(

@@ -236,7 +236,7 @@ extension MainScreenSettings on _MainScreenState {
   }
 
   Future<void> _setMealIconScale(double value) async {
-    final clamped = value.clamp(0.85, 1.4).toDouble();
+    final clamped = value.clamp(0.75, 1.5).toDouble();
     setState(() {
       _mealIconScale = clamped;
     });

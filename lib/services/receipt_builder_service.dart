@@ -350,6 +350,12 @@ class ReceiptBuilderService {
     String activeMenuListName = '',
     String menuListPriceType = '',
     bool isMenuListActive = false,
+    // Salon module stores per-item prices tax-inclusive (the catalog
+    // service price already contains VAT). Restaurant items are pre-tax
+    // and need to be grossed up for the printed line. Without this flag
+    // the salon receipt double-taxes each line: a 359 SAR invoice prints
+    // its items as 359 × 1.10 ≈ 395 while the totals block still says 359.
+    bool itemsAlreadyTaxInclusive = false,
   }) {
     final subtotal = subtotalFromTaxInclusiveTotal(orderTotal,
         isTaxEnabled: isTaxEnabled, taxRate: taxRate);
@@ -554,13 +560,13 @@ class ReceiptBuilderService {
       if (branchSeller is Map && branchSeller['logo'] != null) {
         final logo = branchSeller['logo'].toString();
         logoUrl = logo.startsWith('/')
-            ? 'https://portal.hermosaapp.com$logo'
+            ? 'https://api.hermosaapp.com$logo'
             : logo;
       } else if (branchOriginalSeller is Map &&
           branchOriginalSeller['logo'] != null) {
         final logo = branchOriginalSeller['logo'].toString();
         logoUrl = logo.startsWith('/')
-            ? 'https://portal.hermosaapp.com$logo'
+            ? 'https://api.hermosaapp.com$logo'
             : logo;
       }
     }
@@ -769,7 +775,9 @@ class ReceiptBuilderService {
       final rawQty = (item['quantity'] as num?)?.toDouble() ?? 0;
       final rawUnitPrice = (item['unitPrice'] as num?)?.toDouble() ?? 0;
       final rawTotal = (item['total'] as num?)?.toDouble() ?? 0;
-      final multiplier = isTaxEnabled ? (1.0 + taxRate) : 1.0;
+      final multiplier = (isTaxEnabled && !itemsAlreadyTaxInclusive)
+          ? (1.0 + taxRate)
+          : 1.0;
 
       final rawExtras = item['extras'];
       final addons = <ReceiptAddon>[];
@@ -889,6 +897,139 @@ class ReceiptBuilderService {
       ));
     }
     return parsedPayments;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Deposit receipt
+  // ---------------------------------------------------------------------------
+
+  /// Map a deposit-detail envelope (`GET /seller/branches/{id}/deposits/{id}`)
+  /// into an [OrderReceiptData] tagged with `kind = 'deposit'`. The
+  /// [InvoicePrintWidget] looks at that flag and switches to the deposit
+  /// view (DP-NNN badge, dual title, single-column services table, 3-row
+  /// tax breakdown).
+  ///
+  /// Kept here — alongside the cashier/waiter `build` — so deposit prints
+  /// share the same single source of truth instead of forking into the
+  /// dialog or main screen.
+  static OrderReceiptData buildDepositReceipt({
+    required Map<String, dynamic> envelope,
+  }) {
+    Map<String, dynamic> asMap(dynamic v) {
+      if (v is Map<String, dynamic>) return v;
+      if (v is Map) return v.map((k, vv) => MapEntry(k.toString(), vv));
+      return const <String, dynamic>{};
+    }
+
+    double parseAmount(dynamic v) {
+      if (v == null) return 0.0;
+      if (v is num) return v.toDouble();
+      var cleaned = v.toString().replaceAll(RegExp(r'[^\d.\-]'), '');
+      if (cleaned.isEmpty) return 0.0;
+      final dotIndex = cleaned.indexOf('.');
+      if (dotIndex >= 0) {
+        cleaned = cleaned.substring(0, dotIndex + 1) +
+            cleaned.substring(dotIndex + 1).replaceAll('.', '');
+      }
+      return double.tryParse(cleaned) ?? 0.0;
+    }
+
+    final invoice = asMap(envelope['invoice']);
+    final branch = asMap(envelope['branch']);
+    final originalSeller = asMap(branch['original_seller']);
+    final seller = asMap(branch['seller']);
+    final client = asMap(invoice['client']);
+    final cashier = asMap(invoice['cashier']);
+
+    final items = <ReceiptItem>[];
+    final rawItems = invoice['items'];
+    if (rawItems is List) {
+      for (final entry in rawItems) {
+        if (entry is! Map) continue;
+        final name = (entry['service_name'] ?? entry['name'] ?? '').toString();
+        if (name.isEmpty) continue;
+        items.add(ReceiptItem(
+          nameAr: name,
+          nameEn: name,
+          quantity: 1,
+          unitPrice: 0,
+          total: 0,
+        ));
+      }
+    }
+
+    String? extractPolicy(String langKey) {
+      final raw = originalSeller['policy'];
+      if (raw == null) return null;
+      // The dashboard returns policy as a JSON string keyed by language:
+      // `'{"ar":"...","en":"..."}'`. Decode defensively.
+      String text = raw.toString();
+      if (text.trim().startsWith('{')) {
+        final match = RegExp('"$langKey"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"')
+            .firstMatch(text);
+        if (match != null) {
+          text = (match.group(1) ?? '')
+              .replaceAll(r'\r\n', '\n')
+              .replaceAll(r'\n', '\n');
+        } else {
+          // JSON-shaped policy but the language we asked for isn't there —
+          // treat as missing instead of leaking the raw `{...}` string.
+          return null;
+        }
+      }
+      // Normalize empty / whitespace-only strings to null so the print
+      // widget can suppress the policy block entirely when the seller
+      // hasn't configured one (we don't want a header with no body).
+      final trimmed = text.trim();
+      if (trimmed.isEmpty) return null;
+      return trimmed;
+    }
+
+    String dualSellerNameAr(String raw) {
+      // `branch.seller_name` arrives as "ar | en". Strip the English suffix
+      // for the Arabic header and return the second half separately.
+      final parts = raw.split('|');
+      return parts.first.trim();
+    }
+
+    String dualSellerNameEn(String raw) {
+      final parts = raw.split('|');
+      return parts.length > 1 ? parts.last.trim() : '';
+    }
+
+    final sellerNameRaw = (branch['seller_name'] ?? '').toString();
+
+    return OrderReceiptData(
+      kind: 'deposit',
+      invoiceNumber: (invoice['invoice_number'] ?? '').toString(),
+      issueDateTime:
+          (invoice['ISO8601'] ?? invoice['date'] ?? '').toString(),
+      issueDate: (invoice['date'] ?? '').toString(),
+      issueTime: (invoice['time'] ?? '').toString(),
+      bookingDate: invoice['booking_date']?.toString(),
+      bookingTime: invoice['booking_time']?.toString(),
+      sellerNameAr: dualSellerNameAr(sellerNameRaw),
+      sellerNameEn: dualSellerNameEn(sellerNameRaw),
+      vatNumber: (seller['tax_number'] ?? originalSeller['tax_number'] ?? '')
+          .toString(),
+      branchName: dualSellerNameAr(sellerNameRaw),
+      sellerLogo: (seller['logo'] ?? originalSeller['logo'])?.toString(),
+      commercialRegisterNumber:
+          (branch['commercial_number'] ?? seller['commercial_register'] ?? '')
+              .toString(),
+      cashierName: (cashier['fullname'] ?? cashier['name'] ?? '').toString(),
+      clientName: (client['name'] ?? '').toString(),
+      clientPhone: (client['mobile'] ?? '').toString(),
+      items: items,
+      totalExclVat: parseAmount(invoice['price']),
+      vatAmount: parseAmount(invoice['tax']),
+      totalInclVat: parseAmount(invoice['total']),
+      paymentMethod: (invoice['payment_methods'] ?? '').toString(),
+      qrCodeBase64: '',
+      zatcaQrImage: invoice['zatca_qr_image']?.toString(),
+      returnPolicyAr: extractPolicy('ar'),
+      returnPolicyEn: extractPolicy('en'),
+    );
   }
 }
 

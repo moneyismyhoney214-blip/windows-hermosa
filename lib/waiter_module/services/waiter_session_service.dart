@@ -69,7 +69,22 @@ class WaiterSessionService extends ChangeNotifier {
 
   Future<void> signOut() async {
     final prefs = await SharedPreferences.getInstance();
+    // Blank the keys before removing them so a force-kill between the
+    // two removes can't leave the device in a "stale branch, no name"
+    // state. setString('') is a single atomic write per key on
+    // SharedPreferences; the subsequent removes are belt-and-braces
+    // cleanup that the next sign-in will overwrite anyway.
+    //
+    // Why both keys must clear in lockstep: if waiter A signs out and
+    // waiter B signs in later on a DIFFERENT branch, initialize() at
+    // line 29 reads `_kBranchKey ?? branchId`. A stale branch value
+    // would seed B's session with A's branch until sign-in overwrites,
+    // and any mesh broadcast in that window leaks to/from the wrong
+    // branch.
+    await prefs.setString(_kNameKey, '');
+    await prefs.setString(_kBranchKey, '');
     await prefs.remove(_kNameKey);
+    await prefs.remove(_kBranchKey);
     _self = _self?.copyWith(name: '', status: WaiterStatus.offline);
     notifyListeners();
   }

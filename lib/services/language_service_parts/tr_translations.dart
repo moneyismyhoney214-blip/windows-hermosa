@@ -34,6 +34,9 @@ final Map<String, String> _trTranslations = {
     'profile': 'Profil',
     'products': 'Ürünler',
     'categories': 'Kategoriler',
+    'employees': 'Çalışanlar',
+    'employees_income': 'Çalışan Geliri',
+    'no_employee_data': 'Çalışan verisi yok',
     'all': 'Tümü',
     'price': 'Fiyat',
     'quantity': 'Miktar',
@@ -94,6 +97,8 @@ final Map<String, String> _trTranslations = {
     'try_again': 'Tekrar dene',
     'devices': 'Cihazlar',
     'cashier': 'Kasa',
+    'all_cashiers': 'Tüm Kasiyerler',
+    'filter_by_cashier': 'Kasiyere göre kapanış filtrele',
     'printers': 'Yazıcılar',
     'cds_kds_devices': 'CDS / KDS Cihazları',
     'logout_confirm_title': 'Çıkış Yap',
@@ -449,6 +454,13 @@ final Map<String, String> _trTranslations = {
     'phone_required': 'Lütfen telefon numarasını girin',
     'update_data': 'Verileri Güncelle',
     'save_customer': 'Müşteriyi Kaydet',
+    'customer_type': 'Müşteri Türü',
+    'type_individual': 'Bireysel',
+    'type_company': 'Şirket',
+    'tax_number': 'Vergi Numarası',
+    'tax_number_hint': 'örn. 300000000000003',
+    'commercial_register': 'Ticari Sicil',
+    'commercial_register_hint': 'Ticari sicil numarası',
 
     // Display Device Management
     'display_devices_management_title':
@@ -508,9 +520,9 @@ final Map<String, String> _trTranslations = {
     'meal_icon_size': 'Yemek İkonu Boyutu',
     'meal_icon_size_hint':
         'Ürün ızgarasındaki yemek kartlarının boyutunu ayarlayın.',
-    'sidebar_icon_size': 'Kenar Çubuğu İkon Boyutu',
+    'sidebar_icon_size': 'Üst Çubuk İkon Boyutu',
     'sidebar_icon_size_hint':
-        'Kenar çubuğundaki kategori ikonlarının boyutunu ayarlayın.',
+        'Üst çubuktaki kategori ikonlarının boyutunu ayarlayın.',
     'category_layout': 'Kategori Görünümü',
     'category_layout_hint': 'Kategorilerin nasıl görüntüleneceğini seçin: yatay veya dikey kenar çubuğu.',
     'category_layout_horizontal': 'Yatay',

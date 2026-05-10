@@ -85,7 +85,7 @@ android {
         // `local.libs:centrum-printer` jar is removed at the
         // configuration level (above) so the classpath stays clean
         // across every variant.
-        implementation("io.nearpay:terminalsdk-release:0.0.169")
+        implementation("io.nearpay:terminalsdk-release:0.0.187")
         implementation("com.google.android.gms:play-services-location:20.0.0")
         implementation("com.huawei.hms:location:6.4.0.300")
         // Centerm Q7 POS SDK (printer + system services). Backed by the

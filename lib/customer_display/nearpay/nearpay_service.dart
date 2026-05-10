@@ -69,8 +69,8 @@ class NearPayService {
   String? _normalizeBackendUrl(String? value) {
     final raw = value?.toString().trim();
     if (raw == null || raw.isEmpty) return null;
-    if (raw.contains('portal.hermosaapp.com')) {
-      return 'https://portal.hermosaapp.com';
+    if (raw.contains('api.hermosaapp.com')) {
+      return 'https://api.hermosaapp.com';
     }
     if (raw.endsWith('/seller')) {
       return raw.substring(0, raw.length - '/seller'.length);
@@ -446,7 +446,7 @@ class NearPayService {
   ///   'type': 'nearpay_init',
   ///   'data': {
   ///     'branch_id': 60,
-  ///     'backend_url': 'https://portal.hermosaapp.com',
+  ///     'backend_url': 'https://api.hermosaapp.com',
   ///     'auth_token': 'bearer_token_here'
   ///   }
   /// }
@@ -1267,7 +1267,7 @@ class NearPayService {
           'issue': 'Cannot reach NearPay servers',
           'check_1': 'Device has WiFi/Mobile data enabled',
           'check_2': 'No firewall blocking port 443',
-          'check_3': 'DNS is resolving portal.hermosaapp.com',
+          'check_3': 'DNS is resolving api.hermosaapp.com',
           'check_4': 'Try connecting to a different network',
           'contact': 'Reach out to NearPay support if issue persists',
         });
@@ -1695,7 +1695,13 @@ class NearPayService {
               onStatusUpdate('فشل القراءة: $msg');
             },
           ),
-          // Transaction callbacks
+          // Transaction callbacks. NB: this callback fires on BOTH approved
+          // and declined cards — NearPay treats "the transaction completed
+          // its lifecycle" as completion, not "the card was charged". Gate
+          // the success path on the SDK's `status` field (it uses 'success'
+          // for approval everywhere else in the wrapper, see
+          // terminal_response.dart) so a declined card surfaces as a real
+          // failure and the cashier skips invoice/print.
           onTransactionPurchaseCompleted: (response) {
             flagCallback();
             terminalOutcomeFired = true;
@@ -1704,6 +1710,9 @@ class NearPayService {
             // Structure: PurchaseResponse -> details -> transactions -> last -> id
             String transactionId = transactionUuid; // Fallback
 
+            String? topStatus;
+            String? lastStatus;
+            String? cancelReason;
             try {
               final lastTransaction = response.getLastTransaction();
               if (lastTransaction?.id != null) {
@@ -1713,10 +1722,14 @@ class NearPayService {
                 transactionId = lastTransaction!.referenceId!;
                 _npLog('✅ Transaction ID from referenceId: $transactionId');
               }
+              topStatus = response.status?.trim().toLowerCase();
+              lastStatus = lastTransaction?.status?.trim().toLowerCase();
+              cancelReason = lastTransaction?.cancelReason;
               _npLog(
                 'callback.onTransactionPurchaseCompleted '
                 'status=${response.status} '
                 'lastStatus=${lastTransaction?.status} '
+                'cancelReason=$cancelReason '
                 'amountOther=${lastTransaction?.amountOther}',
               );
             } catch (e) {
@@ -1726,7 +1739,24 @@ class NearPayService {
               );
             }
 
-            resolveWithSuccess(transactionId);
+            // Approved iff a status field reads 'success'/'approved' and
+            // there's no cancel reason. Mirrors the rest of the wrapper
+            // (terminal_response.dart treats 'success' as the canonical
+            // approval token).
+            const approvedTokens = {'success', 'approved'};
+            final approved = (cancelReason == null || cancelReason.isEmpty) &&
+                (approvedTokens.contains(topStatus) ||
+                    approvedTokens.contains(lastStatus));
+
+            if (approved) {
+              resolveWithSuccess(transactionId);
+            } else {
+              final reason = (cancelReason != null && cancelReason.isNotEmpty)
+                  ? cancelReason
+                  : 'تم رفض البطاقة (status=${lastStatus ?? topStatus ?? 'unknown'})';
+              _npLog('❌ Transaction NOT approved → resolveWithFailure: $reason');
+              resolveWithFailure(reason);
+            }
           },
           onSendTransactionFailure: (msg) {
             flagCallback();

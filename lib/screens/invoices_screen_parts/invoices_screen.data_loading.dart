@@ -34,7 +34,15 @@ extension InvoicesScreenDataLoading on _InvoicesScreenState {
     // for the slow `/seller/branches/{id}/invoices` round-trip. Restaurant
     // module keeps the original "spinner-first" UX so its flow is untouched.
     Map<String, dynamic>? salonCached;
-    if (shouldReset && isSalonMode) {
+    // One-shot bypass: if main_screen just created an invoice, the cached
+    // page would render WITHOUT it for the few seconds the API takes —
+    // confusing for the user. Skip the cache once and go straight to the
+    // API (which will include the new invoice).
+    final skipSalonCache = isSalonMode && _skipSalonCacheOnNextLoad;
+    if (skipSalonCache) {
+      _skipSalonCacheOnNextLoad = false;
+    }
+    if (shouldReset && isSalonMode && !skipSalonCache) {
       try {
         salonCached = await _orderService.getCachedInvoices(
           dateFrom: _activeDate,

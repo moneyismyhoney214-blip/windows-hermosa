@@ -45,7 +45,7 @@ class ErrorHandler {
       userMessage = 'انتهت مهلة الاتصال بالخادم. حاول مرة أخرى.';
     } else if (error is SocketException) {
       final url = requestUrl?.toLowerCase() ?? '';
-      if (url.contains('portal.hermosaapp.com')) {
+      if (url.contains('api.hermosaapp.com')) {
         userMessage =
             'تعذر الوصول إلى خادم Hermosa. تحقق من الشبكة/الجدار الناري أو جرّب شبكة أخرى.';
       } else {

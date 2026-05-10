@@ -135,9 +135,21 @@ extension MainScreenSalon on _MainScreenState {
       String url = '';
 
       // 1. Try the cached receipt info first (populated at startup).
+      // The cache has TWO logo sources:
+      //   * `branch_logo_url` (top-level) — sourced from `/seller/branches`
+      //     which is the only endpoint that reliably returns the logo on
+      //     accounts where `/seller/get_branches/{id}` 500s.
+      //   * `branch.logo` (nested) — sourced from `/seller/get_branches/{id}`
+      //     which works for healthy accounts.
+      // Prefer the top-level URL since it never 500s.
       final cached = branchService.cachedBranchReceiptInfo;
       if (cached != null) {
-        url = _pickLogoFromBranch(cached['branch']);
+        final topLevel = cached['branch_logo_url']?.toString().trim() ?? '';
+        if (topLevel.isNotEmpty && topLevel.toLowerCase() != 'null') {
+          url = topLevel;
+        } else {
+          url = _pickLogoFromBranch(cached['branch']);
+        }
       }
 
       // 2. Fall back to a direct API call.
@@ -147,7 +159,7 @@ extension MainScreenSalon on _MainScreenState {
 
       if (url.isEmpty) return;
       if (url.startsWith('/')) {
-        url = 'https://portal.hermosaapp.com$url';
+        url = 'https://api.hermosaapp.com$url';
       }
 
       if (!mounted) return;

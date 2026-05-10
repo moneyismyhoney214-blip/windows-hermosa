@@ -33,6 +33,9 @@ final Map<String, String> _urTranslations = {
     'profile': 'پروفائل',
     'products': 'مصنوعات',
     'categories': 'زمرے',
+    'employees': 'ملازمین',
+    'employees_income': 'ملازمین کی آمدنی',
+    'no_employee_data': 'ملازمین کا ڈیٹا نہیں',
     'all': 'سب',
     'price': 'قیمت',
     'quantity': 'مقدار',
@@ -94,6 +97,8 @@ final Map<String, String> _urTranslations = {
     'customers': 'گاہک',
     'devices': 'ڈیوائسز',
     'cashier': 'کیشیئر',
+    'all_cashiers': 'تمام کیشیئر',
+    'filter_by_cashier': 'کیشیئر کے لحاظ سے بندش فلٹر کریں',
     'printers': 'پرنٹرز',
     'cds_kds_devices': 'CDS / KDS ڈیوائسز',
     'logout_confirm_title': 'لاگ آؤٹ',
@@ -449,6 +454,13 @@ final Map<String, String> _urTranslations = {
     'phone_required': 'براہ کرم فون نمبر درج کریں',
     'update_data': 'ڈیٹا اپ ڈیٹ کریں',
     'save_customer': 'گاہک محفوظ کریں',
+    'customer_type': 'گاہک کی قسم',
+    'type_individual': 'فرد',
+    'type_company': 'کمپنی',
+    'tax_number': 'ٹیکس نمبر',
+    'tax_number_hint': 'مثلاً 300000000000003',
+    'commercial_register': 'تجارتی رجسٹر',
+    'commercial_register_hint': 'تجارتی رجسٹر نمبر',
 
     // Display Device Management
     'display_devices_management_title':
@@ -508,9 +520,9 @@ final Map<String, String> _urTranslations = {
     'meal_icon_size': 'کھانے کے آئیکن کا سائز',
     'meal_icon_size_hint':
         'پروڈکٹ گرڈ میں کھانے کے کارڈز کا سائز ایڈجسٹ کریں۔',
-    'sidebar_icon_size': 'سائیڈبار آئیکن کا سائز',
+    'sidebar_icon_size': 'اوپری بار آئیکن کا سائز',
     'sidebar_icon_size_hint':
-        'سائیڈبار میں زمرہ آئیکنز کا سائز ایڈجسٹ کریں۔',
+        'اوپری بار میں زمرہ آئیکنز کا سائز ایڈجسٹ کریں۔',
     'category_layout': 'زمرہ جات کی نمائش',
     'category_layout_hint': 'منتخب کریں کہ زمرے کیسے دکھائے جائیں: افقی یا عمودی سائیڈبار۔',
     'category_layout_horizontal': 'افقی',

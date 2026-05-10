@@ -53,4 +53,17 @@ class CacheService {
     final prefs = await _instance;
     await prefs.remove('$_prefix$key');
   }
+
+  /// Return cache keys (without the internal prefix) whose name starts with
+  /// [prefix]. Useful for invalidating or rewriting a family of related
+  /// cache entries (e.g. all `bookings_<today>_*` filters).
+  Future<List<String>> keysWithPrefix(String prefix) async {
+    final prefs = await _instance;
+    final allKeys = prefs.getKeys();
+    final fullPrefix = '$_prefix$prefix';
+    return allKeys
+        .where((k) => k.startsWith(fullPrefix))
+        .map((k) => k.substring(_prefix.length))
+        .toList(growable: false);
+  }
 }

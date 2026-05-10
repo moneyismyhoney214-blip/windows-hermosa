@@ -43,6 +43,9 @@ final Map<String, String> _enTranslations = {
     'branch_location': 'Specialized Branch - Riyadh',
     'products': 'Products',
     'categories': 'Categories',
+    'employees': 'Employees',
+    'employees_income': 'Employees Income',
+    'no_employee_data': 'No employee data',
     'all': 'All',
     'price': 'Price',
     'quantity': 'Quantity',
@@ -173,6 +176,8 @@ final Map<String, String> _enTranslations = {
     'connection_info_desc': 'Make sure the device is on the same WiFi network',
     'devices': 'Devices',
     'cashier': 'Cashier',
+    'all_cashiers': 'All Cashiers',
+    'filter_by_cashier': 'Filter closing by cashier',
     'printers': 'Printers',
     'cds_kds_devices': 'CDS / KDS Devices',
     'logout_confirm_title': 'Logout',
@@ -197,6 +202,13 @@ final Map<String, String> _enTranslations = {
     'phone_required': 'Please enter phone number',
     'update_data': 'Update Data',
     'save_customer': 'Save Customer',
+    'customer_type': 'Customer Type',
+    'type_individual': 'Individual',
+    'type_company': 'Company',
+    'tax_number': 'Tax Number',
+    'tax_number_hint': 'e.g. 300000000000003',
+    'commercial_register': 'Commercial Register',
+    'commercial_register_hint': 'Commercial register number',
     'display_devices_management_title': 'Manage Display Devices (CDS / KDS)',
     'add_display_screen': 'Add Screen',
     'no_display_devices_added': 'No display devices added',
@@ -279,8 +291,11 @@ final Map<String, String> _enTranslations = {
         'When enabled, invoice preview/printing remains available even if KDS receives the order.',
     'meal_icon_size': 'Meal Icon Size',
     'meal_icon_size_hint': 'Adjust the size of meal cards in the product grid.',
-    'sidebar_icon_size': 'Sidebar Icon Size',
-    'sidebar_icon_size_hint': 'Adjust the size of category icons in the sidebar.',
+    'default': 'Default',
+    'icon_size_choose': 'Choose the size that suits you',
+    'reset_to_default': 'Reset to default',
+    'sidebar_icon_size': 'Top Bar Icon Size',
+    'sidebar_icon_size_hint': 'Adjust the size of category icons in the top bar.',
     'category_layout': 'Category Display',
     'category_layout_hint': 'Choose how categories are displayed: horizontal or vertical sidebar.',
     'category_layout_horizontal': 'Horizontal',
@@ -752,6 +767,28 @@ final Map<String, String> _enTranslations = {
     'whatsapp_settings_test_deeplink_ok':
         'WhatsApp opened — confirm sending on the device',
     'whatsapp_settings_test_failed': 'Send failed: {reason}',
+
+    // ---- Invoice WhatsApp (PDF) ----
+    'send_invoice_whatsapp': 'Send invoice on WhatsApp',
+    'invoice_whatsapp_sending': 'Sending…',
+    'invoice_whatsapp_sent_label': 'Sent',
+    'invoice_whatsapp_sent_ok': 'Invoice sent on WhatsApp ✓',
+    'invoice_whatsapp_in_flight': 'Already sending, please wait',
+    'invoice_whatsapp_already_sent': 'This invoice was already sent',
+    'invoice_whatsapp_disabled': 'WhatsApp is not enabled for this branch',
+    'invoice_whatsapp_no_customer':
+        'Add a customer with a phone number to send the invoice',
+    'invoice_whatsapp_creds_missing':
+        'WhatsApp credentials are not configured for this branch',
+    'invoice_whatsapp_pdf_unavailable':
+        'Could not get a public PDF URL for the invoice',
+    'failed_to_send_whatsapp_with_reason': 'Failed to send WhatsApp: {reason}',
+    'invoice_whatsapp_resend_title': 'Resend invoice?',
+    'invoice_whatsapp_resend_body':
+        'This invoice was already sent on WhatsApp. Send it again?',
+    'invoice_whatsapp_resend_body_named':
+        'This invoice was already sent to {name} on WhatsApp. Send it again?',
+    'invoice_whatsapp_resend_confirm': 'Yes, send',
 
     // ---- Shared ----
     'options': 'Options',

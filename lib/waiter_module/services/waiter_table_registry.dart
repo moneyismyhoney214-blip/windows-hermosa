@@ -137,6 +137,27 @@ class WaiterTableRegistry extends ChangeNotifier {
         );
         break;
       case TableLifecycleKind.paymentPending:
+        // Reject a late paymentPending after the row was already
+        // marked paid for the SAME billing session — that's an
+        // out-of-order broadcast (the network delivered `paid` first,
+        // `paymentPending` after). Applying it would flip the table
+        // back to "pending" and re-open the cashier's collection flow
+        // on a closed booking.
+        //
+        // Scoped by orderId so a re-opened/adjusted invoice with a
+        // fresh orderId — or no recorded prev orderId — still flows
+        // through. Same orderId after `paid` is the only case we drop.
+        final sameSession = prev?.paid == true &&
+            prev?.orderId != null &&
+            prev!.orderId == event.orderId;
+        if (sameSession) {
+          debugPrint(
+            '⚠️ WaiterTableRegistry: dropping out-of-order paymentPending '
+            'for table ${event.tableId} — row already paid for orderId '
+            '${prev.orderId}',
+          );
+          break;
+        }
         _byTableId[event.tableId] = (prev ?? _empty(event)).copyWith(
           paymentPending: true,
           paid: false,
@@ -151,6 +172,9 @@ class WaiterTableRegistry extends ChangeNotifier {
           paymentPending: false,
           paid: true,
           total: event.total,
+          // Lock the orderId on `paid` so the paymentPending guard
+          // above can scope rejection to this exact billing session.
+          orderId: event.orderId ?? prev?.orderId,
         );
         break;
     }
@@ -315,12 +339,28 @@ class WaiterTableRegistry extends ChangeNotifier {
   /// the order screen with a permanent ghost claim. The backend is the
   /// authority on whether a table is free; if it says `available` we
   /// drop our local opinion.
-  void reconcileWithBackend(Iterable<String> availableTableIds) {
+  ///
+  /// [selfId] — when provided, takingOrder rows owned by self are kept
+  /// even if the backend says the table is available. The local waiter
+  /// is mid-order; the backend doesn't see the booking until items are
+  /// pushed. Without this guard, an unlucky reconcile fired while the
+  /// waiter is composing the order would wipe their table card and the
+  /// indicator would have to wait for the next broadcast to come back.
+  void reconcileWithBackend(
+    Iterable<String> availableTableIds, {
+    String? selfId,
+  }) {
     if (_byTableId.isEmpty) return;
     final evicted = <String>[];
     for (final id in availableTableIds) {
       final row = _byTableId[id];
       if (row == null) continue;
+      if (row.takingOrder &&
+          selfId != null &&
+          selfId.isNotEmpty &&
+          row.waiterId == selfId) {
+        continue;
+      }
       if (row.paid || row.paymentPending || row.takingOrder) {
         _byTableId.remove(id);
         evicted.add(id);

@@ -4,7 +4,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'api_constants.dart';
 import 'base_client.dart';
+import 'branch_service.dart';
+import '../../locator.dart';
 import '../../models/branch.dart';
+import '../../customer_display/nearpay/secure_credential_manager.dart';
+import '../../waiter_module/services/mesh_auth_service.dart';
 import '../nearpay/nearpay_service.dart';
 import '../whatsapp_service.dart';
 
@@ -598,7 +602,7 @@ class AuthService {
 
   // ──────────────────────────── Forgot password ────────────────────────────
   //
-  // Three-step flow backed by `portal.hermosaapp.com`. The first step accepts
+  // Three-step flow backed by `api.hermosaapp.com`. The first step accepts
   // either a mobile number or an email — the backend keys both into the
   // same signed-route response so steps 2/3 are identical regardless:
   //   1. POST /seller/forgot           body: mobile=... | email=... → signed_route for step 2
@@ -779,6 +783,27 @@ class AuthService {
     return false;
   }
 
+  /// True when the signed-in user has the OWNER role (case-insensitive).
+  /// Used to gate owner-only features such as the per-cashier filter on the
+  /// daily closing report.
+  bool isOwner() {
+    final user = _cachedUser;
+    if (user == null) return false;
+    final candidates = <dynamic>[
+      user['role'],
+      user['user_role'],
+      user['employee_role'],
+      user['type'],
+    ];
+    for (final value in candidates) {
+      final token = value?.toString().trim().toLowerCase();
+      if (token != null && token.isNotEmpty) {
+        if (token == 'owner') return true;
+      }
+    }
+    return false;
+  }
+
   /// Logout - clear token
   Future<void> logout() async {
     try {
@@ -800,6 +825,27 @@ class AuthService {
       _cachedUser = null;
       BaseClient().clearToken();
       NearPayService().clearCache();
+      // Wipe per-session BranchService caches so the next user (which
+      // can be a different cashier on a different branch on the same
+      // shared tablet) doesn't inherit pay methods, branch settings,
+      // or a receipt logo from the previous session.
+      try {
+        getIt<BranchService>().clearSessionCaches();
+      } catch (_) {}
+      // Drop the NearPay merchant credentials cache so a different
+      // account's signon can't reuse the previous merchant's token
+      // out of memory.
+      try {
+        secureCredentialManager.clearCache();
+      } catch (_) {}
+      // Wipe the mesh MAC key — a fresh login derives a new one for
+      // its branch+seller. Without this, the brief moment between
+      // logout and next login would keep an old branch's key in
+      // memory and any in-flight broadcast on the LAN would still
+      // verify against it.
+      try {
+        getIt<MeshAuthService>().clear();
+      } catch (_) {}
       await _clearTokenFromStorage();
     }
   }

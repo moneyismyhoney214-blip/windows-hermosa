@@ -52,7 +52,11 @@ extension MainScreenBuildWidgets on _MainScreenState {
                         final availableWidth = constraints.maxWidth;
                         final availableHeight = constraints.maxHeight;
                         final isPhoneLike = availableWidth < 700;
-                        final iconScale = _mealIconScale.clamp(0.85, 1.15);
+                        // Wider clamp so the meal-icon slider in cashier
+                        // settings has meaningful range (75% → 150%).
+                        // Without this, even slamming the slider to max
+                        // produced a barely-visible 15% bump.
+                        final iconScale = _mealIconScale.clamp(0.75, 1.5);
                         final gridPadding =
                             (availableWidth * 0.02).clamp(10.0, 24.0);
                         final gridSpacing =
@@ -823,7 +827,7 @@ extension MainScreenBuildWidgets on _MainScreenState {
         return translationService.t('home');
       case 'orders':
         return _isSalonMode
-            ? _trUi('تذاكر مراجعه', 'Review Tickets')
+            ? _trUi('فواتير معلقة', 'Pending Invoices')
             : translationService.t('orders');
       case 'invoices':
         return translationService.t('invoices');
@@ -831,6 +835,10 @@ extension MainScreenBuildWidgets on _MainScreenState {
         return translationService.t('tables');
       case 'deposits':
         return _trUi('العرابين', 'Deposits');
+      case 'bookings':
+        return _trUi('الحجوزات', 'Bookings');
+      case 'review_tickets':
+        return _trUi('تذاكر المراجعة', 'Review Tickets');
       case 'customers':
         return translationService.t('customers');
       case 'reports':
@@ -890,8 +898,14 @@ extension MainScreenBuildWidgets on _MainScreenState {
           : null,
       onPay: _handlePay,
       onPayLater: _handlePayLater,
+      onAddBooking: _isSalonMode ? _handleAddBooking : null,
       onBookingLongPress: _showBookingDetails,
-      onShowItemDetails: _showMealDetailsForCartItem,
+      // Salons don't expose per-service "details" pages — the meal-details
+      // dialog only renders restaurant meal/product metadata (calories,
+      // ingredients, addon catalogue). Suppress the button entirely for
+      // salon to avoid showing an empty / restaurant-only detail screen.
+      onShowItemDetails:
+          _isSalonMode ? null : _showMealDetailsForCartItem,
       selectedOrderType: _selectedOrderType,
       typeOptions: _orderTypeOptions, // Pass real options
       cdsEnabled: _isCdsEnabled,

@@ -181,6 +181,9 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                                             Text(
                                               (addon.price * qty)
                                                   .toStringAsFixed(ApiConstants.digitsNumber),
+                                              maxLines: 1,
+                                              softWrap: false,
+                                              overflow: TextOverflow.visible,
                                               style: GoogleFonts.tajawal(
                                                   fontSize: 17,
                                                   color: Colors.black54,
@@ -224,14 +227,21 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                       SizedBox(
                         width: 68,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 2, vertical: 2),
                           alignment: Alignment.center,
-                          child: Text(
-                            itemPrice.toStringAsFixed(ApiConstants.digitsNumber),
-                            style: GoogleFonts.tajawal(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.center,
+                            child: Text(
+                              itemPrice.toStringAsFixed(ApiConstants.digitsNumber),
+                              maxLines: 1,
+                              softWrap: false,
+                              style: GoogleFonts.tajawal(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black),
+                            ),
                           ),
                         ),
                       ),
@@ -239,15 +249,22 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                       SizedBox(
                         width: 75,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 2, vertical: 2),
                           alignment: Alignment.center,
-                          child: Text(
-                            item.total.toStringAsFixed(ApiConstants.digitsNumber),
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 21,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.center,
+                            child: Text(
+                              item.total.toStringAsFixed(ApiConstants.digitsNumber),
+                              maxLines: 1,
+                              softWrap: false,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 21,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black,
+                              ),
                             ),
                           ),
                         ),

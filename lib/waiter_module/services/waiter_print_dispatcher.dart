@@ -7,6 +7,7 @@ import '../../dialogs/edit_order_dialog.dart' show OrderChange;
 import '../../locator.dart';
 import '../../models.dart';
 import '../../models/receipt_data.dart';
+import '../../services/api/api_constants.dart';
 import '../../services/api/auth_service.dart';
 import '../../services/api/branch_service.dart';
 import '../../services/api/device_service.dart';
@@ -739,14 +740,14 @@ class WaiterPrintDispatcher {
   // Cashier receipt (pay-now)
   // ---------------------------------------------------------------------------
 
-  /// Prints the cashier-role thermal receipt for a just-created invoice.
-  /// Reads the invoice back from the backend so the printed copy matches
-  /// what the server persisted (invoice number, totals, payments). Falls
-  /// back to locally-known values if the fetch fails.
-  ///
-  /// Returns `true` if at least one physical print landed.
-  Future<bool> printCashierReceipt({
-    required String invoiceId,
+  /// Builds [OrderReceiptData] for the waiter's pay-now print + preview.
+  /// Single source of truth for both paths: parallel bilingual fetch
+  /// (matches the cashier's `resolveInvoicePayloadForPreview` in
+  /// `main_screen.payment.dart:1020-1107`), warms the branch cache, then
+  /// delegates to the shared [ReceiptBuilderService]. The on-screen preview
+  /// and the printed paper therefore stay byte-identical.
+  Future<OrderReceiptData> buildCashierReceiptData({
+    required String? invoiceId,
     String? invoiceNumber,
     String? dailyOrderNumber,
     required List<CartItem> items,
@@ -756,94 +757,11 @@ class WaiterPrintDispatcher {
     required String waiterName,
     required List<Map<String, dynamic>> pays,
   }) async {
-    try {
-      return await _printCashierReceiptInternal(
-        invoiceId: invoiceId,
-        invoiceNumber: invoiceNumber,
-        dailyOrderNumber: dailyOrderNumber,
-        items: items,
-        totalInclVat: totalInclVat,
-        vatRate: vatRate,
-        tableNumber: tableNumber,
-        waiterName: waiterName,
-        pays: pays,
-      );
-    } catch (e) {
-      debugPrint('⚠️ printCashierReceipt aborted: $e');
-      return false;
-    }
-  }
-
-  Future<bool> _printCashierReceiptInternal({
-    required String invoiceId,
-    String? invoiceNumber,
-    String? dailyOrderNumber,
-    required List<CartItem> items,
-    required double totalInclVat,
-    required double vatRate,
-    required String tableNumber,
-    required String waiterName,
-    required List<Map<String, dynamic>> pays,
-  }) async {
-    final autoPrint = await _readBool(
-      WaiterDevicePrefKeys.autoPrintCashier,
-      fallback: true,
-    );
-    if (!autoPrint) return false;
-
-    final printers = await _loadPrinters();
-    if (printers.isEmpty) return false;
-    final cashierPrinters = await _cashierRolePrinters(printers);
-    if (cashierPrinters.isEmpty) return false;
-
-    final secondCopy = await _readBool(
-      WaiterDevicePrefKeys.autoPrintCustomerSecondCopy,
-      fallback: false,
-    );
-    final totalCopies = secondCopy ? 2 : 1;
-
-    // Try to fetch the canonical invoice payload; fall back to locally-
-    // known values if the fetch fails so we still print *something*.
-    //
-    // The backend wraps everything under `data` — `{status, message,
-    // data: {invoice, branch, qr_image, ...}, ...}` — so the real
-    // payload the receipt builder needs is `response['data']`, not the
-    // full envelope. The cashier unwraps this at
-    // main_screen.payment:2573 before calling `_buildOrderReceiptData`;
-    // we have to do the same or every top-level picker below misses
-    // (branch=null, invoice=null, qr_image=null → no logo, no tax
-    // number, no QR on the printed receipt).
-    Map<String, dynamic>? invoicePayload;
-    try {
-      final raw = await _orderService.getInvoice(invoiceId);
-      final unwrapped = _asMap(raw['data']);
-      invoicePayload = unwrapped ?? raw;
-    } catch (e) {
-      debugPrint('⚠️ waiter getInvoice($invoiceId) failed: $e');
-      invoicePayload = null;
-    }
-
-    // Ensure the BranchService branch/seller/logo cache is populated —
-    // this is the SAME cache the cashier prewarms at session start.
-    // Without it (and if `getInvoice` returned a payload that doesn't
-    // nest branch.seller), the printed header loses the logo, tax
-    // number, and commercial register, and the receipt comes out
-    // shorter than the cashier's. Bumped to 12s (was 4s) because the
-    // cold-cache path must succeed before we print — printing an
-    // incomplete header is worse than waiting a few extra seconds.
-    // The print itself still runs even if this throws; the cache miss
-    // just means the receipt may render shorter for this one print.
-    if (_branchService.cachedBranchReceiptInfo == null) {
-      try {
-        await _branchService
-            .fetchAndCacheBranchReceiptInfo()
-            .timeout(const Duration(seconds: 12));
-      } catch (e) {
-        debugPrint('⚠️ waiter branch receipt cache warm-up failed: $e');
-      }
-    }
-
-    final receiptData = _buildReceiptData(
+    final invoicePayload = (invoiceId != null && invoiceId.isNotEmpty)
+        ? await _fetchBilingualInvoicePayload(invoiceId)
+        : null;
+    await _warmBranchReceiptCache();
+    return _buildReceiptData(
       invoicePayload: invoicePayload,
       // Only fall back to the invoice_number passed by the caller;
       // NEVER fall back to the invoice_id (= booking id). The receipt
@@ -861,8 +779,89 @@ class WaiterPrintDispatcher {
       waiterName: waiterName,
       pays: pays,
     );
+  }
+
+  /// Prints prebuilt [OrderReceiptData] to the cashier-role printers.
+  /// Use when the caller already built the data (e.g. for a preview
+  /// dialog) so we don't refetch the invoice. Honors `autoPrintCashier`
+  /// + `autoPrintCustomerSecondCopy` toggles; returns `true` if at least
+  /// one physical print landed.
+  Future<bool> printPrebuiltCashierReceipt(OrderReceiptData receiptData) async {
+    try {
+      return await _printPrebuiltCashierReceiptInternal(receiptData);
+    } catch (e) {
+      debugPrint('⚠️ printPrebuiltCashierReceipt aborted: $e');
+      return false;
+    }
+  }
+
+  /// Convenience: build the receipt data + print in one call. Use when
+  /// no preview is needed; otherwise prefer
+  /// [buildCashierReceiptData] + [printPrebuiltCashierReceipt] so the
+  /// invoice fetch happens exactly once.
+  Future<bool> printCashierReceipt({
+    required String invoiceId,
+    String? invoiceNumber,
+    String? dailyOrderNumber,
+    required List<CartItem> items,
+    required double totalInclVat,
+    required double vatRate,
+    required String tableNumber,
+    required String waiterName,
+    required List<Map<String, dynamic>> pays,
+  }) async {
+    try {
+      // Cheap pref check first so we don't pay the bilingual fetch cost
+      // when auto-print is off.
+      final autoPrint = await _readBool(
+        WaiterDevicePrefKeys.autoPrintCashier,
+        fallback: true,
+      );
+      if (!autoPrint) return false;
+      final receiptData = await buildCashierReceiptData(
+        invoiceId: invoiceId,
+        invoiceNumber: invoiceNumber,
+        dailyOrderNumber: dailyOrderNumber,
+        items: items,
+        totalInclVat: totalInclVat,
+        vatRate: vatRate,
+        tableNumber: tableNumber,
+        waiterName: waiterName,
+        pays: pays,
+      );
+      return await _printPrebuiltCashierReceiptInternal(receiptData);
+    } catch (e) {
+      debugPrint('⚠️ printCashierReceipt aborted: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _printPrebuiltCashierReceiptInternal(
+    OrderReceiptData receiptData,
+  ) async {
+    final autoPrint = await _readBool(
+      WaiterDevicePrefKeys.autoPrintCashier,
+      fallback: true,
+    );
+    if (!autoPrint) return false;
+
+    final printers = await _loadPrinters();
+    if (printers.isEmpty) return false;
+    final cashierPrinters = await _cashierRolePrinters(printers);
+    if (cashierPrinters.isEmpty) return false;
+
+    final secondCopy = await _readBool(
+      WaiterDevicePrefKeys.autoPrintCustomerSecondCopy,
+      fallback: false,
+    );
+    final totalCopies = secondCopy ? 2 : 1;
 
     var anyPrinted = false;
+    // No language overrides — let print_listener resolve from
+    // printerLanguageSettings (primary, secondary, allow_secondary). Same
+    // contract the cashier's _autoPrintReceiptCopies uses, so toggling
+    // bilingual / monolingual in the printer settings affects both paths
+    // identically.
     for (var copy = 0; copy < totalCopies; copy++) {
       for (final printer in cashierPrinters) {
         try {
@@ -886,6 +885,103 @@ class WaiterPrintDispatcher {
       }
     }
     return anyPrinted;
+  }
+
+  /// Fetches the canonical invoice payload in the user's current locale
+  /// AND in English in parallel, then merges en fields (`branch_address_en`,
+  /// `branch_district_en`, `seller_name_en`, per-item `item_name_en`) into
+  /// the primary payload. The merge lets the receipt builder render a
+  /// bilingual receipt with proper English item names without making the
+  /// caller wait for two sequential round-trips.
+  ///
+  /// Mirrors `main_screen.payment.dart:1020-1107` byte-for-byte so the
+  /// waiter's printed receipt matches the cashier's when both are running
+  /// against the same invoice.
+  ///
+  /// The backend wraps everything under `data` — `{status, message, data:
+  /// {invoice, branch, qr_image, ...}, ...}` — so the unwrap-`data`-first
+  /// rule applies before returning to the receipt builder. Returns null
+  /// (not an envelope) when both fetches fail.
+  Future<Map<String, dynamic>?> _fetchBilingualInvoicePayload(
+    String invoiceId,
+  ) async {
+    final savedLang = ApiConstants.acceptLanguage;
+    final arFuture = _orderService
+        .getInvoice(invoiceId)
+        .timeout(const Duration(seconds: 3));
+    final enFuture = () async {
+      try {
+        ApiConstants.setAcceptLanguage('en');
+        return await _orderService
+            .getInvoice(invoiceId)
+            .timeout(const Duration(seconds: 3));
+      } catch (_) {
+        return null;
+      } finally {
+        ApiConstants.setAcceptLanguage(savedLang);
+      }
+    }();
+
+    Map<String, dynamic>? arResp;
+    Map<String, dynamic>? enResp;
+    try {
+      final results = await Future.wait<Map<String, dynamic>?>([
+        arFuture.then<Map<String, dynamic>?>((r) => _asMap(r) ?? r),
+        enFuture.then((r) => r == null ? null : _asMap(r) ?? r),
+      ]);
+      arResp = results[0];
+      enResp = results[1];
+    } catch (e) {
+      debugPrint('⚠️ waiter bilingual getInvoice($invoiceId) failed: $e');
+      return null;
+    }
+
+    final arPayload = _asMap(arResp?['data']) ?? arResp;
+    if (arPayload == null) return null;
+
+    if (enResp != null) {
+      try {
+        final enData = _asMap(enResp['data']) ?? enResp;
+        final enBranch = _asMap(enData['branch']);
+        final enInvoice = _asMap(enData['invoice']) ?? enData;
+        arPayload['branch_address_en'] = enBranch?['address'];
+        arPayload['branch_district_en'] = enBranch?['district'];
+        arPayload['seller_name_en'] = enBranch?['seller_name'];
+        final arItems = (arPayload['invoice'] is Map)
+            ? (arPayload['invoice'] as Map)['items']
+            : arPayload['items'];
+        final enItems = enInvoice['items'];
+        if (arItems is List && enItems is List) {
+          for (var i = 0; i < arItems.length && i < enItems.length; i++) {
+            if (arItems[i] is Map && enItems[i] is Map) {
+              arItems[i]['item_name_en'] = enItems[i]['item_name'];
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ waiter bilingual merge failed (non-fatal): $e');
+      }
+    }
+
+    return arPayload;
+  }
+
+  /// Ensures the BranchService branch/seller/logo cache is populated —
+  /// the cashier prewarms this at session start; the waiter has to do it
+  /// on demand. Without it (and if `getInvoice` returned a payload that
+  /// doesn't nest branch.seller), the printed header loses the logo, tax
+  /// number, and commercial register. The print runs even if warm-up
+  /// throws; the cache miss just means the receipt may render shorter
+  /// for this one print.
+  Future<void> _warmBranchReceiptCache() async {
+    if (_branchService.cachedBranchReceiptInfo != null) return;
+    try {
+      await _branchService
+          .fetchAndCacheBranchReceiptInfo()
+          .timeout(const Duration(seconds: 12));
+    } catch (e) {
+      debugPrint('⚠️ waiter branch receipt cache warm-up failed: $e');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -991,9 +1087,12 @@ class WaiterPrintDispatcher {
       // on each call, so the next print on the same session keeps the
       // header complete (logo, tax number, commercial register).
       cache: _receiptCache,
-      // Waiter-specific fallbacks (offline-first auth profile, plus the
-      // BranchService-warmed receipt cache that supplies the uploaded
-      // logo URL on first print before any invoice has nested it).
+      // Always pass the offline-resilient fallbacks (auth profile +
+      // BranchService cache). The cashier path now does the same in
+      // main_screen.payment._buildOrderReceiptData, so both entry points
+      // resolve seller logo, English name, branch address, phone, and
+      // commercial register from an identical pool of sources — the
+      // printed ticket is byte-for-byte the same on either side.
       authUser: _authService.getUser(),
       branchReceiptCache: _branchService.cachedBranchReceiptInfo,
     );

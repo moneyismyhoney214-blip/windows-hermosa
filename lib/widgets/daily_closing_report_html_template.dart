@@ -246,7 +246,7 @@ class DailyClosingReportHtmlTemplate {
     <div class="footer-text">
       $thanks<br>
       <strong>$tagline</strong><br>
-      <span dir="ltr">https://portal.hermosaapp.com</span>
+      <span dir="ltr">https://api.hermosaapp.com</span>
     </div>
     ''';
   }

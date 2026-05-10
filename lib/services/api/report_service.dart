@@ -267,6 +267,26 @@ class ReportService {
     return _offlineGet(endpoint, 'employees_pay_${dateFrom}_$dateTo');
   }
 
+  /// Per-employee income for the closing report. The web dashboard fires
+  /// the same request once per cashier — `chartCount` and `chartTotal`
+  /// surface that single employee's totals for the date range.
+  Future<Map<String, dynamic>> getEmployeesSalesReport({
+    required String dateFrom,
+    required String dateTo,
+    required String cashierId,
+    String? acceptLanguage,
+  }) async {
+    final endpoint =
+        '/seller/branches/${ApiConstants.branchId}/categories?all=true&category=&date_from=$dateFrom&date_to=$dateTo&cashier_id=$cashierId&type=employees';
+    try {
+      return await _offlineGet(
+          endpoint, 'employees_sales_${cashierId}_${dateFrom}_$dateTo',
+          acceptLanguage: acceptLanguage);
+    } catch (_) {
+      return {'data': {}};
+    }
+  }
+
   /// Get meals by payment method report
   Future<Map<String, dynamic>> getMealsPayReport({
     required String dateFrom,

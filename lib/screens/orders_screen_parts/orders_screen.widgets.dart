@@ -8,7 +8,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
     final searchWidth = (width * 0.25).clamp(180.0, 280.0).toDouble();
     final isSalonMode = ApiConstants.branchModule == 'salons';
     final headerTitle = isSalonMode
-        ? _tr('تذاكر مراجعه', 'Review Tickets')
+        ? _tr('فواتير معلقة', 'Pending Invoices')
         : translationService.t('orders');
 
     final searchField = TextField(
@@ -210,6 +210,16 @@ extension OrdersScreenWidgets on _OrdersScreenState {
         !isOrderLockedValue(booking.status) &&
         !isOrderLockedValue(booking.raw['status']);
     final isPaying = _payingBookingIds.contains(booking.id);
+    // The booking is "completed" once an invoice exists for it (whether
+    // surfaced by the booking row or discovered through the salon
+    // invoice cross-reference). In that state we strip every action button
+    // — the customer has paid, the cashier should not be able to refund,
+    // cancel, edit or re-invoice from this list.
+    final isCompleted = !canCreateInvoice &&
+        !_isBookingCancelled(booking) &&
+        (_bookingHasInvoice(booking) ||
+            _bookingIdsWithInvoice.contains(booking.id) ||
+            _isBookingPaid(booking));
 
     return InkWell(
       onTap: () => _showBookingDetails(booking.id),
@@ -333,18 +343,17 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                 Wrap(
                   spacing: 8,
                   children: [
-                    if (ApiConstants.branchModule != 'salons')
-                      TextButton.icon(
-                        onPressed: () => _showBookingDetails(booking.id),
-                        icon: const Icon(LucideIcons.fileText, size: 16),
-                        label: Text(_tr('عرض التفاصيل', 'View details')),
-                        style: TextButton.styleFrom(
-                          foregroundColor: context.isDark
-                              ? const Color(0xFF60A5FA)
-                              : const Color(0xFF2563EB),
-                        ),
+                    TextButton.icon(
+                      onPressed: () => _showBookingDetails(booking.id),
+                      icon: const Icon(LucideIcons.fileText, size: 16),
+                      label: Text(_tr('عرض التفاصيل', 'View details')),
+                      style: TextButton.styleFrom(
+                        foregroundColor: context.isDark
+                            ? const Color(0xFF60A5FA)
+                            : const Color(0xFF2563EB),
                       ),
-                    if (canCreateInvoice)
+                    ),
+                    if (!isCompleted && canCreateInvoice)
                       OutlinedButton.icon(
                         onPressed: canEditOrder
                             ? () => _showEditOrderDialog(booking)

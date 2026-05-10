@@ -269,8 +269,21 @@ extension OrdersScreenDetails on _OrdersScreenState {
     );
 
     if (updated == true) {
+      // Refresh the per-booking total override FIRST. The bookings-list
+      // endpoint can lag a few hundred ms behind the detail endpoint and
+      // sometimes returns the stale grand_total even after `?create_order`,
+      // so the card would show the OLD total until the background list
+      // fetch caught up. Pulling the detail directly is one fast GET and
+      // updates the card immediately; _loadData runs after to refresh
+      // status / counts / metadata.
+      await _refreshBookingRemainingFromDetail(booking);
+      if (mounted) setState(() {});
       await _loadData();
+      // Pull detail one more time after the list refresh in case the
+      // backend overwrote the row totals during processing.
+      await _refreshBookingRemainingFromDetail(booking);
       if (!mounted) return;
+      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_tr('تم تحديث الطلب', 'Order updated')),
@@ -329,10 +342,15 @@ extension OrdersScreenDetails on _OrdersScreenState {
       final mealMap = normalized['meal'] is Map
           ? (normalized['meal'] as Map)
           : null;
-      return resolveLocalized(normalized['meal_name']) ??
+      final serviceMap = normalized['service'] is Map
+          ? (normalized['service'] as Map)
+          : null;
+      return resolveLocalized(normalized['service_name']) ??
+          resolveLocalized(normalized['meal_name']) ??
           resolveLocalized(normalized['name']) ??
           resolveLocalized(normalized['item_name']) ??
-          (mealMap != null ? resolveLocalized(mealMap['name']) : null);
+          (mealMap != null ? resolveLocalized(mealMap['name']) : null) ??
+          (serviceMap != null ? resolveLocalized(serviceMap['name']) : null);
     }
 
     // Build a lookup from booking_meals by meal_id for price enrichment
@@ -340,7 +358,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
       if (source is! Map) return const {};
       final m = source.map((k, v) => MapEntry(k.toString(), v));
       final lookup = <String, Map<String, dynamic>>{};
-      for (final key in ['booking_meals', 'meals', 'items']) {
+      for (final key in ['booking_services', 'booking_meals', 'meals', 'items']) {
         final raw = m[key];
         if (raw is! List) continue;
         for (final item in raw) {
@@ -403,12 +421,14 @@ extension OrdersScreenDetails on _OrdersScreenState {
       }
       const keys = [
         'meals',
+        'booking_services',
         'booking_meals',
         'booking_products',
         'booking_items',
         'items',
         'invoice_items',
         'sales_meals',
+        'sales_services',
         'card',
         'cart',
       ];
@@ -437,10 +457,60 @@ extension OrdersScreenDetails on _OrdersScreenState {
           payload['tax_amount'],
     );
     final hasTax = currentTax > 0;
-    final refundedMeals = await _loadRefundedMealsForBooking(orderId);
+
+    // Salon-only fast path: the refunded-meals lookup walks `/refunds` over
+    // up to 3 pages and fetches each CN's detail to match
+    // `original_invoice_number`, which can take 1-3 seconds. For bookings
+    // that have NO refund history (`has_cancelled=false` and no
+    // `is_refunded` items in the detail), the result is guaranteed empty,
+    // so the slow walk is pure overhead. Skipping it here drops dialog
+    // open latency to ~200ms in the common case.
+    final isSalon = ApiConstants.branchModule == 'salons';
+    bool needsRefundLookup = true;
+    if (isSalon) {
+      final hasCancelledFlag = payload['has_cancelled'] == true ||
+          payload['has_cancelled']?.toString() == '1' ||
+          payload['has_cancelled']?.toString() == 'true';
+      bool hasRefundedItem = false;
+      for (final list in [
+        payload['booking_services'],
+        payload['booking_meals'],
+        payload['meals'],
+      ]) {
+        if (list is! List) continue;
+        for (final entry in list.whereType<Map>()) {
+          if (entry['is_refunded'] == true ||
+              entry['is_refunded']?.toString() == '1') {
+            hasRefundedItem = true;
+            break;
+          }
+        }
+        if (hasRefundedItem) break;
+      }
+      needsRefundLookup = hasCancelledFlag || hasRefundedItem;
+    }
+
+    // Try to extract invoice_id directly from the already-fetched payload
+    // first — the salon booking detail nests `invoice_id` at the top level
+    // (e.g. booking 443608 → invoice_id 454239). Reading it here avoids a
+    // duplicate `getBookingDetails` call inside `_resolveInvoiceIdForBooking`.
+    int? invoiceIdFromPayload = _extractInvoiceId(payload, strict: false);
+
+    // Run refund lookup + invoice id resolution in parallel — neither
+    // depends on the other, and waiting for them sequentially adds an
+    // extra round-trip on every dialog open.
+    final results = await Future.wait<dynamic>([
+      needsRefundLookup
+          ? _loadRefundedMealsForBooking(orderId)
+          : Future.value(const <Map<String, dynamic>>[]),
+      invoiceIdFromPayload != null
+          ? Future.value(invoiceIdFromPayload)
+          : _resolveInvoiceIdForBooking(orderId),
+    ]);
+    final refundedMeals = results[0] as List<Map<String, dynamic>>;
+    final invoiceId = results[1] as int?;
 
     try {
-      final invoiceId = await _resolveInvoiceIdForBooking(orderId);
       if (invoiceId != null) {
         Map<String, dynamic> invoiceDetails;
         try {
@@ -558,6 +628,47 @@ extension OrdersScreenDetails on _OrdersScreenState {
   Future<int?> _resolveInvoiceIdForBooking(int orderId) async {
     final bookingIdText = orderId.toString();
 
+    // Cheap path first: every booking we've already loaded into the list
+    // carries its raw API row, which (for salon) includes `invoice_id`
+    // directly. Reading it here avoids any network round-trips and side-
+    // steps the rate limit. Restaurant rows usually carry it too.
+    for (final cached in _bookings) {
+      if (cached.id != orderId) continue;
+      final rawInvoiceId = _extractInvoiceId(
+        cached.raw.map((k, v) => MapEntry(k.toString(), v)),
+        strict: false,
+      );
+      if (rawInvoiceId != null) return rawInvoiceId;
+      break;
+    }
+
+    final isSalon = ApiConstants.branchModule == 'salons';
+
+    // For salon: the dedicated `/seller/invoices/branches/{id}/bookings/
+    // {bookingId}` endpoint returns an empty list, and the
+    // `/seller/branches/{id}/invoices?search={bookingId}` fallback hits
+    // the rate limiter hard (422 "Too Many Attempts.") because the
+    // search query doesn't match the invoice index by booking id.
+    // Booking detail's `invoice_id` is the only reliable source — verified
+    // against booking 443608 on a.lamal salon (has_invoice=false but
+    // invoice_id=454239). Skip the cashier endpoints entirely.
+    if (isSalon) {
+      try {
+        final bookingDetails =
+            await _orderService.getBookingDetails(bookingIdText);
+        final bookingData = bookingDetails['data'];
+        if (bookingData is Map) {
+          final normalized =
+              bookingData.map((k, v) => MapEntry(k.toString(), v));
+          final idFromDetails =
+              _extractInvoiceId(normalized, strict: false);
+          if (idFromDetails != null) return idFromDetails;
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    // Restaurant flow keeps the original three-step resolution.
     // 1) Dedicated booking->invoice endpoint.
     try {
       final invoice = await _orderService.getBookingInvoice(bookingIdText);

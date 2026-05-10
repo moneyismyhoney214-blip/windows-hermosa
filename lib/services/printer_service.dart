@@ -236,6 +236,7 @@ class PrinterService {
     String? carNumber,
     String? cashierName,
     String? printerName,
+    String? employeeName,
     bool isRtl = true,
     String? primaryLang,
     String? secondaryLang,
@@ -258,6 +259,8 @@ class PrinterService {
         'carNumber': carNumber,
         'cashierName': cashierName,
         'printerName': printerName,
+        if (employeeName != null && employeeName.trim().isNotEmpty)
+          'employeeName': employeeName,
         if (primaryLang != null) 'primaryLang': primaryLang,
         if (secondaryLang != null) 'secondaryLang': secondaryLang,
         if (allowSecondary != null) 'allowSecondary': allowSecondary,
@@ -283,6 +286,15 @@ class PrinterService {
     required String serviceName,
     required String employeeName,
     required String priceFormatted,
+    // Optional per-service notes (cart-level free text + any salonData
+    // notes merged at the call site). When non-empty the salon-turn view
+    // renders a notes block under the employee row so the staff who picks
+    // up the slip sees every instruction.
+    String? notes,
+    // Daily-counter order number (e.g. "4" → banner reads "#4"). The view
+    // prefers this over `serviceIndex` for the banner so the salon counter
+    // calls clients by their order number, not their cart-row position.
+    String? dailyOrderNumber,
     // Null falls back to the active branch's currency from ApiConstants.
     String? currencyAr,
     String? currencyEn,
@@ -302,10 +314,13 @@ class PrinterService {
         'date_str': dateStr,
         'time_str': timeStr,
         'service_index': serviceIndex,
+        if (dailyOrderNumber != null && dailyOrderNumber.trim().isNotEmpty)
+          'daily_order_number': dailyOrderNumber.trim(),
         'customer_name': customerName,
         'service_name': serviceName,
         'employee_name': employeeName,
         'price_formatted': priceFormatted,
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
         'currency_ar': currencyAr ?? ApiConstants.currency,
         'currency_en': currencyEn ?? ApiConstants.currency,
         if (sellerNameAr != null) 'seller_name_ar': sellerNameAr,

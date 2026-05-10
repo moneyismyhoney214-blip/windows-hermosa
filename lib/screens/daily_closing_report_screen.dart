@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/api/auth_service.dart';
+import '../services/api/filter_service.dart';
 import '../services/api/report_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/api_constants.dart';
@@ -27,6 +29,8 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
   static const String _closingPrinterIdKey =
       'daily_closing_preferred_printer_v1';
   final ReportService _reportService = getIt<ReportService>();
+  final FilterService _filterService = getIt<FilterService>();
+  final AuthService _authService = AuthService();
   late TabController _tabController;
 
   DateTime _dateFrom = DateTime.now();
@@ -37,6 +41,14 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
   String? _error;
   bool _isPrinting = false;
   String? _preferredClosingPrinterId;
+
+  // Owner-only per-cashier filter. Web frontend mirrors this gate: the
+  // dropdown is fed by `/seller/filters/branches/{branchId}/allCashiers`
+  // and only owners get a meaningful selection — CASHIER role users are
+  // pinned to their own id by the backend.
+  late final bool _isOwner = _authService.isOwner();
+  List<Map<String, dynamic>> _cashiers = const [];
+  bool _cashiersLoading = false;
 
   Map<String, dynamic>? _salesPayReport;
   Map<String, dynamic>? _invoiceStatistics;
@@ -50,7 +62,34 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     _tabController = TabController(length: 5, vsync: this);
     translationService.addListener(_onLanguageChanged);
     _loadPreferredClosingPrinter();
+    if (_isOwner) {
+      _loadCashiers();
+    }
     _loadData();
+  }
+
+  Future<void> _loadCashiers() async {
+    setState(() => _cashiersLoading = true);
+    try {
+      final response = await _filterService.getAllCashiers();
+      final raw = response['data'];
+      final list = <Map<String, dynamic>>[];
+      if (raw is List) {
+        for (final item in raw) {
+          if (item is Map) {
+            list.add(item.map((k, v) => MapEntry(k.toString(), v)));
+          }
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _cashiers = list;
+        _cashiersLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _cashiersLoading = false);
+    }
   }
 
   @override
@@ -683,85 +722,164 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  translationService.t('daily_closing_report'),
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      translationService.t('daily_closing_report'),
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_formatDate(_dateFrom)} - ${_formatDate(_dateTo)}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ElevatedButton.icon(
+                onPressed: _selectDateRange,
+                icon: const Icon(Icons.calendar_today, size: 18),
+                label: Text(translationService.t('change_period')),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFF58220),
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatDate(_dateFrom)} - ${_formatDate(_dateTo)}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                onPressed: _loadData,
+                icon: const Icon(Icons.refresh),
+                tooltip: translationService.t('refresh'),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.grey.shade100,
+                  foregroundColor: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                onPressed: _sendReportViaWhatsApp,
+                icon: const Icon(LucideIcons.messageCircle),
+                tooltip: translationService.t('send_via_whatsapp'),
+                style: IconButton.styleFrom(
+                  backgroundColor:
+                      const Color(0xFF25D366).withValues(alpha: 0.1),
+                  foregroundColor: const Color(0xFF25D366),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton.icon(
+                onPressed: _isPrinting ? null : _showPrintPreviewDialog,
+                icon: _isPrinting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.print),
+                label: const Text('طباعة'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFF58220),
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-              ],
-            ),
-          ),
-          ElevatedButton.icon(
-            onPressed: _selectDateRange,
-            icon: const Icon(Icons.calendar_today, size: 18),
-            label: Text(translationService.t('change_period')),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFF58220),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
               ),
-            ),
+            ],
           ),
-          const SizedBox(width: 12),
-          IconButton(
-            onPressed: _loadData,
-            icon: const Icon(Icons.refresh),
-            tooltip: translationService.t('refresh'),
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.grey.shade100,
-              foregroundColor: Colors.grey.shade700,
-            ),
-          ),
-          const SizedBox(width: 12),
-          IconButton(
-            onPressed: _sendReportViaWhatsApp,
-            icon: const Icon(LucideIcons.messageCircle),
-            tooltip: translationService.t('send_via_whatsapp'),
-            style: IconButton.styleFrom(
-              backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.1),
-              foregroundColor: const Color(0xFF25D366),
-            ),
-          ),
-          const SizedBox(width: 12),
-          ElevatedButton.icon(
-            onPressed: _isPrinting ? null : _showPrintPreviewDialog,
-            icon: _isPrinting
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Icon(Icons.print),
-            label: const Text('طباعة'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFF58220),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
+          if (_isOwner) ...[
+            const SizedBox(height: 16),
+            _buildCashierFilter(),
+          ],
         ],
       ),
+    );
+  }
+
+  /// Owner-only dropdown that scopes the closing report to a single cashier.
+  /// The web dashboard's CashierCheckout component drives the same backend
+  /// flag (`cashier_id` query param on `/salesPay`), so this surfaces the
+  /// existing capability inside the POS app.
+  Widget _buildCashierFilter() {
+    final items = <DropdownMenuItem<String?>>[
+      DropdownMenuItem<String?>(
+        value: null,
+        child: Text(translationService.t('all_cashiers')),
+      ),
+      ..._cashiers.map((c) {
+        final id = (c['value'] ?? c['id'])?.toString() ?? '';
+        final label = (c['label'] ??
+                c['fullname'] ??
+                c['name'] ??
+                c['username'] ??
+                id)
+            .toString();
+        return DropdownMenuItem<String?>(value: id, child: Text(label));
+      }),
+    ];
+
+    return Row(
+      children: [
+        Icon(LucideIcons.user, size: 18, color: Colors.grey.shade600),
+        const SizedBox(width: 8),
+        Expanded(
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: translationService.t('filter_by_cashier'),
+              isDense: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String?>(
+                value: _selectedCashierId,
+                isExpanded: true,
+                hint: Text(translationService.t('all_cashiers')),
+                items: items,
+                onChanged: _cashiersLoading
+                    ? null
+                    : (value) {
+                        if (value == _selectedCashierId) return;
+                        setState(() => _selectedCashierId = value);
+                        _loadData();
+                      },
+              ),
+            ),
+          ),
+        ),
+        if (_cashiersLoading) ...[
+          const SizedBox(width: 8),
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ],
+      ],
     );
   }
 
@@ -2041,3 +2159,4 @@ class _ClosingPrintPreviewDialogState
     );
   }
 }
+

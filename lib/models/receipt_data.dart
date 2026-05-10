@@ -178,6 +178,22 @@ class OrderReceiptData {
   final String? clientPhone;
   final String? tableNumber;
 
+  // ── Receipt kind ──
+  // Default 'invoice' (the cashier receipt). 'deposit' switches the print
+  // widget to the deposit-receipt view (DP-NNN badge, dual title, single-
+  // column services table, 3-row tax breakdown).
+  final String kind;
+
+  // Deposit-only metadata. Only read by the deposit view; null for regular
+  // cashier/waiter receipts.
+  final String? bookingDate;
+  final String? bookingTime;
+  // Refund/exchange policy printed in the footer of the deposit receipt.
+  // Plain text (newlines preserved). The salon dashboard renders the same
+  // block, sourced from `branch.original_seller.policy.{ar|en}`.
+  final String? returnPolicyAr;
+  final String? returnPolicyEn;
+
   OrderReceiptData({
     required this.invoiceNumber,
     required this.issueDateTime,
@@ -210,6 +226,11 @@ class OrderReceiptData {
     this.clientName,
     this.clientPhone,
     this.tableNumber,
+    this.kind = 'invoice',
+    this.bookingDate,
+    this.bookingTime,
+    this.returnPolicyAr,
+    this.returnPolicyEn,
   });
 
   factory OrderReceiptData.fromMap(Map<String, dynamic> map) {

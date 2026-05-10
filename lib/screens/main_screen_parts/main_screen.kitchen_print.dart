@@ -24,6 +24,43 @@ extension MainScreenKitchenPrint on _MainScreenState {
     return null;
   }
 
+  /// Pick the salon-service name in the printer's primary language.
+  ///
+  /// Walks the same fallback chain the restaurant kitchen-ticket flow uses,
+  /// so toggling printer language affects salon turn slips identically:
+  /// 1. `translations` map keyed by language code (e.g. `{ar: "...", en: "..."}`)
+  /// 2. `productLocalized` — `Product.nameForLang(lang)` already applied by caller
+  /// 3. `snapshotName` — the booking-time `item_name` snapshot
+  /// 4. `productName` — the raw fallback name
+  String _resolveSalonServiceName({
+    required String lang,
+    dynamic translations,
+    String productLocalized = '',
+    String? snapshotName,
+    String productName = '',
+  }) {
+    String _trim(String? s) => (s ?? '').trim();
+
+    if (translations is Map) {
+      final preferred = _trim(translations[lang]?.toString());
+      if (preferred.isNotEmpty) return preferred;
+      // Sticky fallback within the map (any non-empty translation beats
+      // dropping back to the snapshot, which may be the same string).
+      for (final v in translations.values) {
+        final s = _trim(v?.toString());
+        if (s.isNotEmpty) return s;
+      }
+    }
+
+    final viaProduct = _trim(productLocalized);
+    if (viaProduct.isNotEmpty) return viaProduct;
+
+    final snap = _trim(snapshotName);
+    if (snap.isNotEmpty) return snap;
+
+    return _trim(productName);
+  }
+
   double _toSafeDouble(dynamic value, {double fallback = 0.0}) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? fallback;
@@ -1095,6 +1132,7 @@ extension MainScreenKitchenPrint on _MainScreenState {
     String? dailyOrderNumber,
     String? capturedTableNumber,
     String? carNumber,
+    List<CartItem>? salonCartSnapshot,
   }) async {
     // Salon mode replaces the kitchen ticket with one turn slip per booked
     // service (طابعة الأدوار). Delegate BEFORE the `_printKitchenInvoices`
@@ -1104,6 +1142,8 @@ extension MainScreenKitchenPrint on _MainScreenState {
       await _triggerSalonTurnPrint(
         orderId: orderId,
         invoiceNumber: invoiceNumber,
+        dailyOrderNumber: dailyOrderNumber,
+        cartSnapshot: salonCartSnapshot,
       );
       return;
     }
@@ -1450,8 +1490,20 @@ extension MainScreenKitchenPrint on _MainScreenState {
   Future<void> _triggerSalonTurnPrint({
     required String orderId,
     String? invoiceNumber,
+    String? dailyOrderNumber,
+    List<CartItem>? cartSnapshot,
   }) async {
     try {
+      // The fast-path payment flow clears `_cart` BEFORE this trigger fires
+      // (so the UI feels instant). Without a snapshot the loop below would
+      // walk an empty cart and silently print nothing — leaving only the
+      // cashier-receipt fallback to fire on the kitchen-tagged printer,
+      // which is what the user reports. Prefer the explicit snapshot the
+      // caller captured before the cart was cleared; only fall back to the
+      // live cart for callers that fire mid-edit (cart still populated).
+      final List<CartItem> cartItems = (cartSnapshot != null && cartSnapshot.isNotEmpty)
+          ? cartSnapshot
+          : _cart.toList(growable: false);
       final deviceService = getIt<DeviceService>();
       final roleRegistry = getIt<PrinterRoleRegistry>();
       await roleRegistry.initialize();
@@ -1488,12 +1540,20 @@ extension MainScreenKitchenPrint on _MainScreenState {
 
       // Build the list of (service, employee, price) rows from the current
       // cart. Each cart item carries its salonData snapshot.
+      //
+      // Service name is resolved against the printer's primary language so
+      // the salon turn slip respects the same language toggle the
+      // restaurant kitchen ticket already honours (printer-language ≠ UI
+      // language). Order: API translation map on the salonData snapshot →
+      // the Product's bilingual fields → the booking-time `item_name`
+      // snapshot → the raw product name as last resort.
+      final lang = _resolveKitchenInvoiceLang();
       final salonServices = <_SalonTurnRow>[];
       final employeeLookup = <int, String>{
         for (final e in _salonEmployees)
           if (e['id'] is num) (e['id'] as num).toInt(): (e['name'] ?? '').toString(),
       };
-      for (final item in _cart) {
+      for (final item in cartItems) {
         final salon = item.salonData ?? const <String, dynamic>{};
         final empRaw = salon['employee_id'];
         final empId = empRaw is num
@@ -1503,24 +1563,41 @@ extension MainScreenKitchenPrint on _MainScreenState {
                 true)
             ? salon['employee_name'].toString()
             : (empId != null ? (employeeLookup[empId] ?? '') : '');
+        // Notes: prefer the salonData snapshot the picker dialog stamped
+        // onto the cart entry, then fall back to the cart-level `notes`
+        // field (used by older paths). Joined with " · " when both
+        // surfaces carry text so the slip preserves every comment.
+        final salonNote = (salon['notes'] ?? '').toString().trim();
+        final cartNote = item.notes.trim();
+        final mergedNotes = (salonNote.isNotEmpty && cartNote.isNotEmpty &&
+                salonNote != cartNote)
+            ? '$salonNote · $cartNote'
+            : (salonNote.isNotEmpty ? salonNote : cartNote);
         salonServices.add(_SalonTurnRow(
-          serviceName: (salon['item_name']?.toString().trim().isNotEmpty == true
-                  ? salon['item_name'].toString()
-                  : item.product.name),
+          serviceName: _resolveSalonServiceName(
+            lang: lang,
+            translations: salon['service_name_translations'] ??
+                salon['name_translations'] ??
+                salon['meal_name_translations'],
+            productLocalized: item.product.nameForLang(lang),
+            snapshotName: salon['item_name']?.toString(),
+            productName: item.product.name,
+          ),
           employeeName: employeeName,
           price: item.product.price * item.quantity,
+          notes: mergedNotes,
         ));
       }
       if (salonServices.isEmpty) return;
 
       final dateStr = (salonServices.isNotEmpty &&
-              _cart.isNotEmpty &&
-              _cart.first.salonData?['date']?.toString().isNotEmpty == true)
-          ? _cart.first.salonData!['date'].toString()
+              cartItems.isNotEmpty &&
+              cartItems.first.salonData?['date']?.toString().isNotEmpty == true)
+          ? cartItems.first.salonData!['date'].toString()
           : DateFormat('yyyy-MM-dd').format(DateTime.now());
-      final timeStr = (_cart.isNotEmpty &&
-              _cart.first.salonData?['time']?.toString().isNotEmpty == true)
-          ? _cart.first.salonData!['time'].toString()
+      final timeStr = (cartItems.isNotEmpty &&
+              cartItems.first.salonData?['time']?.toString().isNotEmpty == true)
+          ? cartItems.first.salonData!['time'].toString()
           : DateFormat('hh:mm a').format(DateTime.now());
 
       final bookingNumber = orderId;
@@ -1576,6 +1653,7 @@ extension MainScreenKitchenPrint on _MainScreenState {
               printer,
               invoiceNumber: resolvedInvoiceNumber,
               bookingNumber: bookingNumber,
+              dailyOrderNumber: dailyOrderNumber,
               dateStr: dateStr,
               timeStr: timeStr,
               serviceIndex: i + 1,
@@ -1583,6 +1661,7 @@ extension MainScreenKitchenPrint on _MainScreenState {
               serviceName: row.serviceName,
               employeeName: row.employeeName.isNotEmpty ? row.employeeName : '-',
               priceFormatted: priceFormatted,
+              notes: row.notes,
               sellerNameAr: sellerAr,
               sellerNameEn: sellerEn,
               addressLine: addressLine,
@@ -1598,15 +1677,218 @@ extension MainScreenKitchenPrint on _MainScreenState {
       debugPrint('⚠️ _triggerSalonTurnPrint failed: $e');
     }
   }
+
+  /// Prints salon turn slips driven by a booking-detail response instead of
+  /// the live cart. Used by the new Bookings + Review-Tickets tabs whose
+  /// "create" dialogs run outside `_MainScreenState` and therefore can't
+  /// reach `_cart` / `_selectedCustomer` / the branch-info caches.
+  ///
+  /// [bookingData] must follow the `/seller/branches/{id}/bookings/{id}`
+  /// shape — i.e. `{id, user:{name}, booking_services:[{service_name,
+  /// employee:{fullname}, price|total_price, date, time, notes}]}`.
+  /// Same printer-resolution policy as [_triggerSalonTurnPrint]: prefers
+  /// kitchen/KDS/bar-tagged printers, falls back to every available
+  /// printer when no role is set, no-ops when zero printers exist.
+  Future<void> triggerSalonTurnPrintFromBookingResponse({
+    required String orderId,
+    required Map<String, dynamic> bookingData,
+  }) async {
+    if (!_isSalonMode) return;
+    try {
+      final servicesRaw = bookingData['booking_services'];
+      if (servicesRaw is! List || servicesRaw.isEmpty) return;
+
+      final lang = _resolveKitchenInvoiceLang();
+      final rows = <_SalonTurnRow>[];
+      for (final raw in servicesRaw) {
+        if (raw is! Map) continue;
+        final s = Map<String, dynamic>.from(raw);
+        // The salon backend returns `service_name` either as a plain string
+        // or as a `{ar: "...", en: "..."}` map (matching how
+        // orders_screen.details.dart already resolves it). Walk both shapes
+        // through the printer-language picker so the turn slip prints in
+        // the same language the cashier configured for tickets.
+        final serviceName = _resolveSalonServiceName(
+          lang: lang,
+          translations: s['service_name_translations'] ??
+              s['name_translations'] ??
+              s['meal_name_translations'] ??
+              (s['service_name'] is Map ? s['service_name'] : null) ??
+              (s['service'] is Map &&
+                      (s['service'] as Map)['name'] is Map
+                  ? (s['service'] as Map)['name']
+                  : null),
+          snapshotName: s['service_name'] is String
+              ? s['service_name'] as String
+              : (s['item_name']?.toString() ??
+                  (s['service'] is Map
+                      ? (s['service'] as Map)['name']?.toString()
+                      : null)),
+          productName: '',
+          productLocalized: '',
+        );
+        final empMap = s['employee'];
+        final employeeName = (empMap is Map
+                ? (empMap['fullname'] ?? empMap['name'] ?? '')
+                : '')
+            .toString();
+        final priceRaw = s['total_price'] ?? s['service_price'] ?? s['price'] ?? 0;
+        final price = priceRaw is num
+            ? priceRaw.toDouble()
+            : double.tryParse(priceRaw.toString()) ?? 0.0;
+        final notes = (s['notes'] ?? '').toString().trim();
+        rows.add(_SalonTurnRow(
+          serviceName: serviceName,
+          employeeName: employeeName.isNotEmpty ? employeeName : '-',
+          price: price,
+          notes: notes,
+        ));
+      }
+      if (rows.isEmpty) return;
+
+      // Resolve printers — same role policy as the cart-based path.
+      final deviceService = getIt<DeviceService>();
+      final roleRegistry = getIt<PrinterRoleRegistry>();
+      await roleRegistry.initialize();
+
+      var allPrinters =
+          (await deviceService.getDevices()).where(_isUsablePrinter).toList();
+      if (allPrinters.isEmpty) {
+        allPrinters = _devices.where(_isUsablePrinter).toList(growable: false);
+      }
+      var printers = allPrinters.where((p) {
+        final role = roleRegistry.resolveRole(p);
+        return role == PrinterRole.kitchen ||
+            role == PrinterRole.kds ||
+            role == PrinterRole.bar;
+      }).toList(growable: false);
+      if (printers.isEmpty) {
+        printers = allPrinters;
+        if (printers.isNotEmpty) {
+          debugPrint(
+            'ℹ️ No printer tagged as أدوار/kitchen — using ${printers.length} '
+            'available printer(s) for the salon turn slip',
+          );
+        }
+      }
+      if (printers.isEmpty) return;
+
+      // Date / time / customer pulled straight from the booking payload so
+      // the slip matches what the cashier actually booked.
+      final firstService = servicesRaw.first as Map?;
+      final dateStr =
+          (firstService?['date']?.toString().trim().isNotEmpty == true)
+              ? firstService!['date'].toString()
+              : DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final timeStr =
+          (firstService?['time']?.toString().trim().isNotEmpty == true)
+              ? firstService!['time'].toString()
+              : DateFormat('hh:mm a').format(DateTime.now());
+
+      final user = bookingData['user'];
+      final customerName = (user is Map
+              ? (user['name'] ?? user['fullname'] ?? '-')
+              : '-')
+          .toString();
+
+      final invoiceNumberRaw = bookingData['invoice_number']?.toString();
+      final bookingNumber = (bookingData['booking_number']?.toString() ??
+              orderId)
+          .replaceFirst(RegExp(r'^#'), '');
+      final dailyOrderNumber =
+          bookingData['daily_order_number']?.toString();
+      final resolvedInvoiceNumber =
+          (invoiceNumberRaw?.trim().isNotEmpty ?? false)
+              ? invoiceNumberRaw!
+              : '#$bookingNumber';
+
+      // Branch header — booking-detail responses include branch info
+      // already, but we still prefer the cashier-receipt cache when
+      // populated (it carries the English fallbacks).
+      final branchMap = bookingData['branch'];
+      final sellerAr = _firstNonEmptyText(<dynamic>[
+        _cachedBranchMap?['seller_name'],
+        _cachedBranchMap?['name'],
+        branchMap is Map ? branchMap['seller_name'] : null,
+        _cachedSellerInfo?['name'],
+      ]);
+      final sellerEn = _cachedSellerNameEn;
+      final addressLine = _firstNonEmptyText(<dynamic>[
+        _cachedBranchMap?['address'],
+        branchMap is Map ? branchMap['address'] : null,
+        _cachedBranchAddressEn,
+      ]);
+      final phones = <String>[];
+      final branchPhone = _firstNonEmptyText(<dynamic>[
+        _cachedBranchMap?['mobile'],
+        branchMap is Map ? branchMap['mobile'] : null,
+        _cachedBranchMap?['phone'],
+        branchMap is Map ? branchMap['telephone'] : null,
+        _cachedSellerInfo?['mobile'],
+      ]);
+      if (branchPhone != null && branchPhone.isNotEmpty) {
+        phones.add(branchPhone);
+      }
+      final logoUrl = _firstNonEmptyText(<dynamic>[
+        _cachedSellerInfo?['logo'],
+        _cachedBranchMap?['seller'] is Map
+            ? (_cachedBranchMap!['seller'] as Map)['logo']
+            : null,
+        _cachedBranchMap?['logo'],
+        branchMap is Map ? branchMap['logo'] : null,
+        branchMap is Map && branchMap['seller'] is Map
+            ? (branchMap['seller'] as Map)['logo']
+            : null,
+      ]);
+
+      final printerService = getIt<PrinterService>();
+      for (var i = 0; i < rows.length; i++) {
+        final row = rows[i];
+        final priceFormatted =
+            row.price.toStringAsFixed(ApiConstants.digitsNumber);
+        for (final printer in printers) {
+          try {
+            await printerService.printSalonTurnTicket(
+              printer,
+              invoiceNumber: resolvedInvoiceNumber,
+              bookingNumber: bookingNumber,
+              dailyOrderNumber: dailyOrderNumber,
+              dateStr: dateStr,
+              timeStr: timeStr,
+              serviceIndex: i + 1,
+              customerName: customerName,
+              serviceName: row.serviceName,
+              employeeName:
+                  row.employeeName.isNotEmpty ? row.employeeName : '-',
+              priceFormatted: priceFormatted,
+              notes: row.notes,
+              sellerNameAr: sellerAr,
+              sellerNameEn: sellerEn,
+              addressLine: addressLine,
+              phones: phones,
+              logoUrl: logoUrl,
+            );
+          } catch (e) {
+            debugPrint(
+                '⚠️ Salon turn print failed on ${printer.name}: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ triggerSalonTurnPrintFromBookingResponse failed: $e');
+    }
+  }
 }
 
 class _SalonTurnRow {
   final String serviceName;
   final String employeeName;
   final double price;
+  final String notes;
   const _SalonTurnRow({
     required this.serviceName,
     required this.employeeName,
     required this.price,
+    this.notes = '',
   });
 }

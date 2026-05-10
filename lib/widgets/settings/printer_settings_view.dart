@@ -591,7 +591,9 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                     extraActions: const [],
                   ),
                   buildSection(
-                    title: 'شاشات CDS / KDS',
+                    title: ApiConstants.branchModule == 'salons'
+                        ? 'شاشات CDS / SDS'
+                        : 'شاشات CDS / KDS',
                     subtitle: 'أجهزة عرض الطلبات والعملاء منفصلة عن الطابعات',
                     icon: LucideIcons.monitor,
                     iconColor: const Color(0xFFF58220),
@@ -626,7 +628,9 @@ class _PrinterSettingsViewState extends State<PrinterSettingsView> {
                       sectionDevices: printers,
                     ),
                     buildSection(
-                      title: 'شاشات CDS / KDS',
+                      title: ApiConstants.branchModule == 'salons'
+                        ? 'شاشات CDS / SDS'
+                        : 'شاشات CDS / KDS',
                       subtitle: 'أجهزة عرض الطلبات والعملاء منفصلة عن الطابعات',
                       icon: LucideIcons.monitor,
                       iconColor: const Color(0xFFF58220),

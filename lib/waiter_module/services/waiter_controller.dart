@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../locator.dart';
 import '../../models/booking_invoice.dart';
 import '../../models/waitlist_mesh_event.dart';
+import '../../services/api/api_constants.dart';
 import '../../services/api/branch_service.dart';
 import '../../services/api/order_service.dart';
 import '../models/network_message.dart';
@@ -13,7 +14,10 @@ import '../models/table_pickup_request.dart';
 import '../models/waiter.dart';
 import '../models/waiter_message.dart';
 import '../models/waiter_table_event.dart';
+import 'mesh_auth_service.dart';
+import 'waiter_billing_service.dart';
 import 'waiter_cart_store.dart';
+import 'waiter_order_outbox.dart';
 import 'waiter_config_store.dart';
 import 'waiter_discovery_service.dart';
 import 'waiter_message_store.dart';
@@ -247,6 +251,36 @@ class WaiterController extends ChangeNotifier {
     try {
       await getIt<WaiterCartStore>().clearAll();
     } catch (_) {}
+    // Wipe the offline order outbox too. Without this, a waiter signing
+    // out mid-shift while the KDS is unreachable would leave their
+    // queued orders sitting in SharedPreferences; the next waiter to
+    // sign in on this device would see them flushed under their OWN
+    // session id once connectivity returns — corrupting revenue/tip
+    // attribution and confusing the kitchen with stale tickets.
+    try {
+      await getIt<WaiterOrderOutbox>().clearAll();
+    } catch (_) {}
+    // Drop the waiter billing cache (pay methods + tax rate). On a
+    // shared tablet, the next waiter may be on a different branch
+    // with different settings — the cached `card` enabled flag would
+    // otherwise show a card option on a cash-only branch.
+    try {
+      getIt<WaiterBillingService>().clearSessionCaches();
+    } catch (_) {}
+    // Wipe BranchService caches too — they're mostly cashier-owned but
+    // the waiter module reads them for tax/pay-methods/branch settings.
+    // Cross-branch handoff on a shared tablet would otherwise serve
+    // stale pay-method config from the previous shift.
+    try {
+      getIt<BranchService>().clearSessionCaches();
+    } catch (_) {}
+    // Drop the mesh MAC key so a different branch's session derives a
+    // fresh one on next start(). Without this, a cashier switching
+    // branches without restarting the app would keep the old branch's
+    // key in memory and accept/sign with the wrong identity.
+    try {
+      getIt<MeshAuthService>().clear();
+    } catch (_) {}
     debugPrint('🧹 waiter session stores cleared');
   }
 
@@ -330,7 +364,32 @@ class WaiterController extends ChangeNotifier {
         debugPrint('⚠️ waiter: fetchAndCacheBranchReceiptInfo failed: $e');
       }
 
-      _net = WaiterNetworkService(selfProvider: () => session.self!);
+      // Derive the per-branch shared MAC key BEFORE the network
+      // service comes up — both signing (outbound) and verification
+      // (inbound) need it. ApiConstants.sellerId is set by AuthService
+      // on login; if it's still 0 (rare boot race) we fall back to
+      // an empty seller scope. The waiter and the cashier on the
+      // same branch derive identical keys without any handshake
+      // because both feed the same (branchId, sellerId) pair into
+      // MeshAuthService.deriveKey().
+      try {
+        getIt<MeshAuthService>().deriveKey(
+          branchId: self.branchId,
+          sellerId: ApiConstants.sellerId.toString(),
+        );
+      } catch (e) {
+        debugPrint('⚠️ MeshAuth deriveKey failed (non-fatal): $e');
+      }
+
+      _net = WaiterNetworkService(
+        selfProvider: () => session.self!,
+        // Application-layer mesh auth — every outgoing WireMessage
+        // gets HMAC-signed and every incoming one verified. The key
+        // was derived above; without this wire-up a rogue device on
+        // the same wifi could inject forged events. See
+        // MeshAuthService for the threat model.
+        auth: getIt<MeshAuthService>(),
+      );
       final port = await _net!.startServer();
 
       _discovery = WaiterDiscoveryService(self: self, advertisedPort: port);

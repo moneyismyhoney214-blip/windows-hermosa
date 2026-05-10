@@ -289,14 +289,15 @@ class BookingDetailsDialog extends StatelessWidget {
                         ...meals.asMap().entries.map((entry) {
                           return Column(
                             children: [
-                              _buildMealItem(entry.value),
-                              if (entry.key < meals.length - 1) const Divider(),
+                              _buildMealItem(context, entry.value),
+                              if (entry.key < meals.length - 1)
+                                Divider(color: context.appDivider),
                             ],
                           );
                         }),
                         if (refundedMeals.isNotEmpty) ...[
                           const SizedBox(height: 16),
-                          _buildRefundedMealsSection(refundedMeals),
+                          _buildRefundedMealsSection(context, refundedMeals),
                         ],
                       ],
                     ),
@@ -311,29 +312,32 @@ class BookingDetailsDialog extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  _buildSummaryRow(translationService.t('subtotal'), total),
+                  _buildSummaryRow(
+                      context, translationService.t('subtotal'), total),
                   const SizedBox(height: 8),
                   _buildSummaryRow(
+                      context,
                       translationService
                           .t('tax_with_rate', args: {'rate': '15'}),
                       tax),
                   if (discount > 0) ...[
                     const SizedBox(height: 8),
-                    _buildSummaryRow(
+                    _buildSummaryRow(context,
                         translationService.t('discount'), -discount,
                         isDiscount: true),
                   ],
                   if (effectiveRefundTotal > 0) ...[
                     const SizedBox(height: 8),
-                    _buildSummaryRow(
+                    _buildSummaryRow(context,
                         _tr('المسترجع', 'Refunded'), -effectiveRefundTotal,
                         isDiscount: true),
                   ],
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Divider(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Divider(color: context.appDivider),
                   ),
-                  _buildSummaryRow(translationService.t('total'), grandTotal,
+                  _buildSummaryRow(
+                      context, translationService.t('total'), grandTotal,
                       isTotal: true),
                   const SizedBox(height: 16),
                   if (onEditOrder != null) ...[
@@ -444,14 +448,19 @@ class BookingDetailsDialog extends StatelessWidget {
     return s;
   }
 
-  Widget _buildMealItem(Map<String, dynamic> meal) {
+  Widget _buildMealItem(BuildContext context, Map<String, dynamic> meal) {
     final rawName = meal['service_name'] ?? meal['meal_name'] ?? meal['name'] ?? meal['item_name'];
     final name = _resolveLocalizedName(rawName).isNotEmpty
         ? _resolveLocalizedName(rawName)
         : translationService.t('unknown_item');
     final quantity = int.tryParse(meal['quantity']?.toString() ?? '1') ?? 1;
-    final unitPrice = _parsePrice(meal['unit_price'] ?? meal['price']);
-    final totalPrice = _parsePrice(meal['total'] ?? meal['price']);
+    var unitPrice = _parsePrice(meal['unit_price'] ?? meal['price']);
+    // Salon `booking_services` rows store the line total under
+    // `total_price` (which includes addons + qty) rather than `total`. If
+    // we only fall back to `meal['price']`, lines with addons under-report
+    // by the addon amount.
+    var totalPrice =
+        _parsePrice(meal['total'] ?? meal['total_price'] ?? meal['price']);
     final extras = _extractMealExtras(meal);
     final rawStatus = meal['status']?.toString().trim().toLowerCase() ?? '';
     // Salon services use a different numeric status enum than cashier meals,
@@ -463,6 +472,20 @@ class BookingDetailsDialog extends StatelessWidget {
         meal.containsKey('service_name') ||
         meal.containsKey('booking_service_id') ||
         meal['service'] is Map;
+    // Salon API stores per-row prices pre-tax (e.g. 260.87 for a 300 SAR
+    // service at 15% VAT). The cashier wants to see the tax-inclusive
+    // amount on each line so the per-row totals add up to the grand total
+    // shown at the bottom of the dialog and on the order card.
+    if (isSalonItem) {
+      final branchService = getIt<BranchService>();
+      final taxRate =
+          branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
+      if (taxRate > 0) {
+        final mul = 1.0 + taxRate;
+        unitPrice = unitPrice * mul;
+        totalPrice = totalPrice * mul;
+      }
+    }
     final isCancelled = rawStatus == 'cancelled' ||
         rawStatus == 'canceled' ||
         (!isSalonItem && rawStatus == '3') ||
@@ -495,7 +518,30 @@ class BookingDetailsDialog extends StatelessWidget {
             ? const Color(0xFFFEF2F2)
             : const Color(0xFFFFF7ED);
     final titleColor =
-        isCancelled ? const Color(0xFF94A3B8) : const Color(0xFF0F172A);
+        isCancelled ? context.appTextSubtle : context.appText;
+    // Resolve the employee responsible for this service line. Salon API
+    // returns either a nested `employee.fullname` map or flat
+    // `employee_name` / `employee_fullname` fields. After an inline edit
+    // via `update-booking-data` the new name is written back to the same
+    // booking row, so reading the latest record here automatically
+    // reflects employee swaps.
+    String? employeeName;
+    if (isSalonItem) {
+      final empRaw = meal['employee'];
+      if (empRaw is Map) {
+        final m = empRaw.map((k, v) => MapEntry(k.toString(), v));
+        final fullname = m['fullname']?.toString().trim();
+        final name = m['name']?.toString().trim();
+        if (fullname != null && fullname.isNotEmpty) {
+          employeeName = fullname;
+        } else if (name != null && name.isNotEmpty) {
+          employeeName = name;
+        }
+      }
+      employeeName ??= meal['employee_fullname']?.toString().trim();
+      employeeName ??= meal['employee_name']?.toString().trim();
+      if (employeeName != null && employeeName.isEmpty) employeeName = null;
+    }
     final amountColor = isCancelled
         ? const Color(0xFF94A3B8)
         : isRefunded
@@ -545,6 +591,27 @@ class BookingDetailsDialog extends StatelessWidget {
                                   : TextDecoration.none,
                             ),
                           ),
+                          if (employeeName != null) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(LucideIcons.user,
+                                    size: 12, color: context.appTextMuted),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    employeeName,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: context.appTextMuted,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           if (badgeLabel != null) ...[
                             const SizedBox(height: 4),
                             Container(
@@ -678,11 +745,14 @@ class BookingDetailsDialog extends StatelessWidget {
       // This prevents re-added items from being merged with refunded items
       // that share the same name but have different IDs.
       if (signatures.isEmpty) {
-        final name =
-            (item['meal_name'] ?? item['name'] ?? item['item_name'] ?? '')
-                .toString()
-                .trim()
-                .toLowerCase();
+        final name = (item['service_name'] ??
+                item['meal_name'] ??
+                item['name'] ??
+                item['item_name'] ??
+                '')
+            .toString()
+            .trim()
+            .toLowerCase();
         if (name.isNotEmpty) {
           signatures.add(
             'name:$name|qty:${item['quantity'] ?? 1}|total:${_parsePrice(item['total'] ?? item['price']).toStringAsFixed(ApiConstants.digitsNumber)}',
@@ -696,7 +766,11 @@ class BookingDetailsDialog extends StatelessWidget {
     Map<String, dynamic> normalizeRefund(Map<String, dynamic> meal) {
       final normalized = Map<String, dynamic>.from(meal);
       final isInvoiced = _isTruthy(normalized['is_invoiced']);
+      // Salon refund preview rows carry `service_name`; restaurant ones
+      // carry `meal_name`. Without `service_name` here, salon services
+      // collapse to "Unknown item" in the booking-details refund section.
       normalized['meal_name'] = normalized['meal_name'] ??
+          normalized['service_name'] ??
           normalized['name'] ??
           normalized['item_name'] ??
           translationService.t('unknown_item');
@@ -772,7 +846,7 @@ class BookingDetailsDialog extends StatelessWidget {
     return merged;
   }
 
-  Widget _buildSummaryRow(String label, double value,
+  Widget _buildSummaryRow(BuildContext context, String label, double value,
       {bool isTotal = false, bool isDiscount = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -782,7 +856,7 @@ class BookingDetailsDialog extends StatelessWidget {
           style: TextStyle(
             fontSize: isTotal ? 16 : 14,
             fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
-            color: isDiscount ? Colors.orange : const Color(0xFF64748B),
+            color: isDiscount ? Colors.orange : context.appTextMuted,
           ),
         ),
         Text(
@@ -793,10 +867,10 @@ class BookingDetailsDialog extends StatelessWidget {
             fontSize: isTotal ? 18 : 14,
             fontWeight: FontWeight.bold,
             color: isTotal
-                ? const Color(0xFF1E293B)
+                ? context.appText
                 : isDiscount
                     ? Colors.orange
-                    : const Color(0xFF64748B),
+                    : context.appTextMuted,
           ),
         ),
       ],
@@ -952,7 +1026,8 @@ class BookingDetailsDialog extends StatelessWidget {
         .toList();
   }
 
-  Widget _buildRefundedMealsSection(List<Map<String, dynamic>> refundedMeals) {
+  Widget _buildRefundedMealsSection(
+      BuildContext context, List<Map<String, dynamic>> refundedMeals) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -996,18 +1071,33 @@ class BookingDetailsDialog extends StatelessWidget {
             ],
           ),
           const Divider(color: Color(0xFFFCA5A5), height: 20),
-          ...refundedMeals.map((meal) => _buildRefundedMealRow(meal)),
+          ...refundedMeals.map((meal) => _buildRefundedMealRow(context, meal)),
         ],
       ),
     );
   }
 
-  Widget _buildRefundedMealRow(Map<String, dynamic> meal) {
-    final name = meal['meal_name']?.toString() ??
+  Widget _buildRefundedMealRow(BuildContext context, Map<String, dynamic> meal) {
+    final name = meal['service_name']?.toString() ??
+        meal['meal_name']?.toString() ??
         meal['name']?.toString() ??
+        meal['item_name']?.toString() ??
         _tr('صنف غير معروف', 'Unknown item');
     final quantity = int.tryParse(meal['quantity']?.toString() ?? '1') ?? 1;
-    final total = _parsePrice(meal['total'] ?? meal['price']);
+    var total = _parsePrice(meal['total'] ?? meal['price']);
+    // Same with-tax convention as `_buildMealItem`: salon refunded rows
+    // store the pre-tax line total, but the cashier wants to see the
+    // amount that was actually charged to the customer.
+    final isSalonItem = meal.containsKey('service_id') ||
+        meal.containsKey('service_name') ||
+        meal.containsKey('booking_service_id') ||
+        meal['service'] is Map;
+    if (isSalonItem) {
+      final branchService = getIt<BranchService>();
+      final taxRate =
+          branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
+      if (taxRate > 0) total = total * (1.0 + taxRate);
+    }
     final isInvoiced = _isTruthy(meal['is_invoiced']);
     final addons = meal['addons'];
     final invoiceId = meal['invoice_id'];

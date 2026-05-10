@@ -13,7 +13,7 @@ import '../services/app_themes.dart';
 import '../services/language_service.dart';
 
 /// In-app viewer for the marketing/legal static pages exposed by
-/// `portal.hermosaapp.com/staticPages/<slug>`. The same slug is used on
+/// `api.hermosaapp.com/staticPages/<slug>`. The same slug is used on
 /// the public web site (`v2.hermosaapp.com/pages/<slug>`) — surfaced as
 /// an "open in browser" action so the user can read the canonical
 /// version when wanted.
@@ -41,7 +41,7 @@ class LegalPageScreen extends StatefulWidget {
 }
 
 class _LegalPageScreenState extends State<LegalPageScreen> {
-  static const String _apiHost = 'https://portal.hermosaapp.com';
+  static const String _apiHost = 'https://api.hermosaapp.com';
   static const String _webHost = 'https://v2.hermosaapp.com';
 
   bool _loading = true;

@@ -14,8 +14,26 @@ extension OrderServiceBookingApis on OrderService {
     }
 
     final normalizedPayload = _normalizeBookingPayload(bookingData);
+    Map<String, dynamic> applyCacheSideEffect(Map<String, dynamic> response) {
+      // Prepend the freshly-created booking to today's cached lists so the
+      // orders screen renders it instantly on next open. The screen
+      // otherwise paints stale cached data (without the new row) for 3-4s
+      // while the network refresh runs.
+      unawaited(_pushCreatedBookingToCache(response));
+      // Drop the (employee, service, date) slot cache too — the slot the
+      // cashier just consumed is still in there for up to 2 minutes, and
+      // without this purge the next customer sees the same time as
+      // available and the cashier ends up double-booking the employee.
+      try {
+        getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
+      } catch (_) {}
+      return response;
+    }
+
     try {
-      return await _createBookingWithJsonRetry(normalizedPayload);
+      return applyCacheSideEffect(
+        await _createBookingWithJsonRetry(normalizedPayload),
+      );
     } on ApiException catch (e) {
       final hasMeals = normalizedPayload['meals'] is List;
       final hasCard = normalizedPayload['card'] is List;
@@ -25,10 +43,14 @@ extension OrderServiceBookingApis on OrderService {
         final fallbackPayload = Map<String, dynamic>.from(normalizedPayload);
         fallbackPayload['card'] = fallbackPayload.remove('meals');
         try {
-          return await _createBookingWithJsonRetry(fallbackPayload);
+          return applyCacheSideEffect(
+            await _createBookingWithJsonRetry(fallbackPayload),
+          );
         } on ApiException catch (_) {}
         try {
-          return await _createBookingMultipart(fallbackPayload);
+          return applyCacheSideEffect(
+            await _createBookingMultipart(fallbackPayload),
+          );
         } on ApiException catch (_) {}
       }
 
@@ -50,11 +72,15 @@ extension OrderServiceBookingApis on OrderService {
         }
 
         try {
-          return await _createBookingWithJsonRetry(nullSafePayload);
+          return applyCacheSideEffect(
+            await _createBookingWithJsonRetry(nullSafePayload),
+          );
         } on ApiException catch (_) {}
 
         try {
-          return await _createBookingMultipart(nullSafePayload);
+          return applyCacheSideEffect(
+            await _createBookingMultipart(nullSafePayload),
+          );
         } on ApiException catch (_) {}
       }
 
@@ -66,10 +92,14 @@ extension OrderServiceBookingApis on OrderService {
           forceDeliveryCoordinates: true,
         );
         try {
-          return await _createBookingWithJsonRetry(deliveryFallback);
+          return applyCacheSideEffect(
+            await _createBookingWithJsonRetry(deliveryFallback),
+          );
         } on ApiException catch (_) {}
         try {
-          return await _createBookingMultipart(deliveryFallback);
+          return applyCacheSideEffect(
+            await _createBookingMultipart(deliveryFallback),
+          );
         } on ApiException catch (_) {}
       }
 
@@ -80,21 +110,103 @@ extension OrderServiceBookingApis on OrderService {
               Map<String, dynamic>.from(normalizedPayload)
                 ..['type'] = candidateType;
           try {
-            return await _createBookingWithJsonRetry(typeFallbackPayload);
+            return applyCacheSideEffect(
+              await _createBookingWithJsonRetry(typeFallbackPayload),
+            );
           } on ApiException catch (_) {}
           try {
-            return await _createBookingMultipart(typeFallbackPayload);
+            return applyCacheSideEffect(
+              await _createBookingMultipart(typeFallbackPayload),
+            );
           } on ApiException catch (_) {}
         }
       }
 
       if (e.statusCode == 422) {
         try {
-          return await _createBookingMultipart(normalizedPayload);
+          return applyCacheSideEffect(
+            await _createBookingMultipart(normalizedPayload),
+          );
         } on ApiException catch (_) {}
       }
       rethrow;
     }
+  }
+
+  /// Prepend a freshly-created booking row to today's cached `bookings_*`
+  /// entries so the orders screen renders it instantly on next open. The
+  /// cache key encodes (dateFrom, dateTo, status, search); we update every
+  /// today-keyed entry so the order shows up regardless of the active
+  /// filter chip. Errors here must never propagate — a stale cache is far
+  /// less harmful than a failed booking creation.
+  Future<void> _pushCreatedBookingToCache(
+    Map<String, dynamic> createResponse,
+  ) async {
+    try {
+      final bookingRow = _extractBookingRowFromCreateResponse(createResponse);
+      if (bookingRow == null) return;
+      final today = DateTime.now();
+      final todayStr =
+          '${today.year.toString().padLeft(4, '0')}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+      final prefixes = <String>[
+        'bookings_${todayStr}_$todayStr',
+        'bookings_${todayStr}_null',
+        'bookings_null_$todayStr',
+        'bookings_null_null',
+      ];
+      final updatedKeys = <String>{};
+      for (final prefix in prefixes) {
+        final keys = await _cache.keysWithPrefix(prefix);
+        for (final key in keys) {
+          if (!updatedKeys.add(key)) continue;
+          final cached = await _cache.get(key);
+          if (cached is! Map) continue;
+          final cachedMap = cached.map((k, v) => MapEntry(k.toString(), v));
+          final dataField = cachedMap['data'];
+          if (dataField is! List) continue;
+          final dataList = List<dynamic>.from(dataField);
+          final newId = bookingRow['id'];
+          if (newId != null &&
+              dataList.any((row) =>
+                  row is Map &&
+                  (row['id'] == newId || row['id']?.toString() == newId.toString()))) {
+            continue; // already present
+          }
+          dataList.insert(0, bookingRow);
+          cachedMap['data'] = dataList;
+          await _cache.set(
+            key,
+            cachedMap,
+            expiry: const Duration(minutes: 30),
+          );
+        }
+      }
+    } catch (e) {
+      print('⚠️ optimistic booking cache update failed: $e');
+    }
+  }
+
+  Map<String, dynamic>? _extractBookingRowFromCreateResponse(
+    Map<String, dynamic> response,
+  ) {
+    final data = response['data'];
+    Map? candidate;
+    if (data is Map) {
+      // Common shape: { data: { booking: { ... } } } or { data: { ... } }.
+      if (data['booking'] is Map) {
+        candidate = data['booking'] as Map;
+      } else if (data['id'] != null || data['booking_number'] != null) {
+        candidate = data;
+      }
+    } else if (data is List && data.isNotEmpty && data.first is Map) {
+      candidate = data.first as Map;
+    } else if (response['booking'] is Map) {
+      candidate = response['booking'] as Map;
+    } else if (response['id'] != null) {
+      candidate = response;
+    }
+    if (candidate == null) return null;
+    return candidate.map((k, v) => MapEntry(k.toString(), v));
   }
 
   /// Create drive-through booking using official payload format.
@@ -812,6 +924,13 @@ extension OrderServiceBookingApis on OrderService {
       final hasMoreAttempts = i < attempts.length - 1;
       try {
         final response = await attempts[i]();
+        // Status changes (cancel / complete / archive) free up the slot
+        // the booking was holding. Drop the salon slot cache so the
+        // freshly-released time isn't still hidden behind 2-minute-old
+        // cached data when another customer asks for it.
+        try {
+          getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
+        } catch (_) {}
         return _rememberResponse('update_order_status', response);
       } on ApiException catch (e) {
         lastApiError = e;
@@ -857,55 +976,47 @@ extension OrderServiceBookingApis on OrderService {
   }
 
   /// Process order refund (source of truth endpoint)
-  /// API: PATCH /seller/refund/branches/{branchId}/bookings/{orderId}
+  /// Backend expects POST with Laravel method-spoofing: multipart form-data
+  /// containing `_method=PATCH` and `refund[i]=<booking_service_id>` per item.
+  /// Native PATCH and JSON bodies are rejected by the salon controller.
+  /// API: POST /seller/refund/branches/{branchId}/bookings/{orderId}
   Future<Map<String, dynamic>> processBookingRefund({
     required String orderId,
     Map<String, dynamic> payload = const {},
   }) async {
     final normalizedOrderId = _normalizeBookingIdOrThrow(orderId);
-    final normalizedPayload = Map<String, dynamic>.from(payload);
 
-    print('🔍 DEBUG processBookingRefund:');
-    print('  orderId: $orderId');
-    print('  normalizedOrderId: $normalizedOrderId');
-    print('  input payload: $payload');
-
-    // Set refund_reason if not provided
-    final reason = normalizedPayload['refund_reason']?.toString().trim() ?? '';
-    if (reason.isEmpty) {
-      normalizedPayload['refund_reason'] = 'طلب العميل';
-    }
-
-    // Backend requires 'refund' field as array with IDs
-    // Get refund array from payload or resolve from preview
     final refundArray = await _resolveBookingRefundArray(
       normalizedOrderId: normalizedOrderId,
-      providedRefund: normalizedPayload['refund'],
+      providedRefund: payload['refund'],
     );
 
-    print('  resolved refundArray: $refundArray');
-    print('  refundArray.isEmpty: ${refundArray.isEmpty}');
-
-    // Check if refund array is empty - this means no items to refund
     if (refundArray.isEmpty) {
       throw ApiException(
-        'لا توجد عناصر قابلة للاسترجاع في هذا الطلب. قد يكون الطلب تم استرجاعه بالفعل أو تم تحويله إلى فاتورة.',
+        'لا توجد عناصر قابلة للاسترجاع في هذا الطلب.',
         statusCode: 422,
         userMessage:
             'لا يمكن استرجاع هذا الطلب. قد يكون تم استرجاعه بالفعل أو تم دفعه.',
       );
     }
 
-    // Backend requires 'refund' field as array (cannot be empty!)
-    normalizedPayload['refund'] = refundArray;
+    final fields = <String, String>{'_method': 'PATCH'};
+    for (var i = 0; i < refundArray.length; i++) {
+      fields['refund[$i]'] = refundArray[i].toString();
+    }
 
-    print('  final payload: $normalizedPayload');
-
-    return _patchWithFallbackEndpoints(
-      _bookingRefundEndpoints(normalizedOrderId),
-      normalizedPayload,
-      responseKey: 'process_booking_refund',
-    );
+    final endpoints = _bookingRefundEndpoints(normalizedOrderId);
+    ApiException? lastError;
+    for (final endpoint in endpoints) {
+      try {
+        final response = await _client.postMultipart(endpoint, fields);
+        return _rememberResponse('process_booking_refund', response);
+      } on ApiException catch (e) {
+        lastError = e;
+        if (!_isFallbackEligibleApiError(e)) rethrow;
+      }
+    }
+    throw lastError ?? ApiException('REFUND_FAILED');
   }
 
   /// Send WhatsApp message for a single booking.
@@ -952,6 +1063,14 @@ extension OrderServiceBookingApis on OrderService {
     if (employeeId != null) payload['employee_id'] = employeeId;
 
     final response = await _client.post(endpoint, payload);
+    // updateBookingData reschedules the booking_service (employee / date /
+    // time), so the slot graph just shifted. Drop the cache for the same
+    // reason the createBooking / updateBookingItems paths do.
+    if (date != null || time != null || employeeId != null) {
+      try {
+        getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
+      } catch (_) {}
+    }
     return _rememberResponse('update_order_data', response);
   }
 }

@@ -429,11 +429,14 @@ class Invoice {
       total: json['total']?.toDouble(),
       status: json['status'],
       type: json['type'],
+      // Use tryParse so a backend-side malformed timestamp (rare but
+      // observed on legacy records) doesn't crash the entire invoice
+      // list parse — a null timestamp is preferable to a hard fail.
       createdAt: json['created_at'] != null
-          ? DateTime.parse(json['created_at'])
+          ? DateTime.tryParse(json['created_at'].toString())
           : null,
       updatedAt: json['updated_at'] != null
-          ? DateTime.parse(json['updated_at'])
+          ? DateTime.tryParse(json['updated_at'].toString())
           : null,
     );
   }

@@ -3,10 +3,17 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../locator.dart';
 import '../../models.dart';
+import '../../services/api/api_constants.dart';
 import '../../services/api/error_handler.dart';
 import '../../services/display_app_service.dart';
 import '../../services/language_service.dart';
 import '../../services/app_themes.dart';
+
+// Salon branches relabel the in-cash KDS screen as "SDS" (Salon Display
+// System) so floor staff don't see kitchen vocabulary. The wire format
+// (`type: 'kds'`, the connect-mode enum, etc.) stays untouched — only the
+// UI label flips when the active branch is a salon.
+String _kdsLabel() => ApiConstants.branchModule == 'salons' ? 'SDS' : 'KDS';
 
 class DisplayDevicesTabView extends StatefulWidget {
   final List<DeviceConfig> devices;
@@ -59,7 +66,7 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
   }
 
   String _modeLabel(DeviceConfig d) {
-    return _modeForDevice(d) == DisplayMode.cds ? 'CDS' : 'KDS';
+    return _modeForDevice(d) == DisplayMode.cds ? 'CDS' : _kdsLabel();
   }
 
   bool _isModeVisible(DisplayMode mode) {
@@ -501,7 +508,7 @@ class _AddDisplayDialogState extends State<_AddDisplayDialog> {
                       ),
                     if (widget.kdsEnabled)
                       ChoiceChip(
-                        label: const Text('KDS'),
+                        label: Text(_kdsLabel()),
                         selected: _mode == DisplayMode.kds,
                         onSelected: (_) =>
                             setState(() => _mode = DisplayMode.kds),

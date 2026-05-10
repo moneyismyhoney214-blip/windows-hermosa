@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models.dart';
+import '../services/api/auth_service.dart';
+import '../services/api/filter_service.dart';
 import '../services/api/report_service.dart';
 import '../services/api/device_service.dart';
 import '../services/language_service.dart';
@@ -24,6 +26,8 @@ class ReportsScreen extends StatefulWidget {
 class _ReportsScreenState extends State<ReportsScreen>
     with SingleTickerProviderStateMixin {
   final ReportService _reportService = getIt<ReportService>();
+  final FilterService _filterService = getIt<FilterService>();
+  final AuthService _authService = AuthService();
   late TabController _tabController;
   final NumberFormat _formatter = NumberFormat('#,##0.00', 'ar');
 
@@ -33,18 +37,61 @@ class _ReportsScreenState extends State<ReportsScreen>
   // Report type filter
   String _selectedReportType = 'salesPay'; // Default to sales report
 
+  // Owner-only per-cashier filter. The web frontend exposes the same
+  // dropdown fed by `/seller/filters/branches/{branchId}/allCashiers`,
+  // and only owners get a meaningful selection — CASHIER role users are
+  // pinned to their own id by the backend, so we hide the control for
+  // them to match the web behavior.
+  late final bool _isOwner = _authService.isOwner();
+  List<Map<String, dynamic>> _cashiers = const [];
+  bool _cashiersLoading = false;
+  String? _selectedCashierId;
+
   bool _isLoading = true;
   bool _isPrinting = false;
   String? _error;
 
   Map<String, dynamic>? _currentReport;
 
+  // Per-cashier employee income, populated when the user picks the
+  // "Employees income" report type. Keyed by cashier id; each entry is
+  // the raw `data` block from `/categories?type=employees&cashier_id=X`,
+  // i.e. `chartCount` + `chartTotal` already aggregated by the backend.
+  final Map<String, Map<String, dynamic>> _employeesIncome = {};
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 1, vsync: this);
     translationService.addListener(_onLanguageChanged);
+    if (_isOwner) {
+      _loadCashiers();
+    }
     _loadData();
+  }
+
+  Future<void> _loadCashiers() async {
+    setState(() => _cashiersLoading = true);
+    try {
+      final response = await _filterService.getAllCashiers();
+      final raw = response['data'];
+      final list = <Map<String, dynamic>>[];
+      if (raw is List) {
+        for (final item in raw) {
+          if (item is Map) {
+            list.add(item.map((k, v) => MapEntry(k.toString(), v)));
+          }
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _cashiers = list;
+        _cashiersLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _cashiersLoading = false);
+    }
   }
 
   @override
@@ -56,6 +103,106 @@ class _ReportsScreenState extends State<ReportsScreen>
 
   void _onLanguageChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Fans out one `categories?type=employees&cashier_id=X` request per
+  /// cashier in the owner's list. Returns a synthetic report shaped like
+  /// the single-cashier responses so `_buildReportLines` and the rest of
+  /// the existing renderer pipeline pick it up unchanged.
+  Future<Map<String, dynamic>> _loadEmployeesIncome({
+    required String dateFromStr,
+    required String dateToStr,
+    String? acceptLanguage,
+  }) async {
+    _employeesIncome.clear();
+    if (_cashiers.isEmpty) {
+      return {
+        'data': {
+          'title': translationService.t('employees_income'),
+          'chart': {
+            'pieCharts': [
+              {
+                'title': translationService.t('employees_income'),
+                'chartData': const [],
+              }
+            ],
+          },
+          'chartCount': 0,
+          'chartTotal': 0,
+        }
+      };
+    }
+
+    final futures = <Future<MapEntry<String, Map<String, dynamic>>?>>[];
+    for (final cashier in _cashiers) {
+      final id = (cashier['value'] ?? cashier['id'])?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      futures.add(() async {
+        try {
+          final resp = await _reportService.getEmployeesSalesReport(
+            dateFrom: dateFromStr,
+            dateTo: dateToStr,
+            cashierId: id,
+            acceptLanguage: acceptLanguage,
+          );
+          final data = resp['data'];
+          if (data is Map) {
+            return MapEntry(
+                id, data.map((k, v) => MapEntry(k.toString(), v)));
+          }
+        } catch (_) {}
+        return null;
+      }());
+    }
+
+    final results = await Future.wait(futures);
+    for (final entry in results) {
+      if (entry != null) _employeesIncome[entry.key] = entry.value;
+    }
+
+    final chartData = <Map<String, dynamic>>[];
+    double grandTotal = 0;
+    int grandCount = 0;
+    for (final cashier in _cashiers) {
+      final id = (cashier['value'] ?? cashier['id'])?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      final label = (cashier['label'] ??
+              cashier['fullname'] ??
+              cashier['name'] ??
+              cashier['username'] ??
+              id)
+          .toString();
+      final data = _employeesIncome[id];
+      final total = _parseDouble(data?['chartTotal']);
+      final count = (data?['chartCount'] is num)
+          ? (data!['chartCount'] as num).toInt()
+          : int.tryParse(data?['chartCount']?.toString() ?? '') ?? 0;
+      grandTotal += total;
+      grandCount += count;
+      // The existing pieChart renderer reads `label` + `value`. We tack on
+      // `count` so a custom branch can surface the invoice-count too.
+      chartData.add({
+        'label': label,
+        'value': total,
+        'count': count,
+      });
+    }
+
+    return {
+      'data': {
+        'title': translationService.t('employees_income'),
+        'chart': {
+          'pieCharts': [
+            {
+              'title': translationService.t('employees_income'),
+              'chartData': chartData,
+            }
+          ],
+        },
+        'chartCount': grandCount,
+        'chartTotal': grandTotal,
+      }
+    };
   }
 
   Future<void> _loadData() async {
@@ -81,6 +228,7 @@ class _ReportsScreenState extends State<ReportsScreen>
           result = await _reportService.getDailyClosingSalesPayReport(
             dateFrom: dateFromStr,
             dateTo: dateToStr,
+            cashierId: _selectedCashierId,
             acceptLanguage: printerLang,
           );
           break;
@@ -88,6 +236,19 @@ class _ReportsScreenState extends State<ReportsScreen>
           result = await _reportService.getCategoriesSalesReport(
             dateFrom: dateFromStr,
             dateTo: dateToStr,
+            cashierId: _selectedCashierId,
+            acceptLanguage: printerLang,
+          );
+          break;
+        case 'employeesIncome':
+          // Per-cashier fan-out: the backend takes one cashier_id per
+          // request, so we fire one in parallel for every cashier the
+          // owner has visible. The branch-level aggregate is built from
+          // the responses and stuffed into a synthetic `chart` block so
+          // the existing `_buildReportLines` renderer picks it up.
+          result = await _loadEmployeesIncome(
+            dateFromStr: dateFromStr,
+            dateToStr: dateToStr,
             acceptLanguage: printerLang,
           );
           break;
@@ -95,6 +256,7 @@ class _ReportsScreenState extends State<ReportsScreen>
           result = await _reportService.getDailyClosingSalesPayReport(
             dateFrom: dateFromStr,
             dateTo: dateToStr,
+            cashierId: _selectedCashierId,
             acceptLanguage: printerLang,
           );
       }
@@ -703,6 +865,11 @@ class _ReportsScreenState extends State<ReportsScreen>
                         value: 'categoriesSales',
                         child: Text(translationService.t('categories')),
                       ),
+                      if (_isOwner)
+                        DropdownMenuItem(
+                          value: 'employeesIncome',
+                          child: Text(translationService.t('employees_income')),
+                        ),
                     ],
                     onChanged: (value) {
                       if (value != null) {
@@ -714,6 +881,10 @@ class _ReportsScreenState extends State<ReportsScreen>
                     },
                   ),
                 ),
+                if (_isOwner) ...[
+                  const SizedBox(height: 8),
+                  _buildCashierFilter(),
+                ],
                 const SizedBox(height: 8),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -830,6 +1001,11 @@ class _ReportsScreenState extends State<ReportsScreen>
                       value: 'categoriesSales',
                       child: Text(translationService.t('categories')),
                     ),
+                    if (_isOwner)
+                      DropdownMenuItem(
+                        value: 'employeesIncome',
+                        child: Text(translationService.t('employees_income')),
+                      ),
                   ],
                   onChanged: (value) {
                     if (value != null) {
@@ -841,6 +1017,10 @@ class _ReportsScreenState extends State<ReportsScreen>
                   },
                 ),
               ),
+              if (_isOwner) ...[
+                const SizedBox(width: 8),
+                SizedBox(width: 220, child: _buildCashierFilter()),
+              ],
               const SizedBox(width: 12),
               ElevatedButton.icon(
                 onPressed: _selectDateRange,
@@ -888,6 +1068,80 @@ class _ReportsScreenState extends State<ReportsScreen>
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Owner-only dropdown that scopes the report to a single cashier by
+  /// passing `cashier_id` to the `/salesPay` and `/categoriesSales`
+  /// endpoints — same filter the web dashboard exposes.
+  Widget _buildCashierFilter() {
+    final items = <DropdownMenuItem<String?>>[
+      DropdownMenuItem<String?>(
+        value: null,
+        child: Text(
+          translationService.t('all_cashiers'),
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+        ),
+      ),
+      ..._cashiers.map((c) {
+        final id = (c['value'] ?? c['id'])?.toString() ?? '';
+        final label = (c['label'] ??
+                c['fullname'] ??
+                c['name'] ??
+                c['username'] ??
+                id)
+            .toString();
+        return DropdownMenuItem<String?>(
+          value: id,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 13, color: Colors.black87),
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      }),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: context.appSurfaceAlt,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: context.appBorder),
+      ),
+      child: Row(
+        children: [
+          Icon(LucideIcons.user, size: 16, color: context.appTextMuted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: DropdownButton<String?>(
+              value: _selectedCashierId,
+              isExpanded: true,
+              underline: const SizedBox(),
+              hint: Text(
+                translationService.t('filter_by_cashier'),
+                style: const TextStyle(fontSize: 13, color: Colors.black87),
+              ),
+              items: items,
+              onChanged: _cashiersLoading
+                  ? null
+                  : (value) {
+                      if (value == _selectedCashierId) return;
+                      setState(() => _selectedCashierId = value);
+                      _loadData();
+                    },
+            ),
+          ),
+          if (_cashiersLoading) ...[
+            const SizedBox(width: 6),
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ],
+        ],
       ),
     );
   }

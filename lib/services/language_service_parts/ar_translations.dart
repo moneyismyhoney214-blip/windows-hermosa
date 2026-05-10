@@ -48,6 +48,9 @@ final Map<String, String> _arTranslations = {
     // Products
     'products': 'المنتجات',
     'categories': 'الفئات',
+    'employees': 'الموظفين',
+    'employees_income': 'دخل الموظفين',
+    'no_employee_data': 'لا توجد بيانات للموظفين',
     'all': 'الكل',
     'price': 'السعر',
     'quantity': 'الكمية',
@@ -190,6 +193,8 @@ final Map<String, String> _arTranslations = {
     'connection_info_desc': 'تأكد من أن الجهاز على نفس شبكة WiFi',
     'devices': 'الأجهزة',
     'cashier': 'الكاشير',
+    'all_cashiers': 'كل الكاشيرين',
+    'filter_by_cashier': 'اقفالية كاشير معين',
     'printers': 'الطابعات',
     'cds_kds_devices': 'أجهزة CDS / KDS',
     'logout_confirm_title': 'تسجيل الخروج',
@@ -213,6 +218,13 @@ final Map<String, String> _arTranslations = {
     'phone_required': 'يرجى إدخال رقم الهاتف',
     'update_data': 'تحديث البيانات',
     'save_customer': 'حفظ العميل',
+    'customer_type': 'نوع العميل',
+    'type_individual': 'فرد',
+    'type_company': 'شركة',
+    'tax_number': 'الرقم الضريبي',
+    'tax_number_hint': 'مثال: 300000000000003',
+    'commercial_register': 'السجل التجاري',
+    'commercial_register_hint': 'رقم السجل التجاري',
     'display_devices_management_title': 'إدارة أجهزة العرض (CDS / KDS)',
     'add_display_screen': 'إضافة شاشة',
     'no_display_devices_added': 'لا توجد أجهزة عرض مضافة',
@@ -293,8 +305,11 @@ final Map<String, String> _arTranslations = {
         'عند التفعيل سيتم إظهار/طباعة الفاتورة حتى إذا كان الطلب أُرسل إلى KDS.',
     'meal_icon_size': 'حجم أيقونات الوجبات',
     'meal_icon_size_hint': 'غيّر حجم بطاقات الوجبات في قائمة المنتجات.',
-    'sidebar_icon_size': 'حجم أيقونات الشريط الجانبي',
-    'sidebar_icon_size_hint': 'غيّر حجم أيقونات التصنيفات في الشريط الجانبي.',
+    'default': 'افتراضي',
+    'icon_size_choose': 'اختر الحجم المناسب',
+    'reset_to_default': 'إعادة للافتراضي',
+    'sidebar_icon_size': 'حجم أيقونات الشريط العلوي',
+    'sidebar_icon_size_hint': 'غيّر حجم أيقونات التصنيفات في الشريط العلوي.',
     'category_layout': 'عرض التصنيفات',
     'category_layout_hint': 'اختر طريقة عرض التصنيفات: أفقي أو طولي كشريط جانبي.',
     'category_layout_horizontal': 'عرضي',
@@ -766,6 +781,28 @@ final Map<String, String> _arTranslations = {
     'whatsapp_settings_test_deeplink_ok':
         'تم فتح واتساب — أكّد الإرسال من الهاتف',
     'whatsapp_settings_test_failed': 'فشل الإرسال: {reason}',
+
+    // ---- Invoice WhatsApp (PDF) ----
+    'send_invoice_whatsapp': 'إرسال الفاتورة عبر واتساب',
+    'invoice_whatsapp_sending': 'جارٍ الإرسال...',
+    'invoice_whatsapp_sent_label': 'تم الإرسال',
+    'invoice_whatsapp_sent_ok': 'تم إرسال الفاتورة على واتساب ✓',
+    'invoice_whatsapp_in_flight': 'الإرسال جارٍ بالفعل، يرجى الانتظار',
+    'invoice_whatsapp_already_sent': 'تم إرسال هذه الفاتورة من قبل',
+    'invoice_whatsapp_disabled': 'ميزة واتساب غير مفعّلة لهذا الفرع',
+    'invoice_whatsapp_no_customer':
+        'لإرسال الفاتورة، يجب إضافة عميل برقم تليفون',
+    'invoice_whatsapp_creds_missing':
+        'بيانات اعتماد واتساب غير مهيّأة لهذا الفرع',
+    'invoice_whatsapp_pdf_unavailable':
+        'تعذر الحصول على رابط PDF عام للفاتورة',
+    'failed_to_send_whatsapp_with_reason': 'تعذر إرسال واتساب: {reason}',
+    'invoice_whatsapp_resend_title': 'إعادة إرسال الفاتورة؟',
+    'invoice_whatsapp_resend_body':
+        'تم إرسال هذه الفاتورة على واتساب بالفعل. هل تريد إرسالها مرة أخرى؟',
+    'invoice_whatsapp_resend_body_named':
+        'تم إرسال هذه الفاتورة إلى {name} على واتساب بالفعل. هل تريد إرسالها مرة أخرى؟',
+    'invoice_whatsapp_resend_confirm': 'نعم، إرسال',
 
     // ---- Shared ----
     'options': 'خيارات',

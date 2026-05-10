@@ -1,11 +1,11 @@
 class ApiConstants {
   // Base URLs
-  static const String authBaseUrl = 'https://portal.hermosaapp.com';
-  static const String baseUrl = 'https://portal.hermosaapp.com';
-  static const String testBaseUrl = 'https://portal.hermosaapp.com';
-  static const String customersBaseUrl = 'https://portal.hermosaapp.com';
+  static const String authBaseUrl = 'https://api.hermosaapp.com';
+  static const String baseUrl = 'https://api.hermosaapp.com';
+  static const String testBaseUrl = 'https://api.hermosaapp.com';
+  static const String customersBaseUrl = 'https://api.hermosaapp.com';
   // Forgot-password flow lives on the public API host (see HAR capture).
-  static const String forgotBaseUrl = 'https://portal.hermosaapp.com';
+  static const String forgotBaseUrl = 'https://api.hermosaapp.com';
 
   // API Headers
   static const String _defaultAcceptLanguage = 'ar';
@@ -82,7 +82,7 @@ class ApiConstants {
   static String branchModule = '';
 
   // Country id of the active branch (matches `value` in
-  // `portal.hermosaapp.com/countries/cities`). Drives the default
+  // `api.hermosaapp.com/countries/cities`). Drives the default
   // country code on phone-input pickers — Saudi (1) is the safe
   // fallback when the branch hasn't been resolved yet.
   static int branchCountryId = 1;
@@ -307,6 +307,20 @@ class ApiConstants {
       '/seller/sellers/$sellerId/customers';
   static String customerDetailsEndpoint(int sellerId, int customerId) =>
       '/seller/sellers/$sellerId/customers/$customerId';
+
+  // Salon - Booking Sessions (تذاكر المراجعة)
+  // Each session represents a single visit attached to a booked service —
+  // e.g. a 4-session package generates one row per visit. The UI surfaces
+  // them as "review tickets" so the cashier can confirm + print attendance
+  // for each appointment without touching the parent booking.
+  static String get bookingSessionsEndpoint =>
+      '/seller/branches/$branchId/bookingSessions';
+  static String bookingSessionDetailsEndpoint(int sessionId) =>
+      '/seller/branches/$branchId/bookingSessions/$sessionId';
+  static String bookingSessionServicesEndpoint(int bookingId) =>
+      '/seller/services/branches/$branchId/bookings/$bookingId';
+  static String get allBookingSessionsFilterEndpoint =>
+      '/seller/filters/branches/$branchId/allBookingSessions';
 
   // Salon - Categories & Services
   static String get serviceCategoriesEndpoint =>

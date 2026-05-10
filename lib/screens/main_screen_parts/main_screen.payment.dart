@@ -386,6 +386,152 @@ extension MainScreenPayment on _MainScreenState {
     );
   }
 
+  /// Salon-only: confirms the cart as a booked appointment.
+  ///
+  /// Mirrors the salon dashboard's "حجز موعد" button — the request hits
+  /// `/seller/branches/{id}/bookings?book_appointment&create_order` so the
+  /// backend files it as a confirmed appointment in the calendar instead
+  /// of an order awaiting payment. On success the cart is cleared and we
+  /// route the cashier to the "الحجوزات" tab so they can review the new
+  /// row immediately.
+  Future<void> _handleAddBooking() async {
+    if (!_isSalonMode || _cart.isEmpty) return;
+    if (_requireCustomerSelection && _selectedCustomer == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _trUi('* اختيار العميل مطلوب', '* Customer is required'),
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final fields = <String, String>{};
+    fields['customer_id'] = _selectedCustomer?.id.toString() ?? '';
+
+    for (var i = 0; i < _cart.length; i++) {
+      final item = _cart[i];
+      final salon = item.salonData ?? const <String, dynamic>{};
+      final p = 'card[$i]';
+
+      final price = item.product.price;
+      final qtyStr = item.quantity == item.quantity.roundToDouble()
+          ? item.quantity.toInt().toString()
+          : item.quantity.toString();
+
+      fields['$p[package_service_id]'] =
+          salon['package_service_id']?.toString() ?? '';
+      fields['$p[item_name]'] = item.product.name;
+      fields['$p[service_id]'] =
+          (salon['service_id'] ?? item.product.id).toString();
+      fields['$p[minutes]'] = (salon['minutes'] ?? '').toString();
+      fields['$p[employee_name]'] = salon['employee_name']?.toString() ?? '';
+      fields['$p[employee_id]'] = salon['employee_id']?.toString() ?? '';
+      fields['$p[date]'] = (salon['date']?.toString().isNotEmpty == true)
+          ? salon['date'].toString()
+          : DateFormat('yyyy-MM-dd').format(DateTime.now());
+      fields['$p[time]'] = (salon['time']?.toString().isNotEmpty == true)
+          ? salon['time'].toString()
+          : DateFormat('HH:mm').format(DateTime.now());
+      fields['$p[session_numbers]'] =
+          (salon['session_numbers'] ?? 0).toString();
+      fields['$p[quantity]'] = qtyStr;
+      fields['$p[price]'] = _formatBookingPrice(price);
+      fields['$p[unitPrice]'] = _formatBookingPrice(price);
+      fields['$p[modified_unit_price]'] = '';
+    }
+
+    fields['type'] = '';
+    fields['type_extra[car_number]'] = '';
+    fields['type_extra[table_name]'] = '';
+    fields['type_extra[latitude]'] = '';
+    fields['type_extra[longitude]'] = '';
+
+    final endpoint =
+        '${ApiConstants.bookingsEndpoint}?book_appointment&create_order';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    // Snapshot the cart BEFORE the network round-trip so the post-booking
+    // turn-slip print can still see the booked services even after we
+    // clear the cart on success. _triggerSalonTurnPrint takes the same
+    // `cartSnapshot` parameter the cashier-checkout flow already relies on.
+    final cartSnapshotForPrint = List<CartItem>.from(_cart);
+
+    try {
+      final client = BaseClient();
+      final response = await client.postMultipart(endpoint, fields);
+      // Drop the salon slot cache so a second booking for another
+      // customer can't re-pick the time we just consumed.
+      try {
+        getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
+      } catch (_) {}
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // close spinner
+
+      String? bookingId;
+      if (response is Map<String, dynamic>) {
+        final data = response['data'];
+        if (data is Map) {
+          bookingId =
+              (data['id'] ?? data['booking_id'] ?? data['booking']?['id'])
+                  ?.toString();
+        }
+      }
+
+      // Fire the per-service turn ticket on every kitchen/KDS/bar printer
+      // (or every available printer when none are tagged). Same path the
+      // cashier "دفع لاحقاً" button takes — keeps the salon receipt
+      // contract consistent across the home cart and the new home button.
+      if (bookingId != null && bookingId.isNotEmpty) {
+        unawaited(
+          _triggerSalonTurnPrint(
+            orderId: bookingId,
+            cartSnapshot: cartSnapshotForPrint,
+          ),
+        );
+      }
+
+      _clearCart();
+      setState(() {
+        _activeTab = 'bookings';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            bookingId != null && bookingId.isNotEmpty
+                ? _trUi('تم إنشاء الحجز #$bookingId',
+                    'Booking #$bookingId created')
+                : _trUi('تم إنشاء الحجز', 'Booking created'),
+          ),
+          backgroundColor: const Color(0xFF22C55E),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // close spinner
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _trUi('فشل إنشاء الحجز: $e', 'Failed to create booking: $e'),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  String _formatBookingPrice(double v) {
+    if (v == v.roundToDouble()) return v.toStringAsFixed(0);
+    return v.toStringAsFixed(ApiConstants.digitsNumber.clamp(0, 4));
+  }
+
   String _normalizePayMethod(String? method) => ReceiptBuilderService.normalizePayMethod(method);
 
   bool _isCashOnlyPayment(List<Map<String, dynamic>> pays) {
@@ -815,6 +961,12 @@ extension MainScreenPayment on _MainScreenState {
     // below short-circuit because no dialog was pushed.
     showLoadingOverlay = false;
 
+    // Snapshot for the salon-only optimistic cart clear (see ~line 1000).
+    // Declared at this scope so the outer `catch` block below can restore
+    // the items if `createBooking` throws — Dart block-scopes vars
+    // declared inside the `try`.
+    List<CartItem>? _optimisticClearSnapshot;
+
     try {
       final orderService = getIt<OrderService>();
       final displayService = getIt<DisplayAppService>();
@@ -987,6 +1139,24 @@ extension MainScreenPayment on _MainScreenState {
           _cart.where((item) => item.quantity > 0).toList();
       if (cartItemsForOrder.isEmpty) {
         throw Exception(translationService.t('cart_empty_error'));
+      }
+
+      // ── Optimistic cart clear (salon-only) ─────────────────────────────
+      // Salon `createBooking` typically takes ~1.5–2s and the user
+      // reported that the cart visibly hangs full on screen for that
+      // window before the existing fast-path clear at line ~1424 fires.
+      // Clear the visible cart items immediately so the UI mirrors the
+      // restaurant module's instant-clear feel; keep order-level discount,
+      // promo, car-number and deposit selection intact because the booking
+      // payload below still references their snapshots. If `createBooking`
+      // throws we restore the items in the catch block. Restaurant flow is
+      // untouched — the user explicitly said it already feels instant.
+      if (_isSalonMode && clearCartOnSuccess && _cart.isNotEmpty) {
+        _optimisticClearSnapshot = List<CartItem>.from(_cart);
+        setState(() {
+          _cart.clear();
+        });
+        _syncDisplayCartFromMain();
       }
       final selectedTableForOrder = resolvedTableSelection;
       print(
@@ -2505,6 +2675,24 @@ extension MainScreenPayment on _MainScreenState {
         }
 
         if (invoiceId != null && invoiceId.isNotEmpty) {
+          // Salon-only: tell the invoices/orders screens immediately so they
+          // refresh without waiting for the 15s poll or the slow
+          // invoice→booking cross-reference scan. Restaurant flow already
+          // refreshes inline from orders_screen.data.dart and isn't routed
+          // through main_screen, so this stays salon-only.
+          if (_isSalonMode) {
+            try {
+              getIt<SalonInvoiceEvents>().emitCreated(
+                invoiceId: invoiceId,
+                invoiceNumber: invoiceNumber,
+                bookingId: orderId,
+                orderNumber: displayOrderRef,
+              );
+            } catch (e) {
+              print('⚠️ Failed to emit SalonInvoiceCreated event: $e');
+            }
+          }
+
           final resolvedPaysTotal = resolvedAttemptPaysTotal;
           final finalInvoiceTotal =
               (resolvedPaysTotal != null && resolvedPaysTotal > 0)
@@ -2717,10 +2905,16 @@ extension MainScreenPayment on _MainScreenState {
       }
 
       // Enrich orderItems with meal_name_translations from booking API
-      // so the receipt can resolve names for the invoice language
+      // so the receipt can resolve names for the invoice language. Salon
+      // bookings expose the same data under `booking_services` /
+      // `sales_services` and may store the localized name as a map under
+      // `service_name` instead of `meal_name_translations`, so check both
+      // shapes to keep parity with restaurant ticket localization.
       try {
         List<dynamic> receiptApiItems = const [];
-        final invItems = invoicePayload?['items'] ?? invoicePayload?['sales_meals'];
+        final invItems = invoicePayload?['items'] ??
+            invoicePayload?['sales_meals'] ??
+            invoicePayload?['sales_services'];
         if (invItems is List && invItems.isNotEmpty) {
           receiptApiItems = invItems;
         } else if (orderId.isNotEmpty) {
@@ -2728,15 +2922,34 @@ extension MainScreenPayment on _MainScreenState {
           final bd = await orderService.getBookingDetails(orderId);
           final bn = (bd['data'] is Map && bd['data']['booking'] is Map)
               ? bd['data']['booking'] : (bd['data'] ?? bd);
-          final bi = (bn is Map) ? (bn['booking_meals'] ?? bn['meals'] ?? bn['items']) : null;
+          final bi = (bn is Map)
+              ? (bn['booking_meals'] ??
+                  bn['booking_services'] ??
+                  bn['meals'] ??
+                  bn['items'])
+              : null;
           if (bi is List) receiptApiItems = bi;
         }
         if (receiptApiItems.isNotEmpty) {
           for (var i = 0; i < orderItemsSnapshot.length && i < receiptApiItems.length; i++) {
             final apiItem = receiptApiItems[i];
             if (apiItem is! Map) continue;
-            final mt = apiItem['meal_name_translations'];
-            if (mt is! Map) continue;
+            // Translation map: prefer the explicit `*_name_translations`
+            // field; fall back to a `service_name`/`meal_name` map shape
+            // (`{ar: "...", en: "..."}`) which the salon booking API uses
+            // when the cashier hasn't migrated to translation columns yet.
+            Map<dynamic, dynamic>? translationMap;
+            final explicit = apiItem['meal_name_translations'] ??
+                apiItem['service_name_translations'] ??
+                apiItem['name_translations'];
+            if (explicit is Map) {
+              translationMap = explicit;
+            } else if (apiItem['service_name'] is Map) {
+              translationMap = apiItem['service_name'] as Map;
+            } else if (apiItem['meal_name'] is Map) {
+              translationMap = apiItem['meal_name'] as Map;
+            }
+            if (translationMap == null) continue;
             final existing = orderItemsSnapshot[i]['localizedNames'];
             final merged = <String, String>{};
             if (existing is Map) {
@@ -2744,7 +2957,7 @@ extension MainScreenPayment on _MainScreenState {
                 merged[e.key.toString()] = e.value?.toString() ?? '';
               }
             }
-            for (final e in mt.entries) {
+            for (final e in translationMap.entries) {
               final val = e.value?.toString().trim() ?? '';
               if (val.isNotEmpty) merged[e.key.toString()] = val;
             }
@@ -2991,13 +3204,30 @@ extension MainScreenPayment on _MainScreenState {
               return item;
             }).toList();
 
+            // Salon turn slip prints `daily_order_number` ONLY in its
+            // banner (per spec — booking_id is intentionally suppressed).
+            // `displayOrderRef` falls back to `orderId` when the backend
+            // omitted the daily counter, which would smuggle the booking
+            // id back into the slip. Pass the strict daily-only value to
+            // the salon path so an empty daily renders `#NO-<index>`
+            // instead of the id.
             await _triggerKitchenPrint(
               orderId: orderId,
               invoiceNumber: invoiceNumber,
               orderItems: enrichedItems,
-              dailyOrderNumber: displayOrderRef,
+              dailyOrderNumber: _isSalonMode
+                  ? ((backendDailyOrderNumber?.isNotEmpty ?? false)
+                      ? backendDailyOrderNumber
+                      : null)
+                  : displayOrderRef,
               capturedTableNumber: capturedTableNumber,
               carNumber: carNumber,
+              // Cart was already cleared by the fast-path success handler
+              // (~line 1424). Pass the pre-clear snapshot so the salon turn
+              // slip dispatcher in `_triggerSalonTurnPrint` still sees the
+              // booked services and can fire the أدوار ticket on the
+              // kitchen-tagged printer.
+              salonCartSnapshot: cartItemsForOrder,
             );
           } catch (_) {}
         } else {
@@ -3042,11 +3272,59 @@ extension MainScreenPayment on _MainScreenState {
             ),
           );
         }
+
+        // NearPay already authorized + captured the card. The customer
+        // must walk away with a printed receipt — even when the backend
+        // invoice creation failed afterwards. Build a minimal receipt
+        // from the cart snapshot (no invoice_id/invoice_number) and push
+        // it through the normal printer pipeline. The cashier can later
+        // issue the formal invoice from شاشة الطلبات.
+        if (isNearPayCardFlow && type == 'payment' && mounted) {
+          try {
+            final fallbackPays = _buildNormalizedPays(
+              pays,
+              targetTotal: payableTotal,
+            );
+            final fallbackReceipt = _buildOrderReceiptData(
+              orderId: displayOrderRef,
+              invoiceNumber: null,
+              orderItems: orderItemsSnapshot,
+              orderTotal: payableTotal,
+              orderType: bookingOrderType,
+              type: type,
+              pays: fallbackPays,
+              invoicePayload: null,
+              carNumber: carNumber,
+              tableNumber: _selectedTable?.number ?? _lastSelectedTable?.number,
+            );
+            unawaited(_autoPrintReceiptCopies(
+              receiptData: fallbackReceipt,
+              invoiceId: null,
+            ));
+            debugPrint(
+              '🧾 NearPay fallback receipt dispatched (invoice failed but card was charged).',
+            );
+          } catch (e) {
+            debugPrint('⚠️ NearPay fallback receipt build failed: $e');
+          }
+        }
       }
     } catch (e) {
       // Close loading if still open (booking failed before fast-path dismiss)
       if (showLoadingOverlay && mounted && Navigator.canPop(context)) {
         Navigator.pop(context);
+      }
+
+      // Restore the optimistic cart clear (salon-only) so the user can fix
+      // and retry — without this they'd be staring at an empty cart even
+      // though the booking never succeeded.
+      if (_optimisticClearSnapshot != null && mounted) {
+        setState(() {
+          _cart
+            ..clear()
+            ..addAll(_optimisticClearSnapshot!);
+        });
+        _syncDisplayCartFromMain();
       }
 
       // Show error
@@ -3125,9 +3403,24 @@ extension MainScreenPayment on _MainScreenState {
       taxRate: _taxRate,
       userNameFallback: _userName,
       cache: cache,
+      // Same offline-resilient fallbacks the waiter dispatcher uses
+      // (waiter_print_dispatcher.dart:_buildReceiptData). The cashier
+      // used to skip these, which is why its receipt rendered shorter
+      // than the waiter's: when the invoice payload didn't nest seller
+      // info (logo URL, English name, branch address, phone, CR), there
+      // was no second source to fall back to. Pulling them in here aligns
+      // the cashier's printed/preview receipt with the waiter's.
+      authUser: getIt<AuthService>().getUser(),
+      branchReceiptCache: getIt<BranchService>().cachedBranchReceiptInfo,
       activeMenuListName: _activeMenuListName,
       menuListPriceType: _menuListPriceType,
       isMenuListActive: _isMenuListActive,
+      // Salon catalog prices already include VAT, so the receipt builder
+      // must NOT gross up the line items again. _grossOrderTotal in
+      // main_screen.cart.dart treats salon cart sums as already-with-tax;
+      // mirror that contract here so the printed line matches the
+      // totals block (e.g. 359 invoice -> 359 line, not 395).
+      itemsAlreadyTaxInclusive: _isSalonMode,
     );
 
     // The service mirrors any fresh seller/branch info it pulled out

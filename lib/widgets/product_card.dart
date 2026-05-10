@@ -89,11 +89,36 @@ class _ProductCardState extends State<ProductCard> {
         height: double.infinity,
         memCacheWidth: 300,
         fadeInDuration: const Duration(milliseconds: 150),
-        placeholder: (_, __) => const Center(
-          child: Icon(LucideIcons.image, size: 32, color: Color(0xFFCBD5E1)),
-        ),
-        errorWidget: (_, __, ___) => const Center(
-          child: Icon(LucideIcons.image, size: 32, color: Color(0xFFCBD5E1)),
+        placeholder: (_, __) => _emptyIcon(),
+        errorWidget: (_, __, ___) => _emptyIcon(),
+      );
+    }
+    return _emptyIcon();
+  }
+
+  /// Empty-image placeholder. Salon services rarely carry a per-service
+  /// image, and the original 32px grey glyph rendered as a near-invisible
+  /// smudge. Salon mode shows a clearly visible scissors badge in the
+  /// salon brand palette — warm orange (#F58220) on a cream disc — which
+  /// reads well in both men's and women's salons (vs. the gender-coded
+  /// pink it had before). Restaurant mode keeps the neutral glyph.
+  Widget _emptyIcon() {
+    final isSalon = ApiConstants.branchModule == 'salons';
+    if (isSalon) {
+      return Center(
+        child: Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7ED), // cream — salon brand light
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFFF58220), width: 1.5),
+          ),
+          child: const Icon(
+            LucideIcons.scissors,
+            size: 38,
+            color: Color(0xFFF58220), // salon brand
+          ),
         ),
       );
     }

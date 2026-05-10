@@ -198,17 +198,6 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
           final isRefunding = _refundingInvoiceIds.contains(invoice.id);
           final isPaid = _isInvoicePaid(invoice);
           final canRefund = (isPaid || hasPartialRefund) && !isFullyRefunded;
-          final orderId = _resolveOrderIdFromInvoice(invoice);
-          final rawOrderStatus = (invoice.raw['order_status']?.toString() ??
-                  invoice.raw['status']?.toString() ??
-                  '')
-              .trim();
-          final isCancelled =
-              _normalizeStatusToApiValue(rawOrderStatus) == 8 ||
-                  rawOrderStatus == 'ملغي' ||
-                  rawOrderStatus.toLowerCase() == 'cancelled' ||
-                  rawOrderStatus.toLowerCase() == 'canceled';
-          final canOrderActions = invoice.id > 0 && !isCancelled;
           final totalValue = invoice.grandTotal > 0
               ? invoice.grandTotal
               : (invoice.total > 0 ? invoice.total : invoice.paid);
@@ -331,39 +320,15 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                         side: const BorderSide(color: Color(0xFF0EA5E9)),
                       ),
                     ),
-                    if (ApiConstants.branchModule != 'salons')
-                      OutlinedButton.icon(
-                        onPressed: canOrderActions && !_isSendingWhatsApp
-                            ? () async {
-                                final resolvedOrderId = orderId ??
-                                    await _resolveOrderIdForInvoiceAsync(
-                                        invoice);
-                                if (resolvedOrderId == null ||
-                                    resolvedOrderId <= 0) {
-                                  if (!mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(_tr(
-                                        'تعذر تحديد رقم الطلب لهذه الفاتورة',
-                                        'Unable to resolve order for this invoice',
-                                      )),
-                                    ),
-                                  );
-                                  return;
-                                }
-                                await _sendWhatsAppForOrder(
-                                  orderId: resolvedOrderId,
-                                  orderLabel: _formatInvoiceNumber(invoice),
-                                );
-                              }
-                            : null,
-                        icon: const Icon(LucideIcons.messageCircle, size: 16),
-                        label: Text(_tr('واتساب', 'WhatsApp')),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF16A34A),
-                          side: const BorderSide(color: Color(0xFF16A34A)),
-                        ),
-                      ),
+                    SendInvoiceWhatsAppButton(
+                      invoiceId: invoice.id.toString(),
+                      customerPhone: _extractCustomerPhoneFromInvoice(invoice),
+                      customerName: invoice.customerName,
+                      invoiceNumber: invoice.invoiceNumber.isNotEmpty
+                          ? invoice.invoiceNumber
+                          : invoice.id.toString(),
+                      minimumSize: const Size(0, 36),
+                    ),
                     if (isFullyRefunded)
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -405,6 +370,8 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                           _showInvoiceRefundOptions(invoice);
                         } else if (value == 'refunds_list') {
                           _showRefundedMealsForInvoice(invoice);
+                        } else if (value == 'update_date') {
+                          _updateInvoiceDate(invoice);
                         }
                       },
                       itemBuilder: (context) => [
@@ -439,6 +406,22 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                                 _tr('المرتجعات', 'Refunds'),
                                 style: const TextStyle(
                                     color: Color(0xFFB45309),
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'update_date',
+                          child: Row(
+                            children: [
+                              const Icon(LucideIcons.calendarClock,
+                                  size: 16, color: Color(0xFF0EA5E9)),
+                              const SizedBox(width: 8),
+                              Text(
+                                _tr('تعديل التاريخ', 'Update Date'),
+                                style: const TextStyle(
+                                    color: Color(0xFF0EA5E9),
                                     fontWeight: FontWeight.w600),
                               ),
                             ],

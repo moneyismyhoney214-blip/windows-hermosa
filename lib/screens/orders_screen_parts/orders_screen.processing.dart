@@ -35,6 +35,43 @@ extension OrdersScreenProcessing on _OrdersScreenState {
 
     final totalCount = _extractTotalCount(response);
 
+    // Salon-only: when we've already learned (via SalonInvoiceCreatedEvent
+    // or the cross-ref scan) that a booking is invoiced, force its
+    // status/status_display to the "انتهي" state so the list paint never
+    // briefly shows "حجز مؤكد" while the backend lags ~1s before
+    // propagating status=3 in the LIST response. This kills the
+    // "card flips to انتهي a second later" flicker.
+    if (ApiConstants.branchModule == 'salons' &&
+        _bookingIdsWithInvoice.isNotEmpty) {
+      for (final booking in newItems) {
+        if (_bookingIdsWithInvoice.contains(booking.id)) {
+          booking.raw['status'] = 3;
+          booking.raw['status_display'] = 'انتهي';
+          booking.raw['has_invoice'] = true;
+        }
+      }
+    }
+
+    // Salon-only: enforce strict separation between Bookings, Pending
+    // Invoices and Posted Invoices. The /bookings endpoint returns:
+    //   - real appointments (`book_appointment=true`) → Bookings tab
+    //   - pay-later orders awaiting invoice (`book_appointment=false`,
+    //     status=1) → Pending Invoices tab (this screen)
+    //   - finalised orders (status=3 "انتهي" or status=7 "مكتمل", with
+    //     `invoice_id` set on the detail endpoint) → Posted Invoices tab
+    // Without this filter the same customer (e.g. مريم المازني) shows up
+    // in both the Bookings tab AND the Pending Invoices tab, and stays in
+    // Pending after the cashier clicks "Create Invoice".
+    if (ApiConstants.branchModule == 'salons') {
+      newItems = newItems.where((booking) {
+        if (booking.raw['book_appointment'] == true) return false;
+        if (_bookingHasInvoice(booking)) return false;
+        if (_bookingIdsWithInvoice.contains(booking.id)) return false;
+        if (_isBookingPaid(booking)) return false;
+        return true;
+      }).toList();
+    }
+
     if (mounted) {
       setState(() {
         if (append) {

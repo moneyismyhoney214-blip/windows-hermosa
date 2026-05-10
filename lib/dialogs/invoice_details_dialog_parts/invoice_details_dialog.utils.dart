@@ -83,11 +83,22 @@ extension InvoiceDetailsDialogUtils on _InvoiceDetailsDialogState {
         if (items.isNotEmpty) {
           return items.map((row) {
             final meal = _asMap(row['meal']) ?? const <String, dynamic>{};
+            final service = _asMap(row['service']) ?? const <String, dynamic>{};
+            // Salon items use `service_name` and nest extra info under
+            // `service` instead of `meal`. Map both onto `meal_name` so the
+            // existing display widgets resolve a real name (without this,
+            // salon items rendered the placeholder "عنصر").
+            final resolvedName = row['meal_name'] ??
+                row['service_name'] ??
+                (meal['name']?.toString().isNotEmpty == true
+                    ? meal['name']
+                    : null) ??
+                (service['name']?.toString().isNotEmpty == true
+                    ? service['name']
+                    : null);
             return <String, dynamic>{
               ...row,
-              if (row['meal_name'] == null &&
-                  meal['name']?.toString().isNotEmpty == true)
-                'meal_name': meal['name'],
+              if (resolvedName != null) 'meal_name': resolvedName,
               if (row['quantity'] == null) 'quantity': 1,
               if (row['unit_price'] == null && row['price'] != null)
                 'unit_price': row['price'],
@@ -151,7 +162,8 @@ extension InvoiceDetailsDialogUtils on _InvoiceDetailsDialogState {
     }
 
     String resolveName(Map<String, dynamic> map) {
-      final name = map['meal_name'] ??
+      final name = map['service_name'] ??
+          map['meal_name'] ??
           map['product_name'] ??
           map['item_name'] ??
           map['name'] ??

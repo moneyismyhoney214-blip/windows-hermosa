@@ -392,7 +392,10 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
       final availableIds = tables
           .where((t) => t.isActive && t.status == TableStatus.available)
           .map((t) => t.id);
-      _registry.reconcileWithBackend(availableIds);
+      _registry.reconcileWithBackend(
+        availableIds,
+        selfId: widget.controller.session.self?.id,
+      );
       setState(() {
         _tables = tables
             .where((t) => t.isActive)
@@ -965,7 +968,13 @@ class _WaiterTablesScreenState extends State<WaiterTablesScreen> {
         // dialog would show pre-tax numbers only, confusing the
         // waiter into thinking items were cheaper than they are.
         taxRate: getIt<WaiterBillingService>().taxRate,
-        onPrintChanges: (changes, orderNumber, {bool isFullCancel = false}) {
+        onPrintChanges: (
+          changes,
+          orderNumber, {
+          bool isFullCancel = false,
+          String? customerName,
+          String? employeeName,
+        }) {
           // Fire-and-forget. The dispatcher already swallows printer
           // errors so a down printer never blocks the edit save.
           unawaited(dispatcher.printKitchenChangeTicket(

@@ -21,6 +21,7 @@ part 'invoice_print_widget_parts/invoice_print_widget.translators.dart';
 part 'invoice_print_widget_parts/invoice_print_widget.test_view.dart';
 part 'invoice_print_widget_parts/invoice_print_widget.kitchen_view.dart';
 part 'invoice_print_widget_parts/invoice_print_widget.salon_turn_view.dart';
+part 'invoice_print_widget_parts/invoice_print_widget.deposit_view.dart';
 
 // Static helpers relocated from InvoicePrintWidget class to library-level
 // so extensions can reference them without qualification.
@@ -206,6 +207,8 @@ class InvoicePrintWidget extends StatelessWidget {
                 _buildTestView()
               else if (kitchenData != null)
                 _buildKitchenView()
+              else if (data != null && data!.kind == 'deposit')
+                _buildDepositView()
               else if (data != null) ...[
                 _buildHeader(),
                 _buildInvoiceTitle(),

@@ -58,6 +58,7 @@ class _QueuedKitchenJob {
   final String? carNumber;
   final String? cashierName;
   final String? printerName;
+  final String? employeeName;
   final bool isRtl;
   final String? primaryLang;
   final String? secondaryLang;
@@ -83,6 +84,7 @@ class _QueuedKitchenJob {
     this.carNumber,
     this.cashierName,
     this.printerName,
+    this.employeeName,
     this.isRtl = true,
     this.primaryLang,
     this.secondaryLang,
@@ -164,6 +166,7 @@ class PrintOrchestratorService {
     String? carNumber,
     String? cashierName,
     String? printerName,
+    String? employeeName,
     bool isRtl = true,
     String? primaryLang,
     String? secondaryLang,
@@ -191,6 +194,7 @@ class PrintOrchestratorService {
       carNumber: carNumber,
       cashierName: cashierName,
       printerName: printerName,
+      employeeName: employeeName,
       isRtl: isRtl,
       primaryLang: primaryLang,
       secondaryLang: secondaryLang,
@@ -282,6 +286,7 @@ class PrintOrchestratorService {
           carNumber: job.carNumber,
           cashierName: job.cashierName,
           printerName: job.printerName,
+          employeeName: job.employeeName,
           isRtl: job.isRtl,
           primaryLang: job.primaryLang,
           secondaryLang: job.secondaryLang,
@@ -346,6 +351,7 @@ class PrintOrchestratorService {
     String? carNumber,
     String? cashierName,
     String? printerName,
+    String? employeeName,
     bool isRtl = true,
     String? primaryLang,
     String? secondaryLang,
@@ -368,6 +374,7 @@ class PrintOrchestratorService {
           carNumber: carNumber,
           cashierName: cashierName,
           printerName: printerName,
+          employeeName: employeeName,
           isRtl: isRtl,
           primaryLang: primaryLang,
           secondaryLang: secondaryLang,

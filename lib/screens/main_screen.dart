@@ -32,6 +32,7 @@ import '../services/print_job_cache_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/receipt_builder_service.dart';
+import '../services/salon_invoice_events.dart';
 import '../services/nearpay/nearpay_service.dart';
 import '../services/app_themes.dart';
 import '../services/cashier_mesh_bootstrap.dart';
@@ -51,6 +52,8 @@ import '../services/api/salon_employee_service.dart';
 import 'table_management_screen.dart';
 import 'customers_screen.dart';
 import 'deposits_screen.dart';
+import 'bookings_screen.dart';
+import 'review_tickets_screen.dart';
 import 'reports_screen.dart';
 import 'orders_screen.dart';
 import 'invoices_screen.dart';
@@ -237,11 +240,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String? _salonBranchLogoUrl;
 
   /// Navigation items adjusted for salon module:
-  /// - "orders" stays but gets renamed to "تذاكر مراجعه" in _navLabel
+  /// - "orders" stays but gets renamed to "فواتير معلقة" in _navLabel
   /// - "tables" is replaced with "deposits" (العرابين)
+  /// - "bookings" (الحجوزات) is inserted right after "invoices" so the
+  ///   cashier can manage salon appointments + pay-later orders without
+  ///   leaving the home shell. Restaurant mode keeps the original layout.
   List<NavItem> get _effectiveNavItems {
     if (!_isSalonMode) return navItems;
-    return navItems.map((item) {
+    final mapped = navItems.map((item) {
       if (item.id == 'tables') {
         return const NavItem(
           id: 'deposits',
@@ -251,6 +257,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       }
       return item;
     }).toList();
+
+    final invoicesIndex = mapped.indexWhere((it) => it.id == 'invoices');
+    const bookingsItem = NavItem(
+      id: 'bookings',
+      icon: LucideIcons.calendarCheck,
+      label: 'bookings',
+    );
+    const reviewTicketsItem = NavItem(
+      id: 'review_tickets',
+      icon: LucideIcons.ticket,
+      label: 'review_tickets',
+    );
+    if (invoicesIndex >= 0) {
+      // Order in salon nav: invoices → bookings → review tickets.
+      mapped.insert(invoicesIndex + 1, bookingsItem);
+      mapped.insert(invoicesIndex + 2, reviewTicketsItem);
+    } else {
+      mapped.add(bookingsItem);
+      mapped.add(reviewTicketsItem);
+    }
+    return mapped;
   }
 
   @override
@@ -346,6 +373,33 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_activeTab == 'deposits') {
       return DepositsScreen(
         onBack: () => setState(() => _activeTab = 'home'),
+        onPrintReceipt: _autoPrintReceiptCopies,
+      );
+    }
+
+    if (_activeTab == 'bookings') {
+      return BookingsScreen(
+        onBack: () => setState(() => _activeTab = 'home'),
+        // After a fresh booking is created from the tab's create dialog,
+        // pass the response payload back so we can fan out the salon turn
+        // slip to every kitchen / KDS / bar printer — same contract the
+        // home cart's "دفع لاحقاً" button has.
+        onPrintSalonTurnTicket: (orderId, bookingData) =>
+            triggerSalonTurnPrintFromBookingResponse(
+          orderId: orderId,
+          bookingData: bookingData,
+        ),
+      );
+    }
+
+    if (_activeTab == 'review_tickets') {
+      return ReviewTicketsScreen(
+        onBack: () => setState(() => _activeTab = 'home'),
+        onPrintSalonTurnTicket: (orderId, bookingData) =>
+            triggerSalonTurnPrintFromBookingResponse(
+          orderId: orderId,
+          bookingData: bookingData,
+        ),
       );
     }
 

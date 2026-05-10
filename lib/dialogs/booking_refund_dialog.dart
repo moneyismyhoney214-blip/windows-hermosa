@@ -4,23 +4,27 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../models.dart';
 import '../services/api/api_constants.dart';
+import '../services/api/branch_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/order_service.dart';
 import '../services/language_service.dart';
 import '../services/print_orchestrator_service.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/printer_role_registry.dart';
+import '../services/printer_service.dart';
 import '../locator.dart';
 import '../services/app_themes.dart';
 
 class _RefundItem {
   final int id;
   final String name;
+  final String employeeName;
   final double price;
   final int quantity;
   const _RefundItem({
     required this.id,
     required this.name,
+    this.employeeName = '',
     required this.price,
     required this.quantity,
   });
@@ -96,11 +100,41 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
 
   Future<void> _loadData() async {
     try {
-      final response = await _orderService.showBookingRefund(widget.bookingId);
+      // Fetch refund preview + booking detail in parallel. The refund preview
+      // is the authoritative list of refundable IDs but salon previews omit
+      // `price`/`unit_price` — we join those from booking_services /
+      // booking_meals so the dialog can show the correct amount and the
+      // caller can subtract a real refundedPreTax from the displayed total.
+      final responses = await Future.wait([
+        _orderService.showBookingRefund(widget.bookingId),
+        _orderService.getBookingDetails(widget.bookingId).catchError(
+              (_) => <String, dynamic>{},
+            ),
+      ]);
       if (!mounted) return;
 
+      final response = responses[0];
+      final detailResponse = responses[1];
       final data = response['data'];
       final collection = (data is Map ? data['collection'] : null) as List?;
+
+      // Build id → {price, name, employee} from booking_services /
+      // booking_meals so we can patch fields the refund preview omits.
+      final detailById = <int, Map<String, dynamic>>{};
+      final detailData = detailResponse['data'];
+      if (detailData is Map) {
+        for (final key in const ['booking_services', 'booking_meals', 'booking_products']) {
+          final rows = detailData[key];
+          if (rows is! List) continue;
+          for (final row in rows) {
+            if (row is! Map) continue;
+            final m = row.map((k, v) => MapEntry(k.toString(), v));
+            final id = int.tryParse(m['id']?.toString() ?? '');
+            if (id == null) continue;
+            detailById[id] = m;
+          }
+        }
+      }
 
       if (collection == null || collection.isEmpty) {
         setState(() {
@@ -118,11 +152,39 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
         final m = item.map((k, v) => MapEntry(k.toString(), v));
         final id = int.tryParse(m['id']?.toString() ?? '') ?? 0;
         if (id <= 0) continue;
+        final detail = detailById[id] ?? const <String, dynamic>{};
+        final resolvedName = m['service_name']?.toString().trim() ??
+            m['meal_name']?.toString().trim() ??
+            m['name']?.toString().trim() ??
+            m['product_name']?.toString().trim() ??
+            detail['service_name']?.toString().trim() ??
+            detail['meal_name']?.toString().trim() ??
+            detail['name']?.toString().trim();
+        final resolvedEmployee = m['employee_fullname']?.toString().trim() ??
+            (detail['employee'] is Map
+                ? (detail['employee'] as Map)['fullname']?.toString().trim()
+                : null) ??
+            detail['employee_fullname']?.toString().trim() ??
+            '';
+        // Refund preview gives `price` for restaurant rows but omits it for
+        // salon. booking_services rows always carry it.
+        final resolvedPrice = double.tryParse(m['price']?.toString() ?? '') ??
+            double.tryParse(detail['total_price']?.toString() ?? '') ??
+            double.tryParse(detail['total']?.toString() ?? '') ??
+            double.tryParse(detail['unit_price']?.toString() ?? '') ??
+            double.tryParse(detail['price']?.toString() ?? '') ??
+            0.0;
         items.add(_RefundItem(
           id: id,
-          name: m['meal_name']?.toString() ?? m['name']?.toString() ?? 'عنصر',
-          price: double.tryParse(m['price']?.toString() ?? '0') ?? 0.0,
-          quantity: int.tryParse(m['quantity']?.toString() ?? '1') ?? 1,
+          name: (resolvedName == null || resolvedName.isEmpty)
+              ? 'عنصر'
+              : resolvedName,
+          employeeName: resolvedEmployee,
+          price: resolvedPrice,
+          quantity: int.tryParse(m['quantity']?.toString() ??
+                  detail['quantity']?.toString() ??
+                  '1') ??
+              1,
         ));
       }
 
@@ -144,19 +206,55 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
   Future<void> _confirm() async {
     if (_isProcessing || _selectedItems.isEmpty) return;
 
+    final snapshot = List<_RefundItem>.from(_selectedItems);
+    // Partial when at least one item survives post-refund; full when we
+    // selected every remaining candidate. The kitchen ticket header
+    // changes based on this flag (partial cancel vs full cancel).
+    final isFullRefund =
+        _items.isNotEmpty && snapshot.length >= _items.length;
+
+    // When the cashier ticks every refundable item, surface this as a
+    // booking cancellation instead of an item-level refund. The order
+    // would otherwise sit in the list with zero remaining items but the
+    // original confirmed status — same UX gap the restaurant flow already
+    // closes by going through `updateBookingStatus(status: 8)`.
+    if (isFullRefund) {
+      final useAr = translationService.currentLanguageCode
+          .trim()
+          .toLowerCase()
+          .startsWith('ar');
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(useAr ? 'إلغاء الحجز' : 'Cancel Booking'),
+          content: Text(useAr
+              ? 'تم تحديد كل العناصر. هل تريد إلغاء الحجز بالكامل؟'
+              : 'All items are selected. Cancel the entire booking?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(useAr ? 'لا' : 'No'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444),
+                foregroundColor: Colors.white,
+              ),
+              child:
+                  Text(useAr ? 'نعم، إلغاء الحجز' : 'Yes, cancel booking'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      await _cancelEntireBooking(snapshot);
+      return;
+    }
+
     setState(() => _isProcessing = true);
     try {
       final refundIds = _selectedItems.map((item) => item.id).toList();
-      // Snapshot BEFORE awaiting the API call so we can notify the kitchen
-      // about the items that were actually refunded. `_selectedItems` is
-      // mutable — don't pass it by reference into the fire-and-forget hook.
-      final snapshot = List<_RefundItem>.from(_selectedItems);
-      // Partial when at least one item survives post-refund; full when we
-      // selected every remaining candidate. The kitchen ticket header
-      // changes based on this flag (partial cancel vs full cancel).
-      final isFullRefund =
-          _items.isNotEmpty && snapshot.length >= _items.length;
-
       await _orderService.processBookingRefund(
         orderId: widget.bookingId,
         payload: {'refund': refundIds},
@@ -180,6 +278,47 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
       setState(() => _isProcessing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(translationService.t('failed_execute_refund', args: {'error': e.toString()}))),
+      );
+    }
+  }
+
+  Future<void> _cancelEntireBooking(List<_RefundItem> snapshot) async {
+    setState(() => _isProcessing = true);
+    try {
+      // status=8 is the cancelled enum the orders screen already
+      // recognises (`_isBookingCancelled`), which hides the
+      // create-invoice/refund/cancel buttons and surfaces the "ملغي"
+      // status badge.
+      await _orderService.updateBookingStatus(
+        orderId: widget.bookingId,
+        status: 8,
+      );
+
+      if (!mounted) return;
+      final refundedPreTax =
+          snapshot.fold(0.0, (sum, item) => sum + item.price);
+      final useAr = translationService.currentLanguageCode
+          .trim()
+          .toLowerCase()
+          .startsWith('ar');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(useAr ? 'تم إلغاء الحجز' : 'Booking cancelled'),
+        backgroundColor: const Color(0xFFEF4444),
+      ));
+      unawaited(_notifyKitchenOfRefund(snapshot, isFullRefund: true));
+      Navigator.pop(context, refundedPreTax);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isProcessing = false);
+      final useAr = translationService.currentLanguageCode
+          .trim()
+          .toLowerCase()
+          .startsWith('ar');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text(useAr ? 'تعذر إلغاء الحجز' : 'Failed to cancel booking'),
+        ),
       );
     }
   }
@@ -233,21 +372,32 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
       final registry = getIt<PrinterRoleRegistry>();
       await registry.initialize();
 
-      final kitchenPrinters = devices.where((d) {
-        final type = d.type.trim().toLowerCase();
-        if (type != 'printer') return false;
-        final role = registry.resolveRole(d);
-        if (role != PrinterRole.kitchen &&
-            role != PrinterRole.kds &&
-            role != PrinterRole.bar) {
-          return false;
-        }
+      bool reachable(DeviceConfig d) {
         if (d.connectionType == PrinterConnectionType.bluetooth) {
           return (d.bluetoothAddress ?? '').trim().isNotEmpty;
         }
         return d.ip.trim().isNotEmpty;
+      }
+
+      final allPrinters = devices.where((d) {
+        if (d.type.trim().toLowerCase() != 'printer') return false;
+        return reachable(d);
       }).toList();
-      if (kitchenPrinters.isEmpty) return;
+
+      final kitchenPrinters = allPrinters.where((d) {
+        final role = registry.resolveRole(d);
+        return role == PrinterRole.kitchen ||
+            role == PrinterRole.kds ||
+            role == PrinterRole.bar;
+      }).toList();
+      // Salon kiosks usually only tag a single printer (cashier/general)
+      // — when no Kitchen/KDS/Bar role exists the orchestrator's internal
+      // filter (`_resolveKitchenPrinters` in print_orchestrator_service)
+      // rejects every device and the slip silently no-ops. Detect the
+      // empty-kitchen-set case here and fall back to the direct printer
+      // service on every reachable printer so the cashier always gets
+      // the refund ticket on whatever they have hooked up.
+      if (kitchenPrinters.isEmpty && allPrinters.isEmpty) return;
 
       final items = refundedItems.map((it) {
         final primary = tl('ملغي', 'Cancelled',
@@ -292,17 +442,44 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
               hi: '⚠️ आंशिक रद्दीकरण',
               ur: '⚠️ جزوی منسوخی');
 
-      await getIt<PrintOrchestratorService>().enqueueKitchenPrint(
-        printers: kitchenPrinters,
-        orderNumber: widget.bookingLabel,
-        orderType: orderTypeLabel,
-        items: items,
-        note: noteLabel,
-        isRtl: lang == 'ar' || lang == 'ur',
-        primaryLang: lang,
-        secondaryLang: langSecondary.isEmpty ? null : langSecondary,
-        allowSecondary: langSecondary.isNotEmpty,
-      );
+      if (kitchenPrinters.isNotEmpty) {
+        await getIt<PrintOrchestratorService>().enqueueKitchenPrint(
+          printers: kitchenPrinters,
+          orderNumber: widget.bookingLabel,
+          orderType: orderTypeLabel,
+          items: items,
+          note: noteLabel,
+          isRtl: lang == 'ar' || lang == 'ur',
+          primaryLang: lang,
+          secondaryLang: langSecondary.isEmpty ? null : langSecondary,
+          allowSecondary: langSecondary.isNotEmpty,
+        );
+      } else {
+        // Direct dispatch — bypasses the orchestrator's kitchen-role filter
+        // because the salon branch hasn't tagged any printer with the
+        // Kitchen/KDS/Bar role. Each reachable printer renders the same
+        // change-ticket payload via `printKitchenReceipt`.
+        final printerService = getIt<PrinterService>();
+        for (final printer in allPrinters) {
+          try {
+            await printerService.printKitchenReceipt(
+              printer,
+              orderNumber: widget.bookingLabel,
+              orderType: orderTypeLabel,
+              items: items,
+              note: noteLabel,
+              createdAt: DateTime.now(),
+              isRtl: lang == 'ar' || lang == 'ur',
+              primaryLang: lang,
+              secondaryLang: langSecondary.isEmpty ? null : langSecondary,
+              allowSecondary: langSecondary.isNotEmpty,
+            );
+          } catch (e) {
+            debugPrint(
+                '⚠️ Refund slip print failed on ${printer.name}: $e');
+          }
+        }
+      }
     } catch (e) {
       debugPrint('⚠️ Failed to notify kitchen of booking refund: $e');
     }
@@ -518,6 +695,23 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
     );
   }
 
+  /// Multiplier used to convert the pre-tax `_RefundItem.price` (which is
+  /// what the backend stores and what the caller subtracts to keep the
+  /// remaining-total math consistent) into the with-tax amount the cashier
+  /// expects to see — the same number that appears on the order card.
+  ///
+  /// Restaurant invoices store totals with a different convention (the
+  /// preview already includes any applicable tax in `price`), so the
+  /// multiplier is salon-only — applying it on restaurant would inflate
+  /// every refund preview by the branch tax rate.
+  double get _displayTaxMultiplier {
+    if (ApiConstants.branchModule != 'salons') return 1.0;
+    final branchService = getIt<BranchService>();
+    final taxRate =
+        branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
+    return 1.0 + taxRate;
+  }
+
   Widget _buildItemRow(_RefundItem item) {
     final isSelected = _selectedItems.contains(item);
     return GestureDetector(
@@ -572,7 +766,9 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'الكمية: ${item.quantity}',
+                    item.employeeName.isNotEmpty
+                        ? item.employeeName
+                        : 'الكمية: ${item.quantity}',
                     style:
                         TextStyle(fontSize: 12, color: Colors.grey.shade500),
                   ),
@@ -581,7 +777,7 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
             ),
             if (item.price > 0)
               Text(
-                '${item.price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
+                '${(item.price * _displayTaxMultiplier).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
@@ -595,8 +791,13 @@ class _BookingRefundDialogState extends State<BookingRefundDialog>
   }
 
   Widget _buildAmountRow() {
+    // Show the with-tax expected refund so the number lines up with the
+    // order's grand total (e.g. two services at 304.35 pre-tax each → 700
+    // with 15% VAT). The pre-tax sum is still what gets returned to the
+    // caller via Navigator.pop, so the remaining-total math stays correct.
     final displayAmount =
-        _selectedItems.fold(0.0, (sum, item) => sum + item.price);
+        _selectedItems.fold(0.0, (sum, item) => sum + item.price) *
+            _displayTaxMultiplier;
 
     return Container(
       padding: const EdgeInsets.all(16),

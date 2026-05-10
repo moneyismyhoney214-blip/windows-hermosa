@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_constants.dart';
 
-/// One country row from `portal.hermosaapp.com/countries/cities`.
+/// One country row from `api.hermosaapp.com/countries/cities`.
 ///
 /// We keep the same shape the backend uses (`label`, `value`, `area_code`)
 /// so the picker can match the active branch via [ApiConstants.branchCountryId].
@@ -54,7 +54,7 @@ class CountryCodeService {
 
   static const String _prefsKey = 'country_options_cache_v1';
   static const String _endpoint =
-      'https://portal.hermosaapp.com/countries/cities';
+      'https://api.hermosaapp.com/countries/cities';
 
   static const CountryOption _saudiFallback = CountryOption(
     value: 1,

@@ -1,0 +1,128 @@
+{
+  "suite": "cashier_display_ws_integration",
+  "generated_at": "2026-04-30T22:11:00.934782",
+  "records": [
+    {
+      "test_name": "ws_connect_auth",
+      "status": "PASSED",
+      "duration_ms": 537,
+      "input_sample": {
+        "ip": "127.0.0.1"
+      },
+      "response_body": {
+        "expected": "AUTH_SUCCESS"
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_disconnect",
+      "status": "PASSED",
+      "duration_ms": 558,
+      "input_sample": {
+        "action": "disconnect"
+      },
+      "response_body": {
+        "status": "disconnected"
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_round_trip_ping",
+      "status": "PASSED",
+      "duration_ms": 617,
+      "input_sample": {
+        "message": "UPDATE_CART"
+      },
+      "response_body": {
+        "server_received": true
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_reconnect_after_close",
+      "status": "PASSED",
+      "duration_ms": 4908,
+      "input_sample": {
+        "scenario": "server_close_then_restart"
+      },
+      "response_body": {
+        "expected": "reconnected"
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_concurrent_connect",
+      "status": "PASSED",
+      "duration_ms": 607,
+      "input_sample": {
+        "parallel_calls": 3
+      },
+      "response_body": {
+        "max_connections_expected": 2
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_malformed_message",
+      "status": "PASSED",
+      "duration_ms": 714,
+      "input_sample": {
+        "payload": "{bad-json"
+      },
+      "response_body": {
+        "expected": "no_crash"
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_high_frequency_spam",
+      "status": "PASSED",
+      "duration_ms": 1012,
+      "input_sample": {
+        "spam_count": 200
+      },
+      "response_body": {
+        "expected": "connected"
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_ack_feedback_tracking",
+      "status": "PASSED",
+      "duration_ms": 758,
+      "input_sample": {
+        "scenario": "cart_and_order_ack"
+      },
+      "response_body": {
+        "expected": "ack_timestamps_and_order_id"
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    },
+    {
+      "test_name": "ws_offline_queue_replay_new_order",
+      "status": "PASSED",
+      "duration_ms": 4714,
+      "input_sample": {
+        "scenario": "offline_send_then_replay"
+      },
+      "response_body": {
+        "expected": "NEW_ORDER_replayed"
+      },
+      "reason": "ok",
+      "evidence_screenshots": []
+    }
+  ],
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0
+  }
+}

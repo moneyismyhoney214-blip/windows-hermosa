@@ -6373,7 +6373,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         final logo = originalSeller['logo'].toString();
         // If logo starts with /, prepend base URL
         if (logo.startsWith('/')) {
-          logoUrl = 'https://portal.hermosaapp.com$logo';
+          logoUrl = 'https:// api.hermosaapp.com$logo';
         } else {
           logoUrl = logo;
         }

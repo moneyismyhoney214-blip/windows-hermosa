@@ -34,11 +34,16 @@ class SalonEmployeeService {
     required int employeeId,
     required int serviceId,
     required String date,
+    bool forceRefresh = false,
   }) async {
     final cacheKey = '$employeeId|$serviceId|$date';
-    final cached = _availableTimesCache[cacheKey];
-    if (cached != null && !cached.isExpired(_availableTimesTtl)) {
-      return cached.value;
+    if (forceRefresh) {
+      _availableTimesCache.remove(cacheKey);
+    } else {
+      final cached = _availableTimesCache[cacheKey];
+      if (cached != null && !cached.isExpired(_availableTimesTtl)) {
+        return cached.value;
+      }
     }
 
     final endpoint =
@@ -152,7 +157,13 @@ class SalonEmployeeService {
       if (empId > 0) validEmployees.add(MapEntry(empId, emp));
     }
 
-    const maxConcurrent = 3;
+    // The Laravel throttle on `/seller/services/employees/{id}/.../edit`
+    // is aggressive — even 3 parallel requests trip it ("Too Many
+    // Attempts.") on the salon branch. Drop to 2 workers and pace each
+    // worker's loop with a small jittered delay so the bucket has time
+    // to drain between shots.
+    const maxConcurrent = 2;
+    const interRequestDelay = Duration(milliseconds: 150);
     final results = List<List<int>>.filled(validEmployees.length, const []);
     var nextIndex = 0;
 
@@ -175,6 +186,11 @@ class SalonEmployeeService {
         } catch (_) {
           results[i] = const [];
         }
+        // Pace next iteration so the per-worker burst stays below the
+        // backend's throttle bucket. BaseClient already retries with
+        // backoff on 422 Too Many Attempts, but avoiding the trip in the
+        // first place is much faster than waiting out a backoff.
+        await Future.delayed(interRequestDelay);
       }
     }
 

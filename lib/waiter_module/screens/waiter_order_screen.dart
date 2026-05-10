@@ -8,11 +8,15 @@ import '../../dialogs/payment_tender_dialog.dart';
 import '../../dialogs/product_customization_dialog.dart';
 import '../../locator.dart';
 import '../../models.dart';
+import '../../models/receipt_data.dart';
 import '../../services/api/order_service.dart';
 import '../../services/api/product_service.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../../services/printer_language_settings_service.dart';
+import '../../widgets/invoice_print_widget.dart';
+import '../../widgets/send_invoice_whatsapp_button.dart';
 import '../models/waiter_table_event.dart';
 import '../services/waiter_billing_service.dart';
 import '../services/waiter_cart_store.dart';
@@ -46,12 +50,10 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   final WaiterKitchenBridge _bridge = getIt<WaiterKitchenBridge>();
   final WaiterOrderOutbox _outbox = getIt<WaiterOrderOutbox>();
   final WaiterBillingService _billing = getIt<WaiterBillingService>();
-  // Direct-instantiated rather than pulled from getIt so a hot-reload
-  // after adding this service to the locator doesn't crash the screen —
-  // setupLocator() only runs on cold start. The dispatcher's own
-  // dependencies (PrinterService, PrintOrchestratorService, etc.) are
-  // long-registered so its default constructor resolves them fine.
-  final WaiterPrintDispatcher _printDispatcher = WaiterPrintDispatcher();
+  // Pulled from getIt so the ReceiptBuilderCache inside the dispatcher
+  // is shared across orders/screens — otherwise each screen mount would
+  // get a fresh cache and the warm-up cost is paid every time.
+  final WaiterPrintDispatcher _printDispatcher = getIt<WaiterPrintDispatcher>();
 
   List<CategoryModel> _categories = const [];
   String? _selectedCategoryId;
@@ -684,49 +686,48 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       //    new items (drafts) rather than mistaking it for a duplicate
       //    of the original. Matches the cashier's Edit-Order intent of
       //    triggering a "changes" kitchen ticket.
+      //
+      //    Both KDS dispatch and the paper kitchen ticket fire in the
+      //    background so the screen pops to the tables list immediately
+      //    after the booking lands — same fast-path the cashier uses in
+      //    main_screen.payment after createBooking. Both helpers swallow
+      //    their own exceptions, so unawaiting is safe.
       final broadcastId = bookingId ?? const Uuid().v4();
       final isEdit = existingBookingId != null;
-      // Snapshot the draft items BEFORE markDraftAsSent wipes them —
-      // the kitchen print needs them to know what to cook, and on an
-      // edit we want *only* the new drafts (not the already-sent ones)
-      // so the chef doesn't re-cook the original order.
       final kitchenItemsSnapshot =
           List<CartItem>.from(_cart.itemsFor(widget.table.id));
-      try {
-        await _dispatchToKds(orderId: broadcastId, isEdit: isEdit);
-      } catch (e) {
-        debugPrint('⚠️ KDS dispatch failed (non-fatal): $e');
-      }
+      unawaited(() async {
+        try {
+          await _dispatchToKds(orderId: broadcastId, isEdit: isEdit);
+        } catch (e) {
+          debugPrint('⚠️ KDS dispatch failed (non-fatal): $e');
+        }
+      }());
 
       // 2b. Physical kitchen ticket. Same rule as the cashier: pay-later
       //     always prints (the chef needs a paper ticket because KDS is
       //     a screen, not an action). Respects the printKitchenInvoices
       //     toggle in the device behaviour tab.
-      try {
-        // Prefer the backend-assigned daily_order_number — same human
-        // ref the cashier prints. Fall back to `#<bookingId>` (not a
-        // UUID-suffix placeholder) so the kitchen ticket matches the
-        // booking the backend actually knows about. A UUID substring
-        // like `T1-G1D5` is useless to kitchen staff trying to
-        // correlate with an order ledger; `#123` is the booking PK.
-        final base = (dailyOrderNumber != null && dailyOrderNumber.isNotEmpty)
-            ? dailyOrderNumber
-            : (bookingId != null && bookingId.isNotEmpty
-                ? '#$bookingId'
-                : '#$broadcastId');
-        final orderNumber = isEdit ? '$base-EDIT' : base;
-        await _printDispatcher.printKitchenTicket(
-          bookingId: broadcastId,
-          orderNumber: orderNumber,
-          items: kitchenItemsSnapshot,
-          tableNumber: widget.table.number,
-          waiterName: me.name,
-          // Pay-later always paper-prints — don't gate on KDS dispatch.
-          kdsAlreadyDispatched: false,
-        );
-      } catch (e) {
-        debugPrint('⚠️ Kitchen print failed (non-fatal): $e');
-      }
+      unawaited(() async {
+        try {
+          final base = (dailyOrderNumber != null && dailyOrderNumber.isNotEmpty)
+              ? dailyOrderNumber
+              : (bookingId != null && bookingId.isNotEmpty
+                  ? '#$bookingId'
+                  : '#$broadcastId');
+          final orderNumber = isEdit ? '$base-EDIT' : base;
+          await _printDispatcher.printKitchenTicket(
+            bookingId: broadcastId,
+            orderNumber: orderNumber,
+            items: kitchenItemsSnapshot,
+            tableNumber: widget.table.number,
+            waiterName: me.name,
+            kdsAlreadyDispatched: false,
+          );
+        } catch (e) {
+          debugPrint('⚠️ Kitchen print failed (non-fatal): $e');
+        }
+      }());
 
       // 3. Promote the draft so re-entering the order screen (via
       //    "Edit Order") shows the items as sent rather than draft.
@@ -1220,39 +1221,39 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
     // Broadcast paid/open-bill depending on whether it was pay-later.
     final payLater = result.paymentMethod == 'pay_later';
 
-    // Physical prints (cashier receipt + optional kitchen ticket). Fire
-    // BEFORE the success sheet so the thermal printer is already humming
-    // by the time the waiter sees the summary. Errors are swallowed
-    // inside the dispatcher — a down printer shouldn't fail the flow.
+    // Build the canonical invoice receipt data ONCE — the preview sheet
+    // and the cashier print share it, so we make exactly one bilingual
+    // getInvoice fetch (ar+en in parallel) and reuse the merged payload.
+    // Same pipeline as the cashier (`main_screen.payment._buildOrderReceiptData`),
+    // so the on-screen preview is byte-identical to the thermal print.
+    final receiptData = await _printDispatcher.buildCashierReceiptData(
+      invoiceId: payLater ? null : result.invoiceId,
+      invoiceNumber: result.invoiceNumber,
+      dailyOrderNumber: result.dailyOrderNumber,
+      items: allItems,
+      totalInclVat: total,
+      vatRate: _billing.taxRate,
+      tableNumber: widget.table.number,
+      waiterName: me.name,
+      pays: pays,
+    );
+
+    // Physical prints (cashier receipt + kitchen ticket). Fire BEFORE
+    // the success sheet so the thermal printer is humming by the time
+    // the waiter sees the summary. Errors are swallowed inside the
+    // dispatcher — a down printer shouldn't fail the flow.
     if (!payLater && result.invoiceId != null) {
-      // Pay-now: print cashier receipt (mirrors main_screen.payment
-      // _autoPrintReceiptCopies). Respects autoPrintCashier +
+      // Pay-now: print using the prebuilt receipt data so we don't
+      // refetch the invoice. Respects autoPrintCashier +
       // autoPrintCustomerSecondCopy toggles.
-      unawaited(
-        _printDispatcher.printCashierReceipt(
-          invoiceId: result.invoiceId!,
-          invoiceNumber: result.invoiceNumber,
-          dailyOrderNumber: result.dailyOrderNumber,
-          items: allItems,
-          totalInclVat: total,
-          vatRate: _billing.taxRate,
-          tableNumber: widget.table.number,
-          waiterName: me.name,
-          pays: pays,
-        ),
-      );
-      // Pay-now kitchen ticket: same rule as the cashier — if KDS is
-      // enabled and the "allow print with KDS" toggle is off, skip (the
-      // kitchen already has the order on-screen). The dispatcher reads
-      // both flags and returns early when gated out.
+      unawaited(_printDispatcher.printPrebuiltCashierReceipt(receiptData));
       final bookingIdForKitchen =
           result.bookingId ?? existingBookingId ?? '';
       if (bookingIdForKitchen.isNotEmpty && allItems.isNotEmpty) {
         // Prefer the backend daily_order_number (e.g. "1023") > invoice
         // number > `#<bookingId>`. The `#<bookingId>` fallback is the
-        // backend's primary-key view so a kitchen staff member can
-        // always correlate the ticket with the order ledger. Avoids
-        // the useless `T1-G1D5` UUID-prefix placeholder.
+        // backend's primary-key view so kitchen staff can correlate
+        // with the order ledger.
         final orderNumber = result.dailyOrderNumber?.isNotEmpty == true
             ? result.dailyOrderNumber!
             : (result.invoiceNumber?.isNotEmpty == true
@@ -1260,14 +1261,9 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
                 : '#$bookingIdForKitchen');
         // Pay-now paths in the waiter do NOT consistently dispatch to
         // KDS (fresh submission skips, retry-after-partial-failure
-        // skips, edit-branch dispatches only new drafts). The
-        // cashier's `skip paper when KDS has it` rule only makes
-        // sense when dispatch is 100% reliable — it isn't here.
-        // Always paper-print on pay-now and let the user opt out via
-        // the `printKitchenInvoices` toggle (which the dispatcher
-        // honours). Missed tickets are the one failure mode we can't
-        // tolerate; a redundant paper when KDS is also showing the
-        // order is fine.
+        // skips, edit-branch dispatches only new drafts). Always
+        // paper-print on pay-now and let the user opt out via the
+        // `printKitchenInvoices` toggle.
         const kdsHasIt = false;
         unawaited(
           _printDispatcher.printKitchenTicket(
@@ -1297,22 +1293,18 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       orderId: result.bookingId,
     ));
 
-    // Show success sheet (invoice summary).
-    await showModalBottomSheet<void>(
+    if (!mounted) return;
+
+    // Show success dialog (invoice summary). Uses Dialog (not bottom sheet)
+    // so the cashier-style paper renders at full height — same insets,
+    // same width/height clamps the cashier's InvoiceDetailsDialog uses.
+    await showDialog<void>(
       context: context,
-      backgroundColor: context.appSurface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+      barrierDismissible: false,
       builder: (_) => _BillPreview(
-        tableNumber: widget.table.number,
-        guests: _guests,
-        waiterName: me.name,
-        items: allItems,
-        total: total,
-        invoiceNumber: result.invoiceNumber ?? result.bookingId,
+        receiptData: receiptData,
         paid: !payLater,
-        displayPrice: _displayPrice,
+        invoiceId: result.invoiceId,
       ),
     );
 
@@ -1685,184 +1677,192 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   }
 }
 
-/// Simple bill preview sheet — displays the full order and copies it to
-/// clipboard-style print layout. Real thermal/HTML printing is delegated to
-/// the existing cashier-side services once the backend account is ready.
+/// Post-payment invoice preview. Renders the same [InvoicePrintWidget] the
+/// cashier shows in `InvoiceDetailsDialog`, fed by the shared
+/// [ReceiptBuilderService] pipeline — so the waiter's on-screen invoice
+/// matches the cashier's pixel-for-pixel (header, totals, ZATCA QR,
+/// footer).
 class _BillPreview extends StatelessWidget {
-  final String tableNumber;
-  final int guests;
-  final String waiterName;
-  final List<CartItem> items;
-  final double total;
-  final String? invoiceNumber;
+  final OrderReceiptData receiptData;
   final bool paid;
-  /// Converts a raw (pre-tax) price into the display price shown to the
-  /// waiter. Always applied before `toStringAsFixed` so per-line totals
-  /// match the footer.
-  final double Function(double) displayPrice;
+  final String? invoiceId;
 
   const _BillPreview({
-    required this.tableNumber,
-    required this.guests,
-    required this.waiterName,
-    required this.items,
-    required this.total,
-    required this.displayPrice,
-    this.invoiceNumber,
+    required this.receiptData,
     this.paid = false,
+    this.invoiceId,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+    // Mirror the printerLanguageSettings exactly — same trio the cashier
+    // uses in InvoiceDetailsDialog and pdf_preview_screen, and the same
+    // values print_listener resolves for the actual thermal print. The
+    // on-screen preview and the printed paper now match byte-for-byte
+    // regardless of bilingual on/off.
+    final pri = printerLanguageSettings.primary;
+    final sec = printerLanguageSettings.secondary;
+    final allow = printerLanguageSettings.allowSecondary;
+
+    // Mirror the cashier's InvoiceDetailsDialog frame exactly:
+    // insetPadding 12/16 (compact) or 24/24, width clamp 280–700,
+    // height clamp 460–760. Without the same chrome, the paper inside
+    // looked smaller than the cashier's even though the widget itself
+    // was identical.
+    final size = MediaQuery.sizeOf(context);
+    final isCompact = size.width < 700;
+    final insetPadding = EdgeInsets.symmetric(
+      horizontal: isCompact ? 12 : 24,
+      vertical: isCompact ? 16 : 24,
+    );
+    final dialogWidth =
+        (size.width - insetPadding.horizontal).clamp(280.0, 700.0).toDouble();
+    final dialogHeight =
+        (size.height - insetPadding.vertical).clamp(460.0, 760.0).toDouble();
+
+    return Dialog(
+      insetPadding: insetPadding,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: SizedBox(
+        width: dialogWidth,
+        height: dialogHeight,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Icon(LucideIcons.receipt, color: context.appPrimary),
-                const SizedBox(width: 8),
-                Text(
-                  '${translationService.t('waiter_bill_for_table')} $tableNumber',
-                  style: TextStyle(
-                    color: context.appText,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '$guests ${translationService.t('waiter_guests_short')}',
-                  style: TextStyle(color: context.appTextMuted),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${translationService.t('waiter_served_by')}: $waiterName',
-                    style: TextStyle(color: context.appTextMuted, fontSize: 12),
-                  ),
-                ),
-                if (invoiceNumber != null && invoiceNumber!.isNotEmpty)
-                  Text(
-                    '#$invoiceNumber',
-                    style: TextStyle(
-                      color: context.appTextMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-              ],
-            ),
-            if (paid) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: context.appSuccess.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(LucideIcons.checkCircle,
-                        size: 14, color: context.appSuccess),
-                    const SizedBox(width: 4),
-                    Text(
-                      translationService.t('waiter_status_paid'),
-                      style: TextStyle(
-                        color: context.appSuccess,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+            Container(
+              padding: EdgeInsets.all(isCompact ? 14 : 20),
+              decoration: const BoxDecoration(
+                color: Color(0xFFF58220),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
-            ],
-            const Divider(height: 24),
-            ConstrainedBox(
-              // Let the item list grow with the screen — 320px caps at
-              // ~6 rows which overflows the sheet on small phones and
-              // wastes space on tablets.
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * 0.45,
-              ),
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: items.length,
-                separatorBuilder: (_, __) => Divider(
-                  height: 1,
-                  color: context.appDivider,
-                ),
-                itemBuilder: (_, i) {
-                  final it = items[i];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('${it.quantity.toInt()}×',
-                            style: TextStyle(color: context.appTextMuted)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            it.product.name,
-                            style: TextStyle(color: context.appText),
-                          ),
-                        ),
-                        Text(
-                          displayPrice(it.totalPrice).toStringAsFixed(ApiConstants.digitsNumber),
+                        const Text(
+                          'تفاصيل الفاتورة',
                           style: TextStyle(
-                            color: context.appText,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
                           ),
                         ),
+                        const SizedBox(height: 4),
+                        if (receiptData.invoiceNumber.isNotEmpty)
+                          Text(
+                            'رقم الفاتورة: #${receiptData.invoiceNumber}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.white.withValues(alpha: 0.8),
+                            ),
+                          ),
                       ],
                     ),
-                  );
-                },
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(LucideIcons.x, color: Colors.white),
+                  ),
+                ],
               ),
             ),
-            const Divider(height: 24),
-            Row(
-              children: [
-                Text(
-                  translationService.t('waiter_total'),
-                  style: TextStyle(
-                    color: context.appText,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
+            Expanded(
+              child: Container(
+                color: context.appSurfaceAlt,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 24,
+                  ),
+                  child: Center(
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 450),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: context.isDark ? 0.4 : 0.1,
+                            ),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          if (paid)
+                            Container(
+                              width: double.infinity,
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF10B981),
+                                borderRadius: BorderRadius.vertical(
+                                  top: Radius.circular(4),
+                                ),
+                              ),
+                              child: Text(
+                                translationService.t('waiter_status_paid'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          InvoicePrintWidget(
+                            data: receiptData,
+                            paperWidthMm: 80,
+                            primaryLang: pri,
+                            secondaryLang: sec,
+                            allowSecondary: allow,
+                          ),
+                          const SizedBox(height: 20),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  '${total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
-                  style: TextStyle(
-                    color: context.appPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 20,
-                  ),
-                ),
-              ],
+              ),
             ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 48,
-              child: FilledButton.icon(
-                onPressed: () => Navigator.of(context).pop(),
-                style: FilledButton.styleFrom(
-                  backgroundColor: context.appPrimary,
-                  foregroundColor: Colors.white,
-                ),
-                icon: const Icon(LucideIcons.check),
-                label: Text(translationService.t('waiter_close')),
+            Container(
+              padding: EdgeInsets.all(isCompact ? 14 : 20),
+              decoration: BoxDecoration(
+                color: context.appBg,
+                border: Border(top: BorderSide(color: Colors.grey[200]!)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (paid && invoiceId != null && invoiceId!.isNotEmpty) ...[
+                    SendInvoiceWhatsAppButton(
+                      invoiceId: invoiceId!,
+                      customerPhone: receiptData.clientPhone,
+                      customerName: receiptData.clientName,
+                      invoiceNumber: receiptData.invoiceNumber.isNotEmpty
+                          ? receiptData.invoiceNumber
+                          : invoiceId,
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  SizedBox(
+                    height: 48,
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: context.appPrimary,
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: const Icon(LucideIcons.check),
+                      label: Text(translationService.t('waiter_close')),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

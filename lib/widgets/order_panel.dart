@@ -34,6 +34,11 @@ class OrderPanel extends StatefulWidget {
   final VoidCallback onClear;
   final VoidCallback onPay;
   final VoidCallback onPayLater;
+  /// Salon-only: confirms the cart as an appointment booking
+  /// (`?book_appointment&create_order`) and routes the cashier to the
+  /// "الحجوزات" tab. Null hides the button entirely (restaurant mode +
+  /// any caller that doesn't wire up the booking flow).
+  final VoidCallback? onAddBooking;
   final Function(String, double, DiscountType) onDiscount;
   final Function(String) onToggleFree;
   final Function(double, {DiscountType type}) onOrderDiscount;
@@ -96,6 +101,7 @@ class OrderPanel extends StatefulWidget {
     required this.onClear,
     required this.onPay,
     required this.onPayLater,
+    this.onAddBooking,
     required this.onDiscount,
     required this.onToggleFree,
     required this.onOrderDiscount,

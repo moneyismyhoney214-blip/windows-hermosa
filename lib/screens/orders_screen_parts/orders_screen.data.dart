@@ -22,8 +22,16 @@ extension OrdersScreenData on _OrdersScreenState {
     // the list while the network call refreshes in background. The cashier
     // (restaurant) module keeps its original behaviour — empty list +
     // spinner — to avoid touching that flow.
+    //
+    // EXCEPTION: if main_screen JUST created an invoice, the cached page
+    // would render the booking with stale fields (price=0, no customer)
+    // for the second or two it takes the API to reply — three-stage
+    // flicker the user reported. Skip the cache once in that case so the
+    // booking only appears after the fresh API response arrives.
+    final hasRecentInvoiceEvent = isSalonMode &&
+        getIt<SalonInvoiceEvents>().recentEvents().isNotEmpty;
     Map<String, dynamic>? salonCached;
-    if (isSalonMode && orderIdSearch.isEmpty) {
+    if (isSalonMode && orderIdSearch.isEmpty && !hasRecentInvoiceEvent) {
       try {
         salonCached = await _orderService.getCachedBookings(
           dateFrom: todayDateStr,
@@ -34,6 +42,16 @@ extension OrdersScreenData on _OrdersScreenState {
       } catch (_) {
         salonCached = null;
       }
+      // Pull the persisted invoice→booking map first so completed
+      // bookings render with the trimmed action row on the very first
+      // paint instead of flashing the old "Create Invoice" buttons until
+      // the cross-ref finishes.
+      await _hydrateSalonInvoiceLinkFromCache(todayDateStr);
+    } else if (isSalonMode) {
+      // Even when skipping the cached paint, hydrate the invoice→booking
+      // link map so any bookings already known to be invoiced render with
+      // their action row trimmed on the first paint of the fresh response.
+      await _hydrateSalonInvoiceLinkFromCache(todayDateStr);
     }
 
     setState(() {
@@ -80,6 +98,13 @@ extension OrdersScreenData on _OrdersScreenState {
 
       if (mounted) {
         setState(() => _isLoading = false);
+      }
+      // Salon list endpoint includes pay-now bookings without any
+      // is_paid / has_invoice / invoice_id signal. Cross-reference today's
+      // invoices to mark them as already-invoiced so the action buttons
+      // disappear and the user can't trigger 422 "booking_id used".
+      if (isSalonMode) {
+        unawaited(_kickOffSalonInvoiceCrossRef(todayDateStr));
       }
     } on UnauthorizedException {
       return;
@@ -390,7 +415,11 @@ extension OrdersScreenData on _OrdersScreenState {
           final quantity = (quantityRaw is num)
               ? quantityRaw.toInt()
               : int.tryParse('$quantityRaw') ?? 1;
-          final totalRaw = raw['total'] ?? raw['line_total'];
+          // Salon `booking_services` rows store the line total under
+          // `total_price`, not `total`. Without this fallback the invoice
+          // payload reported `total = 0` for salon items, which made the
+          // create-invoice flow charge only the per-unit price (no addons).
+          final totalRaw = raw['total'] ?? raw['line_total'] ?? raw['total_price'];
           final unitRaw = raw['unit_price'] ??
               raw['unitPrice'] ??
               raw['price'] ??
@@ -442,22 +471,32 @@ extension OrdersScreenData on _OrdersScreenState {
         return items;
       }
 
-      List<Map<String, dynamic>> itemsPayload = booking.meals
-          .map((m) => {
-                'meal_id': m.mealId,
-                'booking_meal_id': m.id,
-                'item_name': m.mealName,
-                'quantity': m.quantity,
-                'price': m.unitPrice,
-                'unitPrice': m.unitPrice,
-              })
-          .toList();
+      // Refund-aware override: when a refund just happened the booking.meals
+      // / booking.raw are stale (backend keeps them frozen) and using them
+      // would bill the customer for items that were already refunded. Prefer
+      // the fresh rows captured from the booking-detail endpoint.
+      final overrideRows = _bookingItemsOverride[booking.id];
+      List<Map<String, dynamic>> itemsPayload;
+      if (overrideRows != null && overrideRows.isNotEmpty) {
+        itemsPayload = mapItemsToInvoicePayload(overrideRows);
+      } else {
+        itemsPayload = booking.meals
+            .map((m) => {
+                  'meal_id': m.mealId,
+                  'booking_meal_id': m.id,
+                  'item_name': m.mealName,
+                  'quantity': m.quantity,
+                  'price': m.unitPrice,
+                  'unitPrice': m.unitPrice,
+                })
+            .toList();
 
-      // Try from booking.raw if meals list was empty
-      if (itemsPayload.isEmpty && booking.raw.isNotEmpty) {
-        final rawItems = extractItems(Map<String, dynamic>.from(booking.raw));
-        if (rawItems.isNotEmpty) {
-          itemsPayload = mapItemsToInvoicePayload(rawItems);
+        // Try from booking.raw if meals list was empty
+        if (itemsPayload.isEmpty && booking.raw.isNotEmpty) {
+          final rawItems = extractItems(Map<String, dynamic>.from(booking.raw));
+          if (rawItems.isNotEmpty) {
+            itemsPayload = mapItemsToInvoicePayload(rawItems);
+          }
         }
       }
 
@@ -512,6 +551,18 @@ extension OrdersScreenData on _OrdersScreenState {
       }
 
       double resolveExpectedTotal(List<Map<String, dynamic>> items) {
+        // After a refund booking.total stays frozen at the original amount,
+        // so prefer the override sum + recompute tax. Without this the
+        // create-invoice payment dialog showed the pre-refund grand total.
+        final overridePreTax = _bookingRemainingPreTaxOverride[booking.id];
+        if (overridePreTax != null) {
+          final branchService = getIt<BranchService>();
+          final taxRate = branchService.cachedHasTax
+              ? branchService.cachedTaxRate
+              : 0.0;
+          final taxed = overridePreTax * (1.0 + taxRate);
+          return round2(taxed - booking.discount);
+        }
         final subtotal =
             booking.total > 0 ? booking.total : computeItemsSubtotal(items);
         final total = subtotal + booking.tax - booking.discount;
@@ -802,6 +853,28 @@ extension OrdersScreenData on _OrdersScreenState {
       widget.onNavigateToInvoices?.call();
     } catch (e) {
       if (!mounted) return;
+      // Salon backend already created an invoice for this booking during
+      // pay-now (the /bookings list returns it with no payment markers, so
+      // the orders screen had no way to mask the buttons in time). Mark it
+      // as already-invoiced and refresh the list — the buttons will be
+      // gone on next paint.
+      if (_isBookingAlreadyInvoiced422(e)) {
+        setState(() {
+          _bookingIdsWithInvoice.add(booking.id);
+          booking.raw['has_invoice'] = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_tr(
+              'هذا الطلب لديه فاتورة بالفعل',
+              'This order already has an invoice',
+            )),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        unawaited(_loadData());
+        return;
+      }
       if (e is ApiException &&
           e.statusCode == 422 &&
           (e.userMessage ?? e.message).contains('عناصر') &&
@@ -1019,7 +1092,7 @@ extension OrdersScreenData on _OrdersScreenState {
         branch['logo'], branch['image'],
       ]);
       if (logoUrl != null && logoUrl.startsWith('/')) {
-        logoUrl = 'https://portal.hermosaapp.com$logoUrl';
+        logoUrl = 'https://api.hermosaapp.com$logoUrl';
       }
 
       return OrderReceiptData(

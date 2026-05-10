@@ -441,29 +441,30 @@ extension MainScreenDevices on _MainScreenState {
       return nonKitchen;
     }
 
-    // Salon kiosks are usually configured with a single shared printer.
-    // After tagging it with the أدوار (kitchen) role for the turn slip, the
-    // cashier receipt has no eligible printer left — so the receipt
-    // silently fails. Reuse the same printer for the cashier receipt in
-    // that case. Restaurant flow keeps the strict separation and returns
-    // empty (kitchen printers should never accidentally print receipts on
-    // a multi-printer setup).
-    if (role == PrinterRole.cashierReceipt &&
-        ApiConstants.branchModule == 'salons') {
-      final fallback = List<DeviceConfig>.from(physical)
-        ..sort((a, b) => a.name.compareTo(b.name));
-      debugPrint(
-        'ℹ️ Salon: no dedicated cashier printer — reusing ${fallback.length} '
-        'available printer(s) for the cashier receipt',
-      );
-      return fallback;
-    }
-
-    // No matching printers found — return empty (don't fall back to kitchen printers)
+    // Strict separation: a printer the user explicitly tagged as
+    // أدوار/kitchen/kds/bar is reserved for the turn slip in salon mode (or
+    // the kitchen ticket in restaurant mode) — never reuse it for the
+    // cashier receipt. If the operator wants both on the same printer they
+    // must tag it as `cashier_receipt` (or `general`); the role they pick
+    // is the contract, not a hint we override.
+    debugPrint(
+      'ℹ️ No printer eligible for role=$role (kitchen/kds/bar tagged printers '
+      'are reserved for the turn/kitchen ticket) — skipping',
+    );
     return const <DeviceConfig>[];
   }
 
-  void _printOrderChangeTicket(List<OrderChange> changes, String orderNumber, {bool isFullCancel = false}) {
+  void _printOrderChangeTicket(
+    List<OrderChange> changes,
+    String orderNumber, {
+    bool isFullCancel = false,
+    // Salon-only meta: callers in the salon edit flow pass the booking's
+    // customer + employee names so the change ticket banner identifies
+    // both. Restaurant callers leave them null and the kitchen view
+    // skips both rows (clientName already gates the customer row).
+    String? customerName,
+    String? employeeName,
+  }) {
     if (changes.isEmpty) return;
 
     // Resolve printer language (local, device-scoped). The kitchen ticket
@@ -623,10 +624,47 @@ extension MainScreenDevices on _MainScreenState {
 
             'tagPrimary': _tl('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'نया', ur: 'نیا'),
 
-            'tagSecondary': _tlSec('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'نया', ur: 'نیا'),
+            'tagSecondary': _tlSec('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'नया', ur: 'نیا'),
             'tagColor': 'green',
             if (change.localizedNames != null) 'localizedNames': change.localizedNames,
             if (extras.isNotEmpty) 'extras': extras,
+          });
+          break;
+        case 'employee_change':
+          // Salon-only: same service, swapped employee. Render the row as
+          // "<service> — من <X> إلى <Y>" so the cashier (and the salon's
+          // operations team) can see exactly who used to perform the
+          // service and who's taking it over. Tag colour is amber to
+          // distinguish from a quantity edit.
+          final fromName = (change.oldEmployeeName ?? '').trim();
+          final toName = (change.newEmployeeName ?? '').trim();
+          final transferLine = (fromName.isNotEmpty && toName.isNotEmpty)
+              ? _tl(
+                  'من $fromName إلى $toName',
+                  'From $fromName to $toName',
+                  es: 'De $fromName a $toName',
+                  tr: '$fromName → $toName',
+                  hi: '$fromName से $toName',
+                  ur: '$fromName سے $toName',
+                )
+              : '';
+          changeItems.add({
+            'name': resolvedName,
+            'nameAr': resolvedName,
+            'quantity': change.quantity,
+            'tag': 'Transfer',
+            'tagAr': _tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
+            'tagPrimary': _tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
+            'tagSecondary': _tlSec('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
+            'tagColor': 'orange',
+            if (transferLine.isNotEmpty) 'note': transferLine,
+            if (transferLine.isNotEmpty) 'subtitle': transferLine,
+            if (transferLine.isNotEmpty)
+              'transfer': {
+                'from': fromName,
+                'to': toName,
+              },
+            if (change.localizedNames != null) 'localizedNames': change.localizedNames,
           });
           break;
       }
@@ -658,9 +696,15 @@ extension MainScreenDevices on _MainScreenState {
         final hasAnyCancel = changeItems.any(
           (item) => item['cancelled'] == true || item['cancelledQuantity'] != null,
         );
+        // Salon "تحويل" header only when EVERY change is an employee swap —
+        // otherwise the more general "تعديل طلب" applies.
+        final allTransfers = changes.isNotEmpty &&
+            changes.every((c) => c.type == 'employee_change');
         final orderTypeLabel = isFullCancel
             ? _tl('إلغاء طلب', 'Order Cancelled', es: 'Pedido Cancelado', tr: 'Sipariş İptal', hi: 'ऑर्डर रद्द', ur: 'آرڈر منسوخ')
-            : _tl('تعديل طلب', 'Order Change', es: 'Cambio de Pedido', tr: 'Sipariş Değişikliği', hi: 'ऑर्डर बदलें', ur: 'آرڈر تبدیلی');
+            : (allTransfers
+                ? _tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل')
+                : _tl('تعديل طلب', 'Order Change', es: 'Cambio de Pedido', tr: 'Sipariş Değişikliği', hi: 'ऑर्डर बदलें', ur: 'آرڈر تبدیلی'));
         final String? noteLabel = isFullCancel
             ? _tl('⛔ الطلب ملغي بالكامل', '⛔ Entire order cancelled', es: '⛔ Pedido cancelado', tr: '⛔ Sipariş tamamen iptal', hi: '⛔ पूरा ऑर्डर रद्द', ur: '⛔ پورا آرڈر منسوخ')
             : (hasAnyCancel
@@ -675,6 +719,8 @@ extension MainScreenDevices on _MainScreenState {
           note: noteLabel,
           isRtl: _useArabicUi,
           primaryLang: invoiceLang,
+          clientName: customerName,
+          employeeName: employeeName,
         );
         debugPrint('✅ Order change ticket dispatched for #$orderNumber');
       } catch (e) {

@@ -34,7 +34,7 @@ class NearpayProvider(val methodChannel: MethodChannel) {
         // Extract parameters from ArgsFilter (with some default values if needed)
         val environment = filter.getString("environment") ?: "sandbox"
         val googleCloudProjectNumber = filter.getLong("googleCloudProjectNumber") ?: 0L
-        val huaweiSafetyDetectApiKey = filter.getString("huaweiSafetyDetectApiKey") ?: ""
+        val huaweiSafetyDetectApiKey: String? = filter.getString("huaweiSafetyDetectApiKey")?.takeIf { it.isNotBlank() }
         val country = filter.getString("country") ?: "sa"
         val uiDockPositionString = filter.getString("uiDockPosition")
         val secondDisplayDockPosition = filter.getString("secondDisplayDockPosition")
@@ -88,11 +88,10 @@ class NearpayProvider(val methodChannel: MethodChannel) {
             else -> null // Fallback to default if not provided
         }
 
-        val supportSecondDisplayValue = when (supportSecondDisplay?.uppercase()) {
+        val supportSecondDisplayValue: SupportSecondDisplay? = when (supportSecondDisplay?.uppercase()) {
             "ENABLE" -> SupportSecondDisplay.ENABLE
             "DISABLE" -> SupportSecondDisplay.DISABLE
-            "INITIAL" -> SupportSecondDisplay.DEFAULT
-            else -> SupportSecondDisplay.DEFAULT // Fallback
+            else -> null // Let native SDK pick its own default; 0.0.187 dropped SupportSecondDisplay.DEFAULT.
         }
 
         Timber.d("Initializing TerminalSDK with supportSecondDisplay: $supportSecondDisplayValue")
@@ -101,15 +100,17 @@ class NearpayProvider(val methodChannel: MethodChannel) {
         Timber.d("Initializing TerminalSDK with sdkEnvironment: $sdkEnvironment")
         Timber.d("Initializing TerminalSDK with country: $sdkCountry")
         try {
-            terminalSdk = TerminalSDK.Builder()
+            val builder = TerminalSDK.Builder()
                 .activity(attachedActivity)
                 .environment(sdkEnvironment)
                 .googleCloudProjectNumber(googleCloudProjectNumber)
-                .huaweiSafetyDetectApiKey(huaweiSafetyDetectApiKey)
                 .uiDockPosition(uiDockPosition) // Optional: set the location of the Tap to Pay modal
                 .country(sdkCountry)
-                .supportSecondDisplay(supportSecondDisplayValue)
                 .secondDisplayDockPosition(secondDisplayDockPositionValue)
+            // 0.0.187 rejects empty / null api key — only set when caller actually supplied one.
+            huaweiSafetyDetectApiKey?.let { builder.huaweiSafetyDetectApiKey(it) }
+            supportSecondDisplayValue?.let { builder.supportSecondDisplay(it) }
+            terminalSdk = builder
                 .initializationListener(object : TerminalSDKInitializationListener {
                     override fun onInitializationFailure(throwable: Throwable) {
                         Timber.tag("TerminalSDKInit")

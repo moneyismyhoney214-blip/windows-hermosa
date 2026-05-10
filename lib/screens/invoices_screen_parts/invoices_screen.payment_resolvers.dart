@@ -245,12 +245,18 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
               item['name'],
             ]) ??
             '-';
+        // Probe every known addon location (the API switches between
+        // `addons` / `meal_addons` / `extras` and sometimes nests them
+        // under `meal.addons`) so the saved-invoice preview surfaces the
+        // same addons the cashier's checkout receipt printed.
+        final addons = extractReceiptAddonsFromItem(item);
         return ReceiptItem(
           nameAr: name,
           nameEn: name,
           quantity: qty,
           unitPrice: unitPrice,
           total: total,
+          addons: addons.isEmpty ? null : addons,
         );
       }).toList(growable: false);
       if (items.isNotEmpty) return items;
@@ -288,7 +294,7 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
       _asMap(branchMap?['original_seller'])?['logo'],
     ]);
     if (logoUrl != null && logoUrl.startsWith('/')) {
-      logoUrl = 'https://portal.hermosaapp.com$logoUrl';
+      logoUrl = 'https://api.hermosaapp.com$logoUrl';
     }
 
     return OrderReceiptData(
@@ -389,14 +395,32 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
         payload['cashier_name'],
       ]),
       clientName: _firstNonEmptyText([
+        // Probe every shape the backend uses — `invoice.customer`,
+        // `payload.customer`, and `booking.customer` are real fallbacks
+        // because the invoice serializer sometimes drops the customer
+        // (returning empty / "عميل عام") even when the booking has one.
         _asMap(invoiceMap['client'])?['name'],
+        _asMap(invoiceMap['customer'])?['name'],
+        _asMap(payload['client'])?['name'],
+        _asMap(payload['customer'])?['name'],
+        _asMap(_asMap(payload['booking'])?['customer'])?['name'],
+        _asMap(_asMap(payload['booking'])?['user'])?['name'],
         invoiceMap['client_name'],
+        invoiceMap['customer_name'],
         payload['client_name'],
+        payload['customer_name'],
       ]),
       clientPhone: _firstNonEmptyText([
         _asMap(invoiceMap['client'])?['mobile'],
         _asMap(invoiceMap['client'])?['phone'],
+        _asMap(invoiceMap['customer'])?['mobile'],
+        _asMap(invoiceMap['customer'])?['phone'],
+        _asMap(payload['customer'])?['mobile'],
+        _asMap(payload['customer'])?['phone'],
+        _asMap(_asMap(payload['booking'])?['customer'])?['mobile'],
+        _asMap(_asMap(payload['booking'])?['user'])?['mobile'],
         invoiceMap['client_phone'],
+        invoiceMap['customer_phone'],
       ]),
       tableNumber: _firstNonEmptyText([
         _asMap(invoiceMap['type_extra'])?['table_number'],
@@ -453,6 +477,19 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
     OrderReceiptData data,
     String logoUrl,
   ) {
+    return _rebuild(data, sellerLogo: logoUrl);
+  }
+
+  /// Rebuild [OrderReceiptData] preserving every field by default. The
+  /// model has no copyWith, so we centralize the field-by-field copy here
+  /// to avoid silently dropping client/table/etc. when only one field
+  /// (logo, clientName, …) needs to change.
+  OrderReceiptData _rebuild(
+    OrderReceiptData data, {
+    String? sellerLogo,
+    String? clientName,
+    String? clientPhone,
+  }) {
     return OrderReceiptData(
       invoiceNumber: data.invoiceNumber,
       issueDateTime: data.issueDateTime,
@@ -466,11 +503,12 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
       vatAmount: data.vatAmount,
       totalInclVat: data.totalInclVat,
       paymentMethod: data.paymentMethod,
-      qrCodeBase64: data.qrCodeBase64,
-      sellerLogo: logoUrl,
       payments: data.payments,
+      qrCodeBase64: data.qrCodeBase64,
+      sellerLogo: sellerLogo ?? data.sellerLogo,
       zatcaQrImage: data.zatcaQrImage,
       branchAddress: data.branchAddress,
+      branchAddressEn: data.branchAddressEn,
       branchMobile: data.branchMobile,
       issueDate: data.issueDate,
       issueTime: data.issueTime,
@@ -481,6 +519,9 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
       orderDiscountName: data.orderDiscountName,
       orderType: data.orderType,
       orderNumber: data.orderNumber,
+      clientName: clientName ?? data.clientName,
+      clientPhone: clientPhone ?? data.clientPhone,
+      tableNumber: data.tableNumber,
     );
   }
 
@@ -500,6 +541,63 @@ extension InvoicesScreenPaymentResolvers on _InvoicesScreenState {
       final logoUrl = await getIt<BranchService>().getBranchLogoUrl(branchId);
       if (logoUrl.isEmpty) return data;
       return _withSellerLogo(data, logoUrl);
+    } catch (_) {
+      return data;
+    }
+  }
+
+  /// Backend bug workaround: `/seller/branches/{branch}/invoices/{id}` can
+  /// return `client.name="عميل عام"` and an empty mobile even when the
+  /// underlying booking has a real customer attached. The booking endpoint
+  /// (`/seller/branches/{branch}/bookings/{id}`) carries the linked
+  /// customer under `data.user.{name,mobile}`, so we re-resolve from there
+  /// when the invoice payload looks like the placeholder. Mirrors the
+  /// same pattern used by `InvoiceWhatsAppDispatcher`.
+  Future<OrderReceiptData> _ensureClientInfo(
+    OrderReceiptData data,
+    Map<String, dynamic> details,
+  ) async {
+    final name = data.clientName?.trim() ?? '';
+    final phone = data.clientPhone?.trim() ?? '';
+    final isPlaceholder = name.isEmpty || name == 'عميل عام';
+    if (!isPlaceholder && phone.isNotEmpty) return data;
+
+    final payload = _asMap(details['data']) ?? details;
+    final invoiceMap = _asMap(payload['invoice']) ?? payload;
+    final booking = _asMap(payload['booking']) ?? _asMap(invoiceMap['booking']);
+    final bookingId = _firstNonEmptyText([
+      payload['booking_id'],
+      invoiceMap['booking_id'],
+      booking?['id'],
+    ]);
+    if (bookingId == null || bookingId.isEmpty) return data;
+
+    try {
+      final response = await _orderService.getBookingDetails(bookingId);
+      final bookingPayload = _asMap(response['data']) ?? response;
+      final user = _asMap(bookingPayload['user']) ??
+          _asMap(bookingPayload['customer']) ??
+          _asMap(bookingPayload['userable']) ??
+          _asMap(bookingPayload['client']);
+      if (user == null) return data;
+
+      final resolvedName = _firstNonEmptyText([
+        user['name'],
+        user['fullname'],
+      ]);
+      final resolvedPhone = _firstNonEmptyText([
+        user['mobile'],
+        user['mobile_display'],
+        user['phone'],
+        user['phone_number'],
+      ]);
+
+      // Only override the placeholder; keep any real value the invoice
+      // payload already gave us.
+      final newName = isPlaceholder ? (resolvedName ?? data.clientName) : data.clientName;
+      final newPhone = phone.isEmpty ? (resolvedPhone ?? data.clientPhone) : data.clientPhone;
+      if (newName == data.clientName && newPhone == data.clientPhone) return data;
+      return _rebuild(data, clientName: newName, clientPhone: newPhone);
     } catch (_) {
       return data;
     }

@@ -18,6 +18,16 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
     final items = (kitchenData!['items'] as List? ?? []);
     final note = kitchenData!['note'];
     final createdAt = kitchenData!['createdAt'] as DateTime?;
+    // Change tickets (تعديل / تحويل / إلغاء / استرجاع) ride the same
+    // kitchen pipeline, but conceptually they're not a "Kitchen Ticket".
+    // Detect them by inspecting `items` for a `tag` (only change rows
+    // carry one) and let the renderer use the order-type as the loud
+    // header instead of the generic "طلب مطبخ" label — that way the
+    // staff sees "تحويل" / "تعديل طلب" at a glance.
+    final isChangeTicket = items.any((item) =>
+        item is Map &&
+        item['tag'] != null &&
+        item['tag'].toString().isNotEmpty);
 
     // Kitchen-specific invoice language (falls back to widget defaults).
     // The item name resolver uses these to pick from meal_name_translations.
@@ -36,6 +46,11 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
 
     final clientNameLocal = kitchenData!['clientName'] ?? clientName;
     final clientPhoneLocal = kitchenData!['clientPhone'] ?? clientPhone;
+    // Salon-only meta: the salon edit ticket injects the booking's employee
+    // name so the staff handover knows whose schedule the change affects.
+    // Restaurant change tickets leave this null and the row is skipped.
+    final employeeNameLocal =
+        kitchenData!['employeeName']?.toString().trim() ?? '';
     final tableNumberLocal = kitchenData!['tableNumber'] ?? tableNumber;
     final carNumberLocal = kitchenData!['carNumber'] ?? carNumber;
     final printerNameLocal = kitchenData!['printerName'];
@@ -46,16 +61,41 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
     // `_sl` (secondary — empty string when `allowSecondary` is off or the
     // two languages match), so the ticket respects the cashier's setting
     // whether that's ar/en, es/en, tr/es, or any other combo.
-    final titlePrimary = _ml(ar: 'طلب مطبخ', en: 'Kitchen Ticket', hi: 'रसोई टिकट', ur: 'کچن ٹکٹ', es: 'Ticket de Cocina', tr: 'Mutfak Fişi');
-    final titleSecondary = _sl(ar: 'طلب مطبخ', en: 'Kitchen Ticket', hi: 'रसोई टिकट', ur: 'کچن ٹکٹ', es: 'Ticket de Cocina', tr: 'Mutfak Fişi');
+    final titlePrimary = isChangeTicket
+        ? orderTypeRaw.toString()
+        : _ml(ar: 'طلب مطبخ', en: 'Kitchen Ticket', hi: 'रसोई टिकट', ur: 'کچن ٹکٹ', es: 'Ticket de Cocina', tr: 'Mutfak Fişi');
+    final titleSecondary = isChangeTicket
+        ? ''
+        : _sl(ar: 'طلب مطبخ', en: 'Kitchen Ticket', hi: 'रसोई टिकट', ur: 'کچن ٹکٹ', es: 'Ticket de Cocina', tr: 'Mutfak Fişi');
     final deptPrimary = _ml(ar: 'القسم', en: 'Dept', hi: 'विभाग', ur: 'شعبہ', es: 'Sección', tr: 'Bölüm');
     final deptSecondary = _sl(ar: 'القسم', en: 'Dept', hi: 'विभाग', ur: 'شعبہ', es: 'Sección', tr: 'Bölüm');
     final orderNumberPrimary = _ml(ar: 'رقم الطلب', en: 'Order #', hi: 'ऑर्डर #', ur: 'آرڈر #', es: 'N° Pedido', tr: 'Sipariş #');
     final orderNumberSecondary = _sl(ar: 'رقم الطلب', en: 'Order #', hi: 'ऑर्डर #', ur: 'آرڈر #', es: 'N° Pedido', tr: 'Sipariş #');
-    final itemHeaderPrimary = _ml(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün');
-    final itemHeaderSecondary = _sl(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün');
-    final qtyHeaderPrimary = _ml(ar: 'الكمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet');
-    final qtyHeaderSecondary = _sl(ar: 'الكمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet');
+    // Salon-mode change tickets carry an `employeeName` — only the salon
+    // edit flow injects that field, so it's a reliable marker for swapping
+    // the items column header from "الصنف" to "الخدمة" without affecting
+    // the restaurant kitchen ticket.
+    final bool isSalonChangeTicket =
+        isChangeTicket && employeeNameLocal.isNotEmpty;
+    // Cancellation ticket: every change row carries `cancelled: true`
+    // (full-order cancel and per-row cancel both stamp the flag). When
+    // every row is a cancel we hide the "الكمية" header — the cashier
+    // doesn't need a count column for items being removed.
+    final bool isCancelOnlyTicket = isChangeTicket &&
+        items.isNotEmpty &&
+        items.every((item) => item is Map && item['cancelled'] == true);
+    final itemHeaderPrimary = isSalonChangeTicket
+        ? _ml(ar: 'الخدمة', en: 'Service', hi: 'सेवा', ur: 'سروس', es: 'Servicio', tr: 'Hizmet')
+        : _ml(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün');
+    final itemHeaderSecondary = isSalonChangeTicket
+        ? _sl(ar: 'الخدمة', en: 'Service', hi: 'सेवा', ur: 'سروس', es: 'Servicio', tr: 'Hizmet')
+        : _sl(ar: 'الصنف', en: 'Item', hi: 'आइटम', ur: 'آئٹم', es: 'Artículo', tr: 'Ürün');
+    final qtyHeaderPrimary = isCancelOnlyTicket
+        ? ''
+        : _ml(ar: 'الكمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet');
+    final qtyHeaderSecondary = isCancelOnlyTicket
+        ? ''
+        : _sl(ar: 'الكمية', en: 'Qty', hi: 'मात्रा', ur: 'مقدار', es: 'Cant.', tr: 'Adet');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -122,13 +162,17 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
         const SizedBox(height: 12),
 
         // Metadata Section — each row resolved via _ml/_sl so every configured
-        // invoice-language pair renders correctly.
-        _buildMetaRow(
-          _ml(ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü'),
-          _sl(ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü'),
-          displayOrderTypeAr,
-          isLarge: true,
-        ),
+        // invoice-language pair renders correctly. The order-type meta row is
+        // skipped on change tickets because the same value is already shown
+        // as the slip's title (see `titlePrimary` / `titleSecondary` above) —
+        // duplicating it bloats the slip with no extra info.
+        if (!isChangeTicket)
+          _buildMetaRow(
+            _ml(ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü'),
+            _sl(ar: 'نوع الطلب', en: 'Order Type', hi: 'ऑर्डर प्रकार', ur: 'آرڈر کی قسم', es: 'Tipo de Pedido', tr: 'Sipariş Türü'),
+            displayOrderTypeAr,
+            isLarge: true,
+          ),
         if (tableNumberLocal != null)
           _buildMetaRow(
             _ml(ar: 'رقم الطاولة', en: 'Table Number', hi: 'मेज़ संख्या', ur: 'میز نمبر', es: 'Número de Mesa', tr: 'Masa Numarası'),
@@ -147,6 +191,12 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
             _ml(ar: 'الجوال', en: 'Phone', hi: 'फ़ोन', ur: 'فون', es: 'Teléfono', tr: 'Telefon'),
             _sl(ar: 'الجوال', en: 'Phone', hi: 'फ़ोन', ur: 'فون', es: 'Teléfono', tr: 'Telefon'),
             clientPhoneLocal.toString().trim(),
+          ),
+        if (employeeNameLocal.isNotEmpty)
+          _buildMetaRow(
+            _ml(ar: 'الموظف/ة', en: 'Employee', hi: 'कर्मचारी', ur: 'ملازم', es: 'Empleado/a', tr: 'Çalışan'),
+            _sl(ar: 'الموظف/ة', en: 'Employee', hi: 'कर्मचारी', ur: 'ملازم', es: 'Empleado/a', tr: 'Çalışan'),
+            employeeNameLocal,
           ),
         if (createdAt != null)
           _buildMetaRow(
@@ -454,6 +504,60 @@ extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {
                       style: GoogleFonts.tajawal(fontSize: 42, fontWeight: FontWeight.bold, color: const Color(0xFF16A34A)),
                     ),
                   ),
+
+                // Salon employee transfer: render the explicit "from <X> to
+                // <Y>" pair so the staff can see who is taking over the
+                // service. The cashier passes a `transfer` map populated
+                // from `OrderChange.oldEmployeeName` / `newEmployeeName`.
+                if (tag == 'Transfer') ...[
+                  const SizedBox(height: 4),
+                  Builder(builder: (_) {
+                    final transfer = item['transfer'];
+                    final from = (transfer is Map
+                            ? transfer['from']?.toString()
+                            : null) ??
+                        '';
+                    final to = (transfer is Map
+                            ? transfer['to']?.toString()
+                            : null) ??
+                        '';
+                    if (from.isEmpty && to.isEmpty) {
+                      final fallback = (item['note'] ?? item['subtitle'])
+                          ?.toString()
+                          .trim() ??
+                          '';
+                      if (fallback.isEmpty) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          fallback,
+                          style: GoogleFonts.tajawal(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFFB45309),
+                          ),
+                        ),
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (from.isNotEmpty)
+                          _buildChangeDetailRow(
+                            _ml(ar: 'من', en: 'From', hi: 'से', ur: 'سے', es: 'De', tr: 'Kimden'),
+                            _sl(ar: 'من', en: 'From', hi: 'से', ur: 'سے', es: 'De', tr: 'Kimden'),
+                            from,
+                          ),
+                        if (to.isNotEmpty)
+                          _buildChangeDetailRow(
+                            _ml(ar: 'إلى', en: 'To', hi: 'को', ur: 'کو', es: 'A', tr: 'Kime'),
+                            _sl(ar: 'إلى', en: 'To', hi: 'को', ur: 'کو', es: 'A', tr: 'Kime'),
+                            to,
+                          ),
+                      ],
+                    );
+                  }),
+                ],
 
                 const SizedBox(height: 8),
                 const DashedDivider(),

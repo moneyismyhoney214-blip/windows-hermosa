@@ -1059,7 +1059,46 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         ? availableHeight
         : (availableHeight < 760 ? availableHeight : 760.0);
 
-    return Dialog(
+    return PopScope(
+      // Once the cashier has selected a payment method we treat the
+      // dialog as "dirty" — a stray back-press / outside-tap shouldn't
+      // discard the choice silently. An untouched dialog (no method
+      // selected) pops freely so the cancel flow stays a single tap.
+      canPop: _selectedMethod == null,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: Theme.of(ctx).dialogTheme.backgroundColor ??
+                Theme.of(ctx).colorScheme.surface,
+            title: Text(translationService.isRTL
+                ? 'إلغاء الدفع؟'
+                : 'Cancel payment?'),
+            content: Text(translationService.isRTL
+                ? 'لن يتم إنشاء فاتورة. هل تريد المتابعة؟'
+                : 'No invoice will be created. Continue?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: Text(translationService.isRTL ? 'رجوع' : 'Back'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                ),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child:
+                    Text(translationService.isRTL ? 'إلغاء' : 'Cancel'),
+              ),
+            ],
+          ),
+        );
+        if (ok == true && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: insetPadding,
       child: Container(
@@ -1153,6 +1192,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

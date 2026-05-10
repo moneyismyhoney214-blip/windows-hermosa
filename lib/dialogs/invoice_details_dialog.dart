@@ -18,8 +18,10 @@ import '../services/printer_service.dart';
 import '../services/zatca_printer_service.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/language_service.dart';
+import '../services/receipt_addon_extractor.dart';
 import '../locator.dart';
 import '../widgets/invoice_print_widget.dart';
+import '../widgets/send_invoice_whatsapp_button.dart';
 import '../services/app_themes.dart';
 
 part 'invoice_details_dialog_parts/invoice_details_dialog.actions.dart';
@@ -57,7 +59,6 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
   final OrderService _orderService = getIt<OrderService>();
   final PrintAuditService _printAuditService = getIt<PrintAuditService>();
   bool _isLoading = true;
-  bool _isSendingWhatsApp = false;
   bool _isProcessingRefund = false;
   bool _isPrintingInvoice = false;
   bool _didAutoOpenRefund = false;
@@ -166,7 +167,11 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
       if (refundedMeals.isNotEmpty) {
         items = refundedMeals.map((m) {
           final rm = m.map((k, v) => MapEntry(k.toString(), v));
-          final name = rm['meal_name']?.toString() ?? rm['name']?.toString() ?? rm['item_name']?.toString() ?? '';
+          final name = rm['service_name']?.toString() ??
+              rm['meal_name']?.toString() ??
+              rm['name']?.toString() ??
+              rm['item_name']?.toString() ??
+              '';
           String arName = name;
           String enName = name;
           if (name.contains(' - ')) {
@@ -198,15 +203,31 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
         }).toList() ?? [];
       }
 
-      final totalExcl = items.fold(0.0, (sum, item) => sum + item.total);
       // Use the branch's real tax config instead of assuming 15% VAT.
       // Branches with `has_tax=false` return 0 here, keeping credit-note and
       // receipt totals consistent with the cashier settings.
       final branchService = getIt<BranchService>();
       final taxRate =
           branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
-      final tax = totalExcl * taxRate;
-      final grandTotal = totalExcl + tax;
+      // Salon refund rows / invoice items store amounts tax-inclusive
+      // (catalog price already includes VAT). Restaurant items are pre-tax.
+      // Without this branch we'd compute VAT on a value that already
+      // contains it and the printed credit note would double-tax — same
+      // bug the cashier receipt builder used to have.
+      final isSalonModule = ApiConstants.branchModule == 'salons';
+      final lineSum = items.fold(0.0, (sum, item) => sum + item.total);
+      final double totalExcl;
+      final double tax;
+      final double grandTotal;
+      if (isSalonModule && taxRate > 0) {
+        grandTotal = lineSum;
+        totalExcl = lineSum / (1 + taxRate);
+        tax = grandTotal - totalExcl;
+      } else {
+        totalExcl = lineSum;
+        tax = totalExcl * taxRate;
+        grandTotal = totalExcl + tax;
+      }
 
       final sellerName = pick([branch['seller_name']]);
       return OrderReceiptData(
@@ -306,15 +327,30 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
         return ReceiptItem(nameAr: primaryName, nameEn: secondaryName != primaryName ? secondaryName : '', quantity: c.quantity.toDouble(), unitPrice: unitPrice, total: c.total);
       }).toList();
 
-      final totalExcl = items.fold(0.0, (sum, item) => sum + item.total);
       // Use the branch's real tax config instead of assuming 15% VAT.
       // Branches with `has_tax=false` return 0 here, keeping credit-note and
       // receipt totals consistent with the cashier settings.
       final branchService = getIt<BranchService>();
       final taxRate =
           branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
-      final tax = totalExcl * taxRate;
-      final grandTotal = totalExcl + tax;
+      // Salon `_RefundCandidate.total` is already tax-inclusive (it picks
+      // `total_tax` / `total_with_tax` from the invoice — see
+      // `_extractCandidates`). Restaurant items are pre-tax. Without this
+      // branch the printed credit note shows VAT on top of VAT.
+      final isSalonModule = ApiConstants.branchModule == 'salons';
+      final lineSum = items.fold(0.0, (sum, item) => sum + item.total);
+      final double totalExcl;
+      final double tax;
+      final double grandTotal;
+      if (isSalonModule && taxRate > 0) {
+        grandTotal = lineSum;
+        totalExcl = lineSum / (1 + taxRate);
+        tax = grandTotal - totalExcl;
+      } else {
+        totalExcl = lineSum;
+        tax = totalExcl * taxRate;
+        grandTotal = totalExcl + tax;
+      }
 
       final sellerName = pick([branch['seller_name']]);
       final receiptData = OrderReceiptData(
@@ -549,6 +585,15 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
         (_isInvoicePaidFromDetails() || _hasPartialRefundFromDetails()) &&
         !_isFullyRefundedFromDetails();
 
+    String? customerPhoneForWhatsApp;
+    String? customerNameForWhatsApp;
+    if (_invoiceDetails != null) {
+      final whatsAppPayload = _asMap(_invoiceDetails!['data']) ?? _invoiceDetails!;
+      final whatsAppData = _asMap(whatsAppPayload['invoice']) ?? whatsAppPayload;
+      customerPhoneForWhatsApp = _extractCustomerPhone(whatsAppData, whatsAppPayload);
+      customerNameForWhatsApp = _extractCustomerName(whatsAppData, whatsAppPayload);
+    }
+
     return Dialog(
       insetPadding: insetPadding,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
@@ -666,35 +711,13 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
                                 ? 'جارٍ الطباعة...'
                                 : 'طباعة الفاتورة'),
                           ),
-                          if (ApiConstants.branchModule != 'salons') ...[
-                            const SizedBox(height: 8),
-                            OutlinedButton.icon(
-                              onPressed: _isSendingWhatsApp
-                                  ? null
-                                  : _sendWhatsAppForInvoice,
-                              icon: _isSendingWhatsApp
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
-                                    )
-                                  : const Icon(LucideIcons.messageCircle,
-                                      size: 18),
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size.fromHeight(48),
-                                foregroundColor: const Color(0xFF16A34A),
-                                side:
-                                    const BorderSide(color: Color(0xFF16A34A)),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              label: Text(_isSendingWhatsApp
-                                  ? 'جارٍ الإرسال...'
-                                  : 'إرسال واتساب'),
-                            ),
-                          ],
+                          const SizedBox(height: 8),
+                          SendInvoiceWhatsAppButton(
+                            invoiceId: widget.invoiceId,
+                            customerPhone: customerPhoneForWhatsApp,
+                            customerName: customerNameForWhatsApp,
+                            invoiceNumber: widget.invoiceId,
+                          ),
                           const SizedBox(height: 8),
                           ElevatedButton(
                             onPressed: () => Navigator.pop(context),
@@ -775,37 +798,16 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
                                   : 'طباعة الفاتورة'),
                             ),
                           ),
-                          if (ApiConstants.branchModule != 'salons') ...[
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _isSendingWhatsApp
-                                    ? null
-                                    : _sendWhatsAppForInvoice,
-                                icon: _isSendingWhatsApp
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2),
-                                      )
-                                    : const Icon(LucideIcons.messageCircle,
-                                        size: 18),
-                                style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size.fromHeight(50),
-                                  foregroundColor: const Color(0xFF16A34A),
-                                  side: const BorderSide(
-                                      color: Color(0xFF16A34A)),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                label: Text(_isSendingWhatsApp
-                                    ? 'جارٍ الإرسال...'
-                                    : 'إرسال واتساب'),
-                              ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SendInvoiceWhatsAppButton(
+                              invoiceId: widget.invoiceId,
+                              customerPhone: customerPhoneForWhatsApp,
+                              customerName: customerNameForWhatsApp,
+                              invoiceNumber: widget.invoiceId,
+                              minimumSize: const Size.fromHeight(50),
                             ),
-                          ],
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: ElevatedButton(

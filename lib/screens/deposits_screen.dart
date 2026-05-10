@@ -10,11 +10,25 @@ import '../services/language_service.dart';
 import '../services/app_themes.dart';
 import '../dialogs/create_deposit_dialog.dart';
 import '../locator.dart';
+import '../models/receipt_data.dart';
 
 class DepositsScreen extends StatefulWidget {
   final VoidCallback onBack;
 
-  const DepositsScreen({super.key, required this.onBack});
+  /// Callback that prints a freshly-created deposit receipt. Wired from
+  /// main_screen so the deposit dialog can fire the same auto-print
+  /// orchestrator the cashier flow already uses (printer discovery,
+  /// timeouts, second-copy toggle, error snackbars).
+  final Future<void> Function({
+    required OrderReceiptData receiptData,
+    String? invoiceId,
+  })? onPrintReceipt;
+
+  const DepositsScreen({
+    super.key,
+    required this.onBack,
+    this.onPrintReceipt,
+  });
 
   @override
   State<DepositsScreen> createState() => _DepositsScreenState();
@@ -195,7 +209,9 @@ class _DepositsScreenState extends State<DepositsScreen> {
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const CreateDepositDialog(),
+      builder: (ctx) => CreateDepositDialog(
+        onPrintReceipt: widget.onPrintReceipt,
+      ),
     );
     if (result == true) {
       _loadDeposits(reset: true);
@@ -470,8 +486,16 @@ class _DepositsScreenState extends State<DepositsScreen> {
     final statusColor = _statusColor(status);
     final statusText = _statusLabel(status);
 
+    // Backend sometimes returns the invoice_number already prefixed
+    // (e.g. `#DP-239`). Prepend `#DP-` only when it's a bare numeric ID
+    // so we don't end up with `#DP-#DP-239` rendered as the duplicated
+    // `DP-#DP-239#` label seen in the deposits list.
     final displayNumber = invoiceNumber.isNotEmpty
-        ? '#DP-$invoiceNumber'
+        ? (invoiceNumber.startsWith('#') || invoiceNumber.startsWith('DP-')
+            ? invoiceNumber.startsWith('#')
+                ? invoiceNumber
+                : '#$invoiceNumber'
+            : '#DP-$invoiceNumber')
         : '#DP-${deposit['id'] ?? ''}';
 
     return Container(
@@ -795,7 +819,7 @@ class _DepositDetailsDialog extends StatelessWidget {
                   Expanded(
                     child: Text(
                       invoiceNumber.isNotEmpty
-                          ? '${tr('عربون', 'Deposit')} #DP-$invoiceNumber'
+                          ? '${tr('عربون', 'Deposit')} ${(invoiceNumber.startsWith('#') ? invoiceNumber : (invoiceNumber.startsWith('DP-') ? '#$invoiceNumber' : '#DP-$invoiceNumber'))}'
                           : '${tr('عربون', 'Deposit')} #DP-${deposit['id'] ?? ''}',
                       style: const TextStyle(
                         fontSize: 16,

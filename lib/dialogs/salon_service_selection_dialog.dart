@@ -43,11 +43,24 @@ class SalonServiceSelectionDialog extends StatefulWidget {
   /// instead of the initials placeholder when the service has no image.
   final String? shopLogoUrl;
 
+  /// Optional pre-selection used when editing an existing booking_service.
+  /// `initialEmployeeId` matches against `employees[*].id`.
+  final int? initialEmployeeId;
+  final DateTime? initialDate;
+  final TimeOfDay? initialTime;
+  final int? initialQuantity;
+  final double? initialPrice;
+
   const SalonServiceSelectionDialog({
     super.key,
     required this.serviceData,
     required this.employees,
     this.shopLogoUrl,
+    this.initialEmployeeId,
+    this.initialDate,
+    this.initialTime,
+    this.initialQuantity,
+    this.initialPrice,
   });
 
   /// Convenience launcher. Shows the dialog and returns the booking-item map
@@ -57,6 +70,11 @@ class SalonServiceSelectionDialog extends StatefulWidget {
     required Map<String, dynamic> serviceData,
     required List<Map<String, dynamic>> employees,
     String? shopLogoUrl,
+    int? initialEmployeeId,
+    DateTime? initialDate,
+    TimeOfDay? initialTime,
+    int? initialQuantity,
+    double? initialPrice,
   }) {
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -65,6 +83,11 @@ class SalonServiceSelectionDialog extends StatefulWidget {
         serviceData: serviceData,
         employees: employees,
         shopLogoUrl: shopLogoUrl,
+        initialEmployeeId: initialEmployeeId,
+        initialDate: initialDate,
+        initialTime: initialTime,
+        initialQuantity: initialQuantity,
+        initialPrice: initialPrice,
       ),
     );
   }
@@ -84,7 +107,11 @@ class _SalonServiceSelectionDialogState
   Map<String, dynamic>? _selectedEmployee;
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
-  int _quantity = 1;
+  // Salon services are not multiplied — booking the same service N times is
+  // not a real workflow (sessions/review-tickets are tracked separately, not
+  // by quantity). The +/- selector was removed; we still send quantity=1 in
+  // the payload so the backend's `card[*][quantity]` contract stays valid.
+  static const int _quantity = 1;
   late TextEditingController _priceController;
   bool _priceEdited = false;
 
@@ -127,15 +154,34 @@ class _SalonServiceSelectionDialogState
     _addonsGroups = (s['addons_groups'] is List) ? s['addons_groups'] as List : [];
     _addons = (s['addons'] is List) ? s['addons'] as List : [];
 
-    _selectedDate = DateTime.now();
-    _selectedTime = _roundToNext5(TimeOfDay.now());
-    _priceController =
-        TextEditingController(text: _originalPrice.toStringAsFixed(ApiConstants.digitsNumber));
+    _selectedDate = widget.initialDate ?? DateTime.now();
+    _selectedTime = widget.initialTime ?? _roundToNext5(TimeOfDay.now());
+    final priceSeed = widget.initialPrice ?? _originalPrice;
+    _priceController = TextEditingController(
+        text: priceSeed.toStringAsFixed(ApiConstants.digitsNumber));
+    _priceEdited = widget.initialPrice != null &&
+        (widget.initialPrice! - _originalPrice).abs() > 0.001;
 
-    // Pre-select first employee if available
+    // Pre-select the matching employee when editing; otherwise the first.
     if (widget.employees.isNotEmpty) {
-      _selectedEmployee = widget.employees.first;
-      _fetchAvailableTimes();
+      Map<String, dynamic>? match;
+      if (widget.initialEmployeeId != null) {
+        for (final emp in widget.employees) {
+          final empId = _parseInt(emp['id']);
+          if (empId == widget.initialEmployeeId) {
+            match = emp;
+            break;
+          }
+        }
+      }
+      _selectedEmployee = match ?? widget.employees.first;
+      // Each fresh open of the dialog must hit the network: stale slot cache
+      // was making employees appear unavailable after another booking
+      // happened in the same 2-min TTL window.
+      _fetchAvailableTimes(
+        preselectTime: widget.initialTime,
+        forceRefresh: true,
+      );
     }
   }
 
@@ -301,11 +347,14 @@ class _SalonServiceSelectionDialogState
     );
     if (picked != null) {
       setState(() => _selectedDate = picked);
-      _fetchAvailableTimes();
+      _fetchAvailableTimes(forceRefresh: true);
     }
   }
 
-  Future<void> _fetchAvailableTimes() async {
+  Future<void> _fetchAvailableTimes({
+    TimeOfDay? preselectTime,
+    bool forceRefresh = false,
+  }) async {
     final empId = _selectedEmployee?['id'];
     if (empId == null) return;
     setState(() {
@@ -320,18 +369,31 @@ class _SalonServiceSelectionDialogState
         employeeId: empId is int ? empId : int.tryParse(empId.toString()) ?? 0,
         serviceId: _serviceId,
         date: dateStr,
+        forceRefresh: forceRefresh,
       );
-      if (mounted) {
-        setState(() {
-          _availableTimes = times;
-          _isLoadingTimes = false;
-          // Auto-select first available time
-          if (times.isNotEmpty) {
-            _selectedTimeSlot = times.first['value']?.toString();
-            _syncTimeFromSlot();
+      if (!mounted) return;
+      setState(() {
+        _availableTimes = times;
+        _isLoadingTimes = false;
+        if (times.isEmpty) return;
+
+        // When editing, snap onto the existing booking's slot if it's still
+        // available so the user sees their current selection rather than the
+        // first slot of the day.
+        String? matched;
+        if (preselectTime != null) {
+          final wanted =
+              '${preselectTime.hour.toString().padLeft(2, '0')}:${preselectTime.minute.toString().padLeft(2, '0')}';
+          for (final t in times) {
+            if (t['value']?.toString() == wanted) {
+              matched = wanted;
+              break;
+            }
           }
-        });
-      }
+        }
+        _selectedTimeSlot = matched ?? times.first['value']?.toString();
+        _syncTimeFromSlot();
+      });
     } catch (_) {
       if (mounted) setState(() => _isLoadingTimes = false);
     }
@@ -536,8 +598,6 @@ class _SalonServiceSelectionDialogState
           const SizedBox(height: 14),
           _dateTimeRow(),
           const SizedBox(height: 14),
-          _quantityRow(),
-          const SizedBox(height: 14),
           _priceField(),
           const SizedBox(height: 14),
           ..._addonWidgets(),
@@ -574,8 +634,6 @@ class _SalonServiceSelectionDialogState
           ),
           const SizedBox(height: 8),
           _dateTimeRow(),
-          const SizedBox(height: 18),
-          _quantityRow(),
           const SizedBox(height: 18),
           Text(
             _tr('السعر', 'Price'),
@@ -770,7 +828,7 @@ class _SalonServiceSelectionDialogState
           }).toList(),
           onChanged: (value) {
             setState(() => _selectedEmployee = value);
-            _fetchAvailableTimes();
+            _fetchAvailableTimes(forceRefresh: true);
           },
         ),
       ),
@@ -896,46 +954,6 @@ class _SalonServiceSelectionDialogState
                 size: 16, color: context.appTextSubtle),
           ],
         ),
-      ),
-    );
-  }
-
-  // ── Quantity row (matches product_customization_dialog style) ──
-  Widget _quantityRow() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _circleBtn(
-          LucideIcons.minus,
-          () => setState(() => _quantity = _quantity > 1 ? _quantity - 1 : 1),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          child: Text(
-            '$_quantity',
-            style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: context.appText),
-          ),
-        ),
-        _circleBtn(
-          LucideIcons.plus,
-          () => setState(() => _quantity += 1),
-        ),
-      ],
-    );
-  }
-
-  Widget _circleBtn(IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(22),
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: const BoxDecoration(color: _brand, shape: BoxShape.circle),
-        child: Icon(icon, size: 22, color: Colors.white),
       ),
     );
   }

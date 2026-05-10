@@ -214,48 +214,14 @@ extension InvoiceDetailsDialogBuildWidgets on _InvoiceDetailsDialogState {
     final receiptItems = items.map((item) {
       final meal = _asMap(item['meal']) ?? const <String, dynamic>{};
 
-      // Backend attaches `addons_translations` alongside `addons`, shaped
-      // `[{attribute: {ar, en}, option: {ar, en}, price}]`. Walk both lists
-      // in lockstep so each ReceiptAddon carries its per-language name and
-      // the cashier invoice can print it in the chosen language.
-      final addonsList = item['addons'] as List? ?? const [];
-      final addonsTranslations = item['addons_translations'] as List? ?? const [];
-      final receiptAddons = <ReceiptAddon>[];
-      for (var i = 0; i < addonsList.length; i++) {
-        final addonMap = _asMap(addonsList[i])!;
-        final translation = i < addonsTranslations.length
-            ? _asMap(addonsTranslations[i])
-            : null;
-        final optionMap = translation != null ? _asMap(translation['option']) : null;
-
-        final localized = <String, String>{};
-        if (optionMap != null) {
-          for (final entry in optionMap.entries) {
-            final v = entry.value?.toString().trim() ?? '';
-            if (v.isEmpty) continue;
-            localized[entry.key.toString().trim().toLowerCase()] = v;
-          }
-        }
-
-        final nameAr = localized['ar']?.isNotEmpty == true
-            ? localized['ar']!
-            : (addonMap['name_ar']?.toString() ??
-                addonMap['name']?.toString() ??
-                '');
-        final nameEn = localized['en']?.isNotEmpty == true
-            ? localized['en']!
-            : (addonMap['name_en']?.toString() ?? '');
-
-        receiptAddons.add(ReceiptAddon(
-          nameAr: nameAr,
-          nameEn: nameEn,
-          price: _parsePrice(addonMap['price']),
-          localizedNames: localized,
-        ));
-      }
+      final receiptAddons = extractReceiptAddonsFromItem(item);
 
       return ReceiptItem(
-        nameAr: item['meal_name']?.toString() ?? item['name']?.toString() ?? meal['name']?.toString() ?? '',
+        nameAr: item['service_name']?.toString() ??
+            item['meal_name']?.toString() ??
+            item['name']?.toString() ??
+            meal['name']?.toString() ??
+            '',
         nameEn: item['meal_name_en']?.toString() ?? meal['name_en']?.toString() ?? '',
         quantity: _parsePrice(item['quantity']),
         unitPrice: _parsePrice(item['unit_price'] ?? item['price']),

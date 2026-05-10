@@ -73,90 +73,16 @@ extension InvoicesScreenActions on _InvoicesScreenState {
     return const Color(0xFF64748B);
   }
 
-  Future<String?> _showWhatsAppMessageDialog({
-    required String title,
-    required String initialMessage,
-  }) async {
-    final controller = TextEditingController(text: initialMessage);
-    final message = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          minLines: 2,
-          maxLines: 4,
-          decoration: InputDecoration(
-            labelText: _tr('نص الرسالة', 'Message'),
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(translationService.t('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: Text(_tr('إرسال', 'Send')),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    return message;
-  }
-
-  String _normalizeWhatsAppMessage(String message) {
-    final trimmed = message.trim();
-    final atCount = '@'.allMatches(trimmed).length;
-    if (atCount >= 2) return trimmed;
-
-    final needed = 2 - atCount;
-    final suffix = List<String>.filled(needed, '@@').join(' ');
-    return '$trimmed $suffix'.trim();
-  }
-
-  Future<void> _sendWhatsAppForOrder({
-    required int orderId,
-    required String orderLabel,
-  }) async {
-    final message = await _showWhatsAppMessageDialog(
-      title: _tr('إرسال واتساب للطلب $orderLabel',
-          'Send WhatsApp for order $orderLabel'),
-      initialMessage: _tr('طلبك جاهز للاستلام', 'Your order is ready'),
-    );
-    if (message == null || message.isEmpty) return;
-
-    setState(() => _isSendingWhatsApp = true);
-    try {
-      final normalizedMessage = _normalizeWhatsAppMessage(message);
-      await _orderService.sendOrderWhatsApp(
-        orderId: orderId.toString(),
-        message: normalizedMessage,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _tr('تم إرسال واتساب للطلب $orderLabel',
-                'WhatsApp sent for order $orderLabel'),
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      final userMessage = ErrorHandler.toUserMessage(
-        e,
-        fallback: _tr('تعذر إرسال واتساب', 'Failed to send WhatsApp'),
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(userMessage)),
-      );
-    } finally {
-      if (mounted) setState(() => _isSendingWhatsApp = false);
-    }
-  }
+  // The old text-only WhatsApp flow (`_showWhatsAppMessageDialog`,
+  // `_normalizeWhatsAppMessage`, `_sendWhatsAppForOrder`) was removed.
+  // It used `OrderService.sendOrderWhatsApp` which goes through the
+  // backend (gated by `whatsapp_status`) and asked the cashier for a
+  // free-text message. The replacement is `SendInvoiceWhatsAppButton`,
+  // wired in the invoice row, which renders the invoice PDF locally
+  // and sends it to WAWP directly — same architecture as the waiter
+  // waitlist. It also drops the "@@" suffix `_normalizeWhatsAppMessage`
+  // used to splice into outgoing text, which surfaced in the customer's
+  // WhatsApp as a stray `@@`.
 
   int? _resolveOrderIdFromInvoice(Invoice invoice) {
     int? parseInt(dynamic value) {
@@ -589,4 +515,67 @@ extension InvoicesScreenActions on _InvoicesScreenState {
     return result == true;
   }
 
+  /// Pick a new date for an existing invoice and PUT it to
+  /// `/seller/branches/{branchId}/invoices/{id}/update-date`. The web
+  /// dashboard exposes the same flow on the invoices grid; this surfaces
+  /// it inside the POS for both salon and restaurant modules.
+  Future<void> _updateInvoiceDate(Invoice invoice) async {
+    final initial =
+        DateTime.tryParse(invoice.date.trim()) ??
+            DateTime.tryParse(invoice.createdAt.trim()) ??
+            DateTime.now();
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFFF58220),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+
+    final dateStr = DateFormat('yyyy-MM-dd').format(picked);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      await _orderService.updateInvoiceDate(
+        invoiceId: invoice.id.toString(),
+        date: dateStr,
+      );
+      if (!mounted) return;
+      Navigator.pop(context); // dismiss loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_tr('تم تعديل التاريخ بنجاح',
+              'Invoice date updated successfully')),
+          backgroundColor: const Color(0xFF10B981),
+        ),
+      );
+      await _loadInvoices(reset: true);
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // dismiss loading
+      final userMessage = ErrorHandler.toUserMessage(
+        e,
+        fallback: _tr('تعذر تعديل التاريخ', 'Failed to update date'),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(userMessage)),
+      );
+    }
+  }
 }

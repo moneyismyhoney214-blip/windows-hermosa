@@ -15,7 +15,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:hermosa_pos/services/api/api_constants.dart';
 
-const _baseUrl = 'https://portal.hermosaapp.com';
+const _baseUrl = 'https:// api.hermosaapp.com';
 const _email = 'tikanah200@gmail.com';
 const _password = '123456';
 
@@ -132,7 +132,7 @@ void main() {
     final taxObject = branch['taxObject'] as Map;
     _applyTaxObject(taxObject);
 
-    // Cross-check against the live payload (BH branch on portal.hermosaapp.com
+    // Cross-check against the live payload (BH branch on  api.hermosaapp.com
     // returns 10% / د.ب, KSA branch on portal returns 15% / ر.س — the test
     // adapts to whichever environment the URL points at).
     final expectedHasTax = taxObject['has_tax'] == true;

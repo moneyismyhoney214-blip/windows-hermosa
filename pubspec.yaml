@@ -110,3 +110,15 @@ flutter:
     - assets/hermosa app ico.png
     - assets/animation/Success.gif
     - assets/waiter_module/sounds/
+    # Bundled Arabic TTF fonts for the dart-native PDF fallback in
+    # InvoiceHtmlPdfService. The fallback runs on Linux/Windows/macOS
+    # desktop hosts where flutter_html_to_pdf_plus has no native
+    # implementation. The pdf package's `pw.Font.ttf` requires a TTF
+    # with a Unicode cmap — the previously-shipped Alkhalil OTF threw
+    # `Cannot decode the string to Latin1` for any Arabic text. Noto
+    # Naskh Arabic (Apache 2.0 / SIL OFL) is a tested-good replacement.
+    - assets/NotoNaskhArabic-Regular.ttf
+    - assets/NotoNaskhArabic-Bold.ttf
+    # Legacy: kept for any caller that already references it. New PDF
+    # work should use the Noto fonts above.
+    - assets/alfont_com_Alkhalil-Kufi-Oplique-Right.otf

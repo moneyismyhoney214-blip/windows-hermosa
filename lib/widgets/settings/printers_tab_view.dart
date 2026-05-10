@@ -1594,9 +1594,15 @@ class _AddPrinterDialogState extends State<_AddPrinterDialog> {
                   children: [
                     Expanded(
                       child: _RoleCard(
-                        label: 'Kitchen / KDS',
-                        subtitle: 'Prints kitchen tickets',
-                        icon: LucideIcons.utensils,
+                        label: ApiConstants.branchModule == 'salons'
+                            ? 'طابعة الأدوار'
+                            : 'Kitchen / KDS',
+                        subtitle: ApiConstants.branchModule == 'salons'
+                            ? 'تطبع تذاكر الأدوار للموظفات'
+                            : 'Prints kitchen tickets',
+                        icon: ApiConstants.branchModule == 'salons'
+                            ? LucideIcons.scissors
+                            : LucideIcons.utensils,
                         selected: _role == PrinterRole.kds,
                         onTap: () => setState(
                           () => _role =

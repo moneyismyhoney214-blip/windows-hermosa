@@ -47,9 +47,43 @@ class BranchService {
 
   /// Cached branch receipt info (seller, address, logo — both AR and EN)
   Map<String, dynamic>? _cachedBranchReceiptInfo;
+  DateTime? _branchReceiptInfoCacheTime;
 
-  /// Synchronous access to cached branch receipt info.
-  Map<String, dynamic>? get cachedBranchReceiptInfo => _cachedBranchReceiptInfo;
+  /// Receipt cache TTL — beyond this we re-fetch the canonical data so
+  /// a branch logo / name update doesn't show stale on the printed
+  /// receipt for the rest of the session. 30 minutes is short enough
+  /// for an admin-initiated change to propagate within one shift.
+  static const int _branchReceiptInfoTtlMinutes = 30;
+
+  /// Synchronous access to cached branch receipt info. Returns null
+  /// once the cache is older than [_branchReceiptInfoTtlMinutes] so
+  /// callers transparently re-fetch via [fetchAndCacheBranchReceiptInfo]
+  /// instead of printing a 6-month-old logo.
+  Map<String, dynamic>? get cachedBranchReceiptInfo {
+    if (_cachedBranchReceiptInfo == null) return null;
+    final ts = _branchReceiptInfoCacheTime;
+    if (ts == null) return _cachedBranchReceiptInfo;
+    final age = DateTime.now().difference(ts).inMinutes;
+    if (age > _branchReceiptInfoTtlMinutes) return null;
+    return _cachedBranchReceiptInfo;
+  }
+
+  /// Wipe every per-session cache. Called on logout / branch switch so
+  /// the next user/branch starts cold instead of inheriting the prior
+  /// shift's pay methods, branch settings, receipt logo, or tax notice.
+  /// Without this, a Sunmi tablet handed off between cashiers in
+  /// different branches would print receipts with the wrong logo or
+  /// gate NearPay against the wrong branch's settings.
+  void clearSessionCaches() {
+    _cachedPayMethods = null;
+    _payMethodsCacheTime = null;
+    _cachedBranchSettings = null;
+    _branchSettingsCacheTime = null;
+    _cachedBranchReceiptInfo = null;
+    _branchReceiptInfoCacheTime = null;
+    _lastPayMethodsNotice = null;
+    debugPrint('🧹 BranchService session caches cleared');
+  }
 
   /// Fetch and cache full branch info for receipts.
   /// Call once at startup; subsequent access via [cachedBranchReceiptInfo].
@@ -119,6 +153,7 @@ class BranchService {
     }
 
     _cachedBranchReceiptInfo = receiptInfo;
+    _branchReceiptInfoCacheTime = DateTime.now();
 
     // Mirror seller name + logo to SharedPreferences so the CDS secondary
     // Flutter engine (customer_display) can read it without a MethodChannel.

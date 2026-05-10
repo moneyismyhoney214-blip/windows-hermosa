@@ -95,7 +95,7 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.21"
     
     // NEARPAY SDK - Using version from documentation
-    implementation "io.nearpay:terminalsdk-release:0.0.169"
+    implementation "io.nearpay:terminalsdk-release:0.0.187"
     
     implementation 'com.google.android.gms:play-services-location:20.0.0'
     implementation 'com.huawei.hms:location:6.4.0.300'

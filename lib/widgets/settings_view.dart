@@ -6,6 +6,7 @@ import 'settings/profile_view.dart';
 import 'settings/cashier_settings_view.dart';
 import 'language_selector.dart';
 import 'printer_language_settings_view.dart';
+import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
 import '../services/language_service.dart';
 import '../screens/login_screen.dart';
@@ -765,7 +766,16 @@ class _DevicesSettingsCombined extends StatelessWidget {
                   labelPadding: EdgeInsets.zero,
                   tabs: [
                     Tab(text: t.t('printers')),
-                    Tab(text: t.t('cds_kds_devices')),
+                    Tab(
+                      // Salon branches read this as "CDS / SDS" so the
+                      // staff-facing screen is labelled with the salon-
+                      // specific term. Restaurants keep "CDS / KDS".
+                      text: ApiConstants.branchModule == 'salons'
+                          ? t
+                              .t('cds_kds_devices')
+                              .replaceAll('KDS', 'SDS')
+                          : t.t('cds_kds_devices'),
+                    ),
                   ],
                 ),
               ),

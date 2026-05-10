@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,6 +9,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/network_message.dart';
 import '../models/waiter.dart';
+import 'mesh_auth_service.dart';
 
 /// Waiter-peer WebSocket hub.
 ///
@@ -24,6 +26,11 @@ import '../models/waiter.dart';
 class WaiterNetworkService {
   final Waiter Function() selfProvider;
   final int preferredPort;
+  /// Application-layer auth — signs every outgoing message and
+  /// verifies every incoming one. Optional so unit tests / pre-login
+  /// boot don't have to wire one up; in production the locator
+  /// always supplies one.
+  final MeshAuthService? auth;
 
   HttpServer? _server;
   int _boundPort = 0;
@@ -41,6 +48,20 @@ class WaiterNetworkService {
   final StreamController<WireMessage> _incoming =
       StreamController<WireMessage>.broadcast();
 
+  /// Bounded LRU of recently-seen WireMessage IDs. A peer flapping its
+  /// WS connection or a multicast bouncing off two interfaces can land
+  /// the same message twice; without dedup, listeners would double-
+  /// process it (a duplicate kitchen ticket, a phantom paymentPending,
+  /// a second pickup-claim ack). Capped at [_seenIdLimit] so the set
+  /// can't grow unbounded over a long shift.
+  static const int _seenIdLimit = 512;
+  final LinkedHashSet<String> _seenMessageIds = LinkedHashSet<String>();
+  // Inbound channels that haven't sent HELLO yet — closed after the
+  // handshake timeout fires (MESH-5). A rogue half-open peer would
+  // otherwise tie up server file descriptors until the roster sweep.
+  static const Duration _helloTimeout = Duration(seconds: 5);
+  final Map<_PeerConnection, Timer> _helloTimers = {};
+
   Stream<WireMessage> get incoming => _incoming.stream;
 
   /// Port we are actually bound to — needed for the mDNS advertisement.
@@ -49,6 +70,7 @@ class WaiterNetworkService {
   WaiterNetworkService({
     required this.selfProvider,
     this.preferredPort = 47231,
+    this.auth,
   });
 
   // ---------------------------------------------------------------------------
@@ -158,14 +180,62 @@ class WaiterNetworkService {
     // Index by whatever id we have so duplicate connects are avoided.
     if (knownPeerId != null) _peers[knownPeerId] = conn;
 
+    // Inbound channels must HELLO promptly. A rogue or flapping peer
+    // that opens a TCP connection and stays silent would otherwise sit
+    // open until the controller's ~55s roster sweep — multiplied by
+    // many such half-open connections, that exhausts server FDs and
+    // blocks legitimate waiters from connecting. Outbound channels are
+    // safe (we control them and send HELLO immediately in
+    // connectToPeer), so the timer only arms for inbound.
+    if (inbound) {
+      _helloTimers[conn] = Timer(_helloTimeout, () {
+        _helloTimers.remove(conn);
+        if (conn.peerId != null) return; // HELLO arrived
+        debugPrint(
+          '⏱ Closing inbound WS that never sent HELLO within '
+          '${_helloTimeout.inSeconds}s',
+        );
+        _dropConnection(conn);
+      });
+    }
+
     channel.stream.listen(
       (raw) {
         if (raw is! String) return;
+        // App-layer auth check BEFORE we even parse the envelope —
+        // a forged message with a bad MAC is dropped silently so it
+        // can't pollute the dedup cache or trigger any handler. The
+        // service accepts unsigned messages during the pre-login
+        // boot window (when both sides haven't hydrated yet) so a
+        // freshly-launched mesh doesn't deadlock on its own auth.
+        if (auth != null && !auth!.verifyRaw(raw)) {
+          debugPrint('🚫 Waiter mesh: dropping unsigned/forged message');
+          return;
+        }
         final msg = WireMessage.tryDecode(raw);
         if (msg == null) return;
 
+        // Drop replays / multicast bounces. A peer that flaps its WS
+        // can re-emit the same message; without this guard, listeners
+        // would double-process and produce phantom kitchen tickets,
+        // duplicate paymentPending broadcasts, and double pickup-acks.
+        // We keep the most recent _seenIdLimit ids in insertion order
+        // so the cap also acts as a sliding window — old entries are
+        // evicted when the set grows past the limit.
+        if (_seenMessageIds.contains(msg.id)) {
+          return;
+        }
+        _seenMessageIds.add(msg.id);
+        if (_seenMessageIds.length > _seenIdLimit) {
+          // Evict oldest. LinkedHashSet keeps insertion order.
+          final oldest = _seenMessageIds.first;
+          _seenMessageIds.remove(oldest);
+        }
+
         // On HELLO we lock the peer id to this connection.
         if (msg.type == WireMessageType.hello) {
+          // HELLO arrived → cancel the inbound timeout.
+          _helloTimers.remove(conn)?.cancel();
           if (conn.peerId == null) {
             conn.peerId = msg.senderId;
             // Close any stale prior connection to the same peer so we
@@ -199,6 +269,16 @@ class WaiterNetworkService {
     // a second HELLO would duplicate. Reply only after receiving HELLO.
   }
 
+  /// Wire-encode + sign a message in one place so every outbound
+  /// path (HELLO, ACK, broadcast, sendTo) gets the MAC the receiver
+  /// expects. When [auth] is null (test wiring or pre-locator boot),
+  /// falls back to the unsigned encoding the receiver also accepts
+  /// in its boot window.
+  String _encodeForWire(WireMessage msg) {
+    final a = auth;
+    return a != null ? a.signMessage(msg) : msg.encode();
+  }
+
   void _sendHandshake(WebSocketChannel ch) {
     final me = selfProvider();
     final hello = WireMessage(
@@ -211,7 +291,7 @@ class WaiterNetworkService {
       },
     );
     try {
-      ch.sink.add(hello.encode());
+      ch.sink.add(_encodeForWire(hello));
     } catch (_) {}
   }
 
@@ -225,11 +305,12 @@ class WaiterNetworkService {
       data: {'ref': original.id},
     );
     try {
-      ch.sink.add(ack.encode());
+      ch.sink.add(_encodeForWire(ack));
     } catch (_) {}
   }
 
   void _dropConnection(_PeerConnection conn) {
+    _helloTimers.remove(conn)?.cancel();
     try {
       conn.channel.sink.close();
     } catch (_) {}
@@ -262,7 +343,7 @@ class WaiterNetworkService {
 
   /// Fan-out a message to every connected peer.
   void broadcast(WireMessage msg) {
-    final encoded = msg.encode();
+    final encoded = _encodeForWire(msg);
     for (final conn in _peers.values.toList(growable: false)) {
       try {
         conn.channel.sink.add(encoded);
@@ -275,7 +356,7 @@ class WaiterNetworkService {
     final conn = _peers[peerId];
     if (conn == null) return;
     try {
-      conn.channel.sink.add(msg.encode());
+      conn.channel.sink.add(_encodeForWire(msg));
     } catch (_) {}
   }
 
@@ -292,6 +373,11 @@ class WaiterNetworkService {
       t.cancel();
     }
     _reconnectTimers.clear();
+    for (final t in _helloTimers.values) {
+      t.cancel();
+    }
+    _helloTimers.clear();
+    _seenMessageIds.clear();
     _lastKnownAddresses.clear();
     for (final conn in _peers.values.toList(growable: false)) {
       _dropConnection(conn);

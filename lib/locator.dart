@@ -19,6 +19,7 @@ import 'package:hermosa_pos/services/print_audit_service.dart';
 import 'package:hermosa_pos/services/display_app_service.dart';
 import 'package:hermosa_pos/services/presentation_service.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
+import 'package:hermosa_pos/services/salon_invoice_events.dart';
 import 'package:hermosa_pos/services/cashier_sound_service.dart';
 import 'package:hermosa_pos/services/kds_meal_availability_service.dart';
 import 'package:hermosa_pos/services/invoice_html_pdf_service.dart';
@@ -34,6 +35,7 @@ import 'package:hermosa_pos/waiter_module/services/waiter_print_dispatcher.dart'
 import 'package:hermosa_pos/waiter_module/services/waiter_cart_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_config_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_controller.dart';
+import 'package:hermosa_pos/waiter_module/services/mesh_auth_service.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_kitchen_bridge.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_message_store.dart';
 import 'package:hermosa_pos/waiter_module/services/waiter_notification_service.dart';
@@ -58,6 +60,7 @@ void setupLocator() {
 
   // Common Services
   registerIfNeeded<CacheService>(() => CacheService());
+  registerIfNeeded<SalonInvoiceEvents>(() => SalonInvoiceEvents());
 
   // Offline Services
   registerIfNeeded<OfflineDatabaseService>(() => OfflineDatabaseService());
@@ -116,6 +119,7 @@ void setupLocator() {
   registerIfNeeded<NearPayService>(() => NearPayService());
 
   // ─── Waiter module ───
+  registerIfNeeded<MeshAuthService>(() => MeshAuthService());
   registerIfNeeded<WaiterSessionService>(() => WaiterSessionService());
   registerIfNeeded<WaiterRosterService>(() => WaiterRosterService());
   registerIfNeeded<WaiterMessageStore>(() => WaiterMessageStore());

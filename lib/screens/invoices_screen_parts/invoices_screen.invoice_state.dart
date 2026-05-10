@@ -15,6 +15,7 @@ extension InvoicesScreenInvoiceState on _InvoicesScreenState {
       var receiptData =
           _buildReceiptDataFromInvoiceDetails(invoiceDetails, invoice.id);
       receiptData = await _ensureReceiptLogo(receiptData, invoiceDetails);
+      receiptData = await _ensureClientInfo(receiptData, invoiceDetails);
 
       if (!mounted) return;
       await InvoicePreviewHelper.open(

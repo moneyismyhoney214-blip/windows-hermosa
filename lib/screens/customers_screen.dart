@@ -341,6 +341,13 @@ class _CustomerCard extends StatelessWidget {
         color: context.appCardBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: context.appBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -359,12 +366,46 @@ class _CustomerCard extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  customer.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        customer.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                    ),
+                    if ((customer.type ?? '') == 'company') ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: const Color(0xFFFED7AA)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(LucideIcons.building2,
+                                size: 12, color: Color(0xFFC2410C)),
+                            const SizedBox(width: 4),
+                            Text(
+                              translationService.t('type_company'),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFFC2410C),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               IconButton(
@@ -434,7 +475,10 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
 
   late TextEditingController _nameController;
   late TextEditingController _mobileController;
+  late TextEditingController _taxNumberController;
+  late TextEditingController _commercialRegisterController;
   late CountryOption _country;
+  String _type = 'individual';
 
   bool _isLoading = false;
 
@@ -447,6 +491,12 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.customer?.name);
     _mobileController = TextEditingController(text: widget.customer?.mobile);
+    _taxNumberController =
+        TextEditingController(text: widget.customer?.taxNumber);
+    _commercialRegisterController =
+        TextEditingController(text: widget.customer?.commercialRegister);
+    final existingType = (widget.customer?.type ?? '').trim();
+    _type = existingType == 'company' ? 'company' : 'individual';
 
     // Resolve initial country: if the existing mobile carries a known
     // dial prefix, match it; otherwise fall back to the active branch.
@@ -467,6 +517,8 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
   void dispose() {
     _nameController.dispose();
     _mobileController.dispose();
+    _taxNumberController.dispose();
+    _commercialRegisterController.dispose();
     super.dispose();
   }
 
@@ -475,7 +527,6 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
 
     setState(() => _isLoading = true);
 
-    final existingType = (widget.customer?.type ?? '').trim();
     final normalizedMobile = whatsAppService.normalizePhone(
       _mobileController.text.trim(),
       countryCodeOverride: _country.areaCode,
@@ -487,8 +538,15 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
           : normalizedMobile,
       'country_id': '${_country.value}',
       'city_id': '1', // Default
-      'type': existingType.isNotEmpty ? existingType : 'individual',
+      'type': _type,
     };
+    if (_type == 'company') {
+      data['tax_number'] = _taxNumberController.text.trim();
+      data['commercial_register'] = _commercialRegisterController.text.trim();
+    } else {
+      data['tax_number'] = '';
+      data['commercial_register'] = '';
+    }
 
     try {
       if (widget.customer != null) {
@@ -614,6 +672,22 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 20),
+                _buildTypeSelector(),
+                if (_type == 'company') ...[
+                  const SizedBox(height: 16),
+                  _buildTextField(
+                    controller: _taxNumberController,
+                    label: _t('tax_number'),
+                    hint: _t('tax_number_hint'),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildTextField(
+                    controller: _commercialRegisterController,
+                    label: _t('commercial_register'),
+                    hint: _t('commercial_register_hint'),
+                  ),
+                ],
                 const SizedBox(height: 32),
                 isCompact
                     ? Column(
@@ -692,6 +766,79 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTypeSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_t('customer_type'),
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _buildTypeChip(
+                icon: LucideIcons.user,
+                label: _t('type_individual'),
+                value: 'individual',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildTypeChip(
+                icon: LucideIcons.building2,
+                label: _t('type_company'),
+                value: 'company',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTypeChip({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    final selected = _type == value;
+    const orange = Color(0xFFF58220);
+    return InkWell(
+      onTap: () => setState(() => _type = value),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFFFF7ED) : context.appSurfaceAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? orange : const Color(0xFFE2E8F0),
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon,
+                size: 18, color: selected ? orange : Colors.grey.shade700),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: selected ? orange : Colors.grey.shade800,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

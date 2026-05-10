@@ -18,7 +18,6 @@ import '../../services/api/auth_service.dart';
 import '../../services/api/branch_service.dart';
 import '../../services/api/order_service.dart';
 import '../../services/api/base_client.dart';
-import '../../services/invoice_html_pdf_service.dart';
 import '../models/waiter_table_event.dart';
 
 /// Result of a completed bill flow.
@@ -39,7 +38,6 @@ class WaiterBillResult {
   final String? errorMessage;
   final String? paymentMethod;
   final String? transactionId;
-  final String? receiptPdfPath;
 
   const WaiterBillResult.success({
     required this.bookingId,
@@ -48,7 +46,6 @@ class WaiterBillResult {
     this.dailyOrderNumber,
     this.paymentMethod,
     this.transactionId,
-    this.receiptPdfPath,
   })  : success = true,
         errorMessage = null;
 
@@ -60,8 +57,7 @@ class WaiterBillResult {
     this.dailyOrderNumber,
   })  : success = false,
         paymentMethod = null,
-        transactionId = null,
-        receiptPdfPath = null;
+        transactionId = null;
 }
 
 /// Orchestrates the waiter-side billing:
@@ -77,7 +73,6 @@ class WaiterBillingService {
   final AuthService _authService;
   final BranchService _branchService;
   final NearPayService _nearPay;
-  final InvoiceHtmlPdfService _invoicePdf;
 
   /// Cached copy of the branch-enabled pay methods, refreshed when the
   /// waiter opens the order screen.
@@ -111,12 +106,20 @@ class WaiterBillingService {
     AuthService? authService,
     BranchService? branchService,
     NearPayService? nearPay,
-    InvoiceHtmlPdfService? invoicePdf,
   })  : _orderService = orderService ?? getIt<OrderService>(),
         _authService = authService ?? getIt<AuthService>(),
         _branchService = branchService ?? getIt<BranchService>(),
-        _nearPay = nearPay ?? getIt<NearPayService>(),
-        _invoicePdf = invoicePdf ?? getIt<InvoiceHtmlPdfService>();
+        _nearPay = nearPay ?? getIt<NearPayService>();
+
+  /// Wipe per-session pay-method + tax caches. Called on signout so a
+  /// different waiter signing in later doesn't inherit the previous
+  /// shift's branch-specific pay methods (e.g. card option still
+  /// visible on a cash-only branch the new waiter joined).
+  void clearSessionCaches() {
+    _payMethodsCache = null;
+    _taxRate = 0.0;
+    _hasTax = false;
+  }
 
   // ---------------------------------------------------------------------------
   // Profile helpers
@@ -878,17 +881,6 @@ class WaiterBillingService {
         }
       }
 
-      // ─── 5. Receipt PDF (best-effort) ────────────────────────────────
-      String? receiptPath;
-      if (invoiceId != null) {
-        try {
-          onStatus?.call('printing_receipt');
-          receiptPath = await _invoicePdf.generatePdfFromInvoice(invoiceId);
-        } catch (e) {
-          debugPrint('⚠️ Receipt PDF generation failed: $e');
-        }
-      }
-
       onStatus?.call('done');
       return WaiterBillResult.success(
         bookingId: bookingId,
@@ -897,7 +889,6 @@ class WaiterBillingService {
         dailyOrderNumber: dailyOrderNumber,
         paymentMethod: primaryMethod,
         transactionId: transactionId,
-        receiptPdfPath: receiptPath,
       );
     } catch (e, st) {
       debugPrint('⚠️ Waiter bill flow failed: $e');
@@ -1003,14 +994,34 @@ class WaiterBillingService {
       ];
     }
     // Close rounding gap on the last row so pays sum == invoiceTotal.
+    // Bound the adjustment: a tiny rounding correction is fine, but a
+    // large negative diff (over-tendered split that drags the last row
+    // below zero) is a UI/data bug — don't silently send a negative or
+    // overflowing amount to the backend. Surface a fallback that keeps
+    // the original tenders, so the caller sees the 422 from the backend
+    // and can prompt the cashier to fix the split.
     final diff = round2(invoiceTotal - sum);
     if (diff.abs() >= 0.01) {
       final last = out.last;
-      final adjusted = round2(((last['amount'] as num).toDouble()) + diff);
-      out[out.length - 1] = {
-        ...last,
-        'amount': toBackendAmount(adjusted),
-      };
+      final lastAmount = (last['amount'] as num).toDouble();
+      final adjusted = round2(lastAmount + diff);
+      // Reject adjustments that would make the row non-positive or push
+      // it more than 100% above its original value (sign of over-split,
+      // not a normal rounding gap).
+      final ratio = lastAmount > 0 ? adjusted / lastAmount : 0.0;
+      if (adjusted <= 0 || ratio > 2.0 || ratio < -1.0) {
+        debugPrint(
+          '⚠️ buildUpdatePaysPayload: refusing nonsensical last-row adjust '
+          'lastAmount=$lastAmount diff=$diff adjusted=$adjusted '
+          '(over-tender or negative). Keeping original split — backend '
+          'will surface the validation error.',
+        );
+      } else {
+        out[out.length - 1] = {
+          ...last,
+          'amount': toBackendAmount(adjusted),
+        };
+      }
     }
     return out;
   }

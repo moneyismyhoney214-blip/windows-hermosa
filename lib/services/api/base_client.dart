@@ -100,11 +100,35 @@ class BaseClient {
           errorString.contains('connection closed') ||
               errorString.contains('connection closed before full header');
 
+      // Backend returns HTTP 422 with body `"message":"Too Many Attempts."`
+      // when the per-route rate limiter trips (it's a Laravel throttle that
+      // bursts on the salon employee/service endpoints). Treat it like a
+      // transient error and retry with exponential backoff so the cashier
+      // sees a tiny pause instead of a stack of red banners.
+      final isRateLimited = e is ApiException &&
+          e.statusCode == 422 &&
+          (e.message.toLowerCase().contains('too many attempts') ||
+              (e.userMessage ?? '').toLowerCase().contains('too many attempts'));
+
       if (isConnectionClosedError && attempt < _HttpConfig.maxRetries) {
         if (kDebugMode) debugPrint(
             '⚠️ Connection closed error detected, retrying... (attempt ${attempt + 1})');
         _recreateClient();
         await Future.delayed(const Duration(milliseconds: 500));
+        return _executeWithRetry(
+          request,
+          endpoint: endpoint,
+          method: method,
+          attempt: attempt + 1,
+        );
+      }
+
+      if (isRateLimited && attempt < _HttpConfig.maxRetries) {
+        // Exponential backoff: 800ms, 1600ms, 3200ms.
+        final delayMs = 800 * (1 << attempt);
+        if (kDebugMode) debugPrint(
+            '⏳ Rate limited (Too Many Attempts), backing off ${delayMs}ms… (attempt ${attempt + 1})');
+        await Future.delayed(Duration(milliseconds: delayMs));
         return _executeWithRetry(
           request,
           endpoint: endpoint,

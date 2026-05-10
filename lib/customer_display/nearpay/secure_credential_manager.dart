@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 /// Fetches terminal credentials from secure cloud storage instead of hardcoding
 class SecureCredentialManager {
   static const String _credentialsEndpoint =
-      'https://portal.hermosaapp.com/v1/terminal/credentials';
+      'https://api.hermosaapp.com/v1/terminal/credentials';
   static const Duration _cacheDuration = Duration(hours: 6);
 
   Map<String, dynamic>? _cachedCredentials;

@@ -116,7 +116,9 @@ class WhatsAppService extends ChangeNotifier {
 
   static const String _storageKey = 'whatsapp_wawp_config_v1';
   static const String _apiEndpoint = 'https://api.wawp.net/v2/send/text';
+  static const String _pdfEndpoint = 'https://api.wawp.net/v2/send/pdf';
   static const Duration _apiTimeout = Duration(seconds: 12);
+  static const Duration _mediaTimeout = Duration(seconds: 25);
 
   WhatsAppConfig _config = const WhatsAppConfig();
   WhatsAppConfig get config => _config;
@@ -319,6 +321,64 @@ class WhatsAppService extends ChangeNotifier {
     return _openWhatsAppDeepLink(phone, message);
   }
 
+  /// Send an invoice PDF directly through WAWP — same architecture as
+  /// [sendTableReady]: app talks to WAWP without going through the
+  /// backend. Caller supplies a publicly reachable [pdfUrl] (WAWP fetches
+  /// it server-side, so a localhost path or auth-gated URL won't work).
+  ///
+  /// Falls through to a `wa.me` deep link with the PDF link as text when
+  /// the API call fails so the host can finish the send manually.
+  /// Either [pdfBytes] (preferred — sends inline base64) or [pdfUrl] (the
+  /// public URL path) MUST be set. Bytes win when both are provided.
+  ///
+  /// Bytes path: WAWP receives the document directly in the request body
+  /// as base64 — no public hosting required. Recommended whenever the PDF
+  /// is generated client-side ([InvoiceHtmlPdfService]) so we don't depend
+  /// on a backend upload step that may or may not exist.
+  ///
+  /// URL path: WAWP fetches the PDF server-side, so the URL must be
+  /// publicly reachable (no auth headers, no localhost).
+  Future<WhatsAppSendResult> sendInvoicePdf({
+    required String rawPhone,
+    required String caption,
+    Uint8List? pdfBytes,
+    String? pdfUrl,
+    String filename = 'invoice.pdf',
+    String? countryCodeOverride,
+  }) async {
+    final phone = normalizePhone(
+      rawPhone,
+      countryCodeOverride: countryCodeOverride,
+    );
+    if (phone.isEmpty) {
+      return const WhatsAppSendResult.failure('invalid_phone');
+    }
+    final hasBytes = pdfBytes != null && pdfBytes.isNotEmpty;
+    final hasUrl = pdfUrl != null && pdfUrl.trim().isNotEmpty;
+    if (!hasBytes && !hasUrl) {
+      return const WhatsAppSendResult.failure('missing_pdf_payload');
+    }
+
+    if (_config.isApiReady) {
+      final apiResult = await _sendPdfViaWawp(
+        phone: phone,
+        pdfBytes: hasBytes ? pdfBytes : null,
+        pdfUrl: hasBytes ? null : pdfUrl!.trim(),
+        filename: filename,
+        caption: caption,
+      );
+      if (apiResult.ok) return apiResult;
+    }
+    // Fallback: open WhatsApp with caption (and the URL when we have one)
+    // so the host can attach manually if the API leg failed. We don't
+    // include the base64 blob in the deep link — it would never fit.
+    final trimmedUrl = pdfUrl?.trim() ?? '';
+    final deepLinkBody = hasUrl
+        ? (caption.trim().isEmpty ? trimmedUrl : '$caption\n$trimmedUrl')
+        : caption;
+    return _openWhatsAppDeepLink(phone, deepLinkBody);
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
@@ -371,6 +431,80 @@ class WhatsAppService extends ChangeNotifier {
     } catch (e, st) {
       developer.log(
         'WhatsAppService: WAWP call threw — falling through to deep link',
+        error: e,
+        stackTrace: st,
+      );
+      return const WhatsAppSendResult.failure('wawp_exception');
+    }
+  }
+
+  Future<WhatsAppSendResult> _sendPdfViaWawp({
+    required String phone,
+    required String filename,
+    required String caption,
+    Uint8List? pdfBytes,
+    String? pdfUrl,
+  }) async {
+    // V2 PDF endpoint expects credentials on the query string and the
+    // file payload nested under a `file` object — same structure as the
+    // image/document endpoints.
+    final uri = Uri.parse(_pdfEndpoint).replace(queryParameters: {
+      'instance_id': _config.instanceId ?? '',
+      'access_token': _config.accessToken ?? '',
+    });
+    final filePayload = pdfBytes != null && pdfBytes.isNotEmpty
+        ? {
+            'data': base64Encode(pdfBytes),
+            'filename': filename,
+            'mimetype': 'application/pdf',
+          }
+        : {
+            'url': pdfUrl,
+            'filename': filename,
+            'mimetype': 'application/pdf',
+          };
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'instance_id': _config.instanceId,
+              'access_token': _config.accessToken,
+              'chatId': phone,
+              'file': filePayload,
+              'caption': caption,
+            }),
+          )
+          .timeout(_mediaTimeout);
+
+      final statusOk = response.statusCode >= 200 && response.statusCode < 300;
+      if (!statusOk) {
+        developer.log(
+          'WhatsAppService: WAWP PDF returned ${response.statusCode} — ${response.body}',
+        );
+        return WhatsAppSendResult.failure('wawp_http_${response.statusCode}');
+      }
+      try {
+        final body = jsonDecode(response.body);
+        if (body is Map<String, dynamic>) {
+          final status = (body['status'] ?? body['success'])?.toString();
+          if (status != null &&
+              (status == 'false' || status == 'error' || status == '0')) {
+            final reason = body['message']?.toString() ?? 'wawp_body_error';
+            developer.log('WhatsAppService: WAWP PDF body error — $reason');
+            return WhatsAppSendResult.failure(reason);
+          }
+        }
+      } catch (_) {
+        // Non-JSON 2xx — treat as success.
+      }
+      return const WhatsAppSendResult.apiOk();
+    } on TimeoutException {
+      return const WhatsAppSendResult.failure('wawp_timeout');
+    } catch (e, st) {
+      developer.log(
+        'WhatsAppService: WAWP PDF call threw',
         error: e,
         stackTrace: st,
       );

@@ -1,19 +1,30 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
-import 'package:flutter_html_to_pdf_plus/flutter_html_to_pdf_plus.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_html_to_pdf_plus/flutter_html_to_pdf_plus.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:screenshot/screenshot.dart';
 
 import '../models.dart';
+import '../models/receipt_data.dart';
+import '../widgets/invoice_print_widget.dart';
 import '../locator.dart';
 import 'api/api_constants.dart';
 import 'api/branch_service.dart';
 import 'api/device_service.dart';
 import 'api/order_service.dart';
 import 'language_service.dart';
+import 'printer_language_settings_service.dart';
 import 'printer_role_registry.dart';
+import 'receipt_addon_extractor.dart';
 
 class InvoiceHtmlPdfService {
   final OrderService _orderService = getIt<OrderService>();
@@ -48,24 +59,597 @@ class InvoiceHtmlPdfService {
       );
       return file.path;
     } on MissingPluginException {
-      // Desktop Linux doesn't provide flutter_html_to_pdf implementation.
-      return _writeHtmlFallback(
+      // flutter_html_to_pdf_plus ships native code only for Android/iOS,
+      // so on Linux/macOS/Windows desktop we fall through to: (1) headless
+      // Chromium for pixel-perfect output, then (2) a dart-native
+      // [pw.Document] built directly from the structured model so the
+      // pipeline stays self-contained — no system browser needed. HTML
+      // is kept as the last-resort path only because the print preview
+      // screen still works with it; callers like the WhatsApp dispatcher
+      // reject HTML output via a `%PDF-` magic check.
+      return _desktopPdfFallback(
         outputDirPath: outputDir.path,
         fileName: fileName,
         html: html,
+        model: model,
+        paperWidthMm: resolvedPaperWidthMm,
       );
     } catch (e) {
       final lower = e.toString().toLowerCase();
       if (lower.contains('missingpluginexception') ||
           lower.contains(
               'no implementation found for method converthtmltopdf')) {
-        return _writeHtmlFallback(
+        return _desktopPdfFallback(
           outputDirPath: outputDir.path,
           fileName: fileName,
           html: html,
+          model: model,
+          paperWidthMm: resolvedPaperWidthMm,
         );
       }
       rethrow;
+    }
+  }
+
+  /// Headless-Chromium fallback for desktop hosts where the html→pdf
+  /// plugin is unavailable. Tries common binary names; on success returns
+  /// the generated `.pdf` path so callers (notably the WhatsApp
+  /// dispatcher) see real PDF bytes.
+  ///
+  /// When Chromium isn't available the chain falls through to a
+  /// dart-native [pw.Document] built from the [_PrintInvoiceModel] (no
+  /// external binaries required — works on every desktop platform out
+  /// of the box). The HTML path is kept as the absolute last resort so
+  /// the print preview screen still renders, but callers like the
+  /// WhatsApp dispatcher reject HTML output via a `%PDF-` magic check.
+  Future<String> _desktopPdfFallback({
+    required String outputDirPath,
+    required String fileName,
+    required String html,
+    _PrintInvoiceModel? model,
+    int? paperWidthMm,
+  }) async {
+    final chromiumPath = await _tryChromiumHtmlToPdf(
+      outputDirPath: outputDirPath,
+      fileName: fileName,
+      html: html,
+    );
+    if (chromiumPath != null) return chromiumPath;
+
+    // First desktop-PDF tier: render the HTML through `HtmlWidget` and
+    // capture it via `ScreenshotController`, then wrap the PNG in a
+    // pw.Document. We feed [InvoicePrintWidget] (the same widget the
+    // cashier preview uses) so the WhatsApp PDF matches the preview
+    // pixel-for-pixel. Works on Linux/Windows/macOS without any system
+    // browser.
+    final capturedPath = await _tryHtmlScreenshotPdf(
+      outputDirPath: outputDirPath,
+      fileName: fileName,
+      html: html,
+      paperWidthMm: paperWidthMm,
+      model: model,
+    );
+    if (capturedPath != null) return capturedPath;
+
+    // Second tier: a fully dart-native pw.Document built from the
+    // structured model. Lighter visual fidelity, but it works even when
+    // the screenshot pipeline trips over an unsupported HTML feature.
+    if (model != null) {
+      try {
+        return await _dartNativePdfFromModel(
+          model: model,
+          outputDirPath: outputDirPath,
+          fileName: fileName,
+          paperWidthMm: paperWidthMm,
+        );
+      } catch (e, st) {
+        // Surface the error so it shows up in flutter logs alongside the
+        // dispatcher's own trace, but keep the HTML fallback going so
+        // print preview never hard-fails.
+        // ignore: avoid_print
+        print('⚠️ _dartNativePdfFromModel threw: $e\n$st');
+      }
+    }
+    return _writeHtmlFallback(
+      outputDirPath: outputDirPath,
+      fileName: fileName,
+      html: html,
+    );
+  }
+
+  /// Renders [InvoicePrintWidget] off-screen against the same
+  /// [OrderReceiptData] the cashier preview consumes, captures it as a
+  /// PNG via [ScreenshotController.captureFromWidget], and wraps the
+  /// PNG in a single-page pw.Document. Returns the saved `.pdf` path on
+  /// success or `null` so the caller can fall through to the next
+  /// desktop tier.
+  ///
+  /// Using `InvoicePrintWidget` (rather than `HtmlWidget(html)`) keeps
+  /// the WhatsApp PDF visually identical to what the cashier sees in
+  /// `_BillPreview` / `InvoiceDetailsDialog` — those screens render the
+  /// same widget tree from the same data.
+  Future<String?> _tryHtmlScreenshotPdf({
+    required String outputDirPath,
+    required String fileName,
+    required String html,
+    int? paperWidthMm,
+    _PrintInvoiceModel? model,
+  }) async {
+    try {
+      final widthMm =
+          (paperWidthMm == null || paperWidthMm <= 0) ? 80 : paperWidthMm;
+      // The on-screen preview clamps to 450 logical px at 80mm. Match
+      // that width so the rendered widget lays out exactly like the
+      // preview (font sizes, line wrap, table column widths all derive
+      // from the SizedBox width).
+      final captureWidth = 450.0;
+      // Canvas height is intentionally generous — any single invoice
+      // fits within ~3000px even with addons + many items. Empty
+      // bottom whitespace is trimmed visually because the PDF page
+      // size is computed from the same height; the customer just sees
+      // a tall thermal-receipt-style PDF.
+      final captureHeight = 3500.0;
+      final captureSize = Size(captureWidth, captureHeight);
+
+      final receiptData =
+          model != null ? _mapModelToReceiptData(model) : null;
+      if (receiptData == null) return null;
+
+      final pri = printerLanguageSettings.primary;
+      final sec = printerLanguageSettings.secondary;
+      final allow = printerLanguageSettings.allowSecondary;
+
+      final controller = ScreenshotController();
+      // captureFromWidget renders off-screen WITHOUT a host View, so a
+      // bare MaterialApp explodes on `No MediaQuery widget ancestor`.
+      // Provide every InheritedWidget the print widget tree depends on
+      // (MediaQuery / Directionality / DefaultTextStyle / Theme) and
+      // skip Scaffold/MaterialApp entirely.
+      final pngBytes = await controller.captureFromWidget(
+        MediaQuery(
+          // Match the canvas size so RenderPositionedBox aligns the
+          // widget against the top-left without center-cropping when
+          // the invoice is taller than the default screen.
+          data: MediaQueryData(
+            size: captureSize,
+            devicePixelRatio: 1.0,
+            textScaler: const TextScaler.linear(1.0),
+          ),
+          child: Directionality(
+            textDirection: ui.TextDirection.rtl,
+            child: DefaultTextStyle(
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 14,
+                fontFamily: 'Roboto',
+                decoration: TextDecoration.none,
+              ),
+              child: Theme(
+                data: ThemeData(
+                  scaffoldBackgroundColor: Colors.white,
+                  fontFamily: 'Roboto',
+                ),
+                child: Material(
+                  color: Colors.white,
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: SizedBox(
+                      width: captureWidth,
+                      child: InvoicePrintWidget(
+                        data: receiptData,
+                        paperWidthMm: widthMm,
+                        primaryLang: pri,
+                        secondaryLang: sec,
+                        allowSecondary: allow,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        pixelRatio: 2.0,
+        delay: const Duration(milliseconds: 80),
+        targetSize: captureSize,
+      );
+
+      if (pngBytes.isEmpty) return null;
+
+      // Wrap the captured PNG in a tall single-page PDF whose aspect
+      // matches the canvas. 1 logical px ≈ 0.75 PDF points (PDF uses
+      // 72dpi vs Flutter's 96dpi).
+      final pdf = pw.Document();
+      final image = pw.MemoryImage(pngBytes);
+      final pdfWidthPt = captureWidth * 0.75;
+      final pdfHeightPt = captureHeight * 0.75;
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat(pdfWidthPt, pdfHeightPt),
+          margin: pw.EdgeInsets.zero,
+          build: (context) => pw.Image(image, fit: pw.BoxFit.fitWidth),
+        ),
+      );
+
+      final pdfPath = '$outputDirPath/$fileName.pdf';
+      final outFile = File(pdfPath);
+      await outFile.writeAsBytes(await pdf.save(), flush: true);
+      return pdfPath;
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('⚠️ _tryHtmlScreenshotPdf threw: $e\n$st');
+      return null;
+    }
+  }
+
+  /// Reconcile the invoice totals using a mix of backend fields,
+  /// branch tax settings, and the items sum. Different invoice
+  /// endpoints populate different field names — some fill `total` with
+  /// the grand total and leave `grand_total` empty, others use
+  /// `total` for the pre-tax subtotal and `grand_total` for the
+  /// inclusive total. Without normalisation, `InvoicePrintWidget` can
+  /// end up showing "Total After Tax: 0" with a bogus
+  /// "Total Items Discount: -<items_sum>" line. The logic here:
+  ///
+  ///   1. Read the candidate fields directly.
+  ///   2. Take items_sum as ground truth for the line subtotal.
+  ///   3. If `grand_total` is missing, use whichever of `total` /
+  ///      `final_total` looks larger than the items_sum (= already
+  ///      includes tax) before falling back to `items_sum + tax`.
+  ///   4. If `subtotal` is missing, derive it from
+  ///      `grand - tax` when both are known, otherwise items_sum.
+  ///   5. If `tax` is missing but the difference between grand and
+  ///      subtotal is non-trivial, use that.
+  _InvoiceTotals _resolveInvoiceTotals(
+    Map<String, dynamic> invoice,
+    List<ReceiptItem> items,
+  ) {
+    double pickNum(List<String> keys) {
+      for (final key in keys) {
+        final v = invoice[key];
+        if (v is num) return v.toDouble();
+        if (v is String) {
+          final parsed = double.tryParse(v);
+          if (parsed != null) return parsed;
+        }
+      }
+      return 0;
+    }
+
+    final itemsSum = items.fold<double>(0.0, (s, item) => s + item.total);
+    final rawTotal = pickNum(['total']);
+    final rawGrand =
+        pickNum(['grand_total', 'total_incl_tax', 'final_total']);
+    final rawSubtotal =
+        pickNum(['total_excl_tax', 'subtotal', 'price_before_tax']);
+    final rawTax = pickNum(['tax', 'vat', 'tax_value']);
+
+    var totalInclVat = rawGrand;
+    if (totalInclVat <= 0) {
+      // Some legacy routes shove the grand total into `total`. Trust
+      // it when it exceeds the items sum (i.e. it has tax baked in).
+      if (rawTotal > itemsSum + 0.01) {
+        totalInclVat = rawTotal;
+      } else if (rawTotal > 0) {
+        totalInclVat = rawTotal + rawTax;
+      } else {
+        totalInclVat = itemsSum + rawTax;
+      }
+    }
+
+    var totalExclVat = rawSubtotal;
+    if (totalExclVat <= 0) {
+      if (rawTotal > 0 && rawTotal <= itemsSum + 0.01) {
+        // `total` looks like the pre-tax line total.
+        totalExclVat = rawTotal;
+      } else if (totalInclVat > 0 && rawTax > 0 &&
+          (totalInclVat - rawTax) > 0) {
+        totalExclVat = totalInclVat - rawTax;
+      } else {
+        totalExclVat = itemsSum;
+      }
+    }
+
+    var vatAmount = rawTax;
+    if (vatAmount <= 0 && totalInclVat > totalExclVat) {
+      vatAmount = totalInclVat - totalExclVat;
+    }
+
+    return _InvoiceTotals(
+      totalExclVat: totalExclVat,
+      vatAmount: vatAmount,
+      totalInclVat: totalInclVat,
+    );
+  }
+
+  /// Adapt the structured [_PrintInvoiceModel] into an
+  /// [OrderReceiptData] so we can hand it straight to
+  /// [InvoicePrintWidget] — the same widget tree the in-app preview
+  /// uses. The mapping mirrors `_mapToOrderReceiptData` in
+  /// `invoice_details_dialog.build_widgets.dart` but works against the
+  /// already-parsed model so we don't refetch.
+  OrderReceiptData _mapModelToReceiptData(_PrintInvoiceModel model) {
+    String pickStr(Map<dynamic, dynamic>? map, List<String> keys) {
+      if (map == null) return '';
+      for (final key in keys) {
+        final v = map[key]?.toString().trim();
+        if (v != null && v.isNotEmpty && v.toLowerCase() != 'null') return v;
+      }
+      return '';
+    }
+
+    double pickNum(Map<dynamic, dynamic>? map, List<String> keys) {
+      if (map == null) return 0;
+      for (final key in keys) {
+        final v = map[key];
+        if (v is num) return v.toDouble();
+        if (v is String) {
+          final parsed = double.tryParse(v);
+          if (parsed != null) return parsed;
+        }
+      }
+      return 0;
+    }
+
+    Map<String, dynamic>? asMap(dynamic v) {
+      if (v is Map<String, dynamic>) return v;
+      if (v is Map) return v.map((k, val) => MapEntry(k.toString(), val));
+      return null;
+    }
+
+    final invoice = model.invoice;
+    final branch = model.branch;
+    final seller = model.seller;
+    final envelope = model.envelope;
+    final booking = model.booking;
+    // The client record can live under several keys depending on which
+    // backend route returned the invoice (booking flow vs salons vs
+    // salons-with-bookings). Pick the first non-empty match — same
+    // pattern the dispatcher's `_fetchCustomerFromBackend` uses.
+    Map<String, dynamic> firstNonEmpty(List<Map<String, dynamic>> maps) {
+      for (final m in maps) {
+        if (m.isNotEmpty) return m;
+      }
+      return const <String, dynamic>{};
+    }
+
+    final client = firstNonEmpty([
+      model.client,
+      asMap(invoice['customer']) ?? const <String, dynamic>{},
+      asMap(booking['customer']) ?? const <String, dynamic>{},
+      asMap(envelope['customer']) ?? const <String, dynamic>{},
+      asMap(invoice['client']) ?? const <String, dynamic>{},
+    ]);
+
+    final receiptItems = model.items.map((item) {
+      final addons = extractReceiptAddonsFromItem(item);
+
+      return ReceiptItem(
+        nameAr: pickStr(item, ['service_name', 'meal_name', 'name', 'item_name']),
+        nameEn: pickStr(item, ['meal_name_en', 'name_en']),
+        quantity: pickNum(item, ['quantity', 'qty', 'count']),
+        unitPrice: pickNum(item, ['unit_price', 'meal_price', 'price']),
+        total: pickNum(item, ['total', 'amount', 'price_after_tax']),
+        addons: addons.isEmpty ? null : addons,
+        discountAmount: pickNum(item, ['discount_amount', 'discount']) > 0
+            ? pickNum(item, ['discount_amount', 'discount'])
+            : null,
+        discountPercentage: pickNum(item, ['discount_percentage']) > 0
+            ? pickNum(item, ['discount_percentage'])
+            : null,
+        discountName: pickStr(item, ['discount_name']).isEmpty
+            ? null
+            : pickStr(item, ['discount_name']),
+      );
+    }).toList(growable: false);
+
+    final paysList = (invoice['pays'] as List? ?? const [])
+        .map(asMap)
+        .where((m) => m != null)
+        .cast<Map<String, dynamic>>()
+        .map((p) {
+      final method = pickStr(p, ['pay_method', 'method', 'name']).toLowerCase();
+      final amount = pickNum(p, ['amount', 'value', 'paid', 'total']);
+      String label;
+      switch (method) {
+        case 'cash':
+        case 'نقدي':
+        case 'كاش':
+          label = 'نقدي';
+          break;
+        case 'card':
+        case 'mada':
+        case 'visa':
+        case 'بطاقة':
+          label = 'بطاقة';
+          break;
+        case 'stc':
+        case 'stc_pay':
+          label = 'STC Pay';
+          break;
+        case 'bank_transfer':
+        case 'bank':
+          label = 'تحويل بنكي';
+          break;
+        case 'wallet':
+          label = 'محفظة';
+          break;
+        case 'pay_later':
+        case 'postpaid':
+        case 'deferred':
+          label = 'الدفع بالآجل';
+          break;
+        default:
+          label = method.isEmpty ? 'نقدي' : method;
+      }
+      return ReceiptPayment(methodLabel: label, amount: amount);
+    }).toList(growable: false);
+
+    final paymentMethodLabel = paysList.isNotEmpty
+        ? paysList.map((p) => p.methodLabel).toSet().join(' - ')
+        : pickStr(invoice, ['pay_method', 'pays']);
+
+    final issueDateTime = pickStr(invoice, ['date', 'created_at']).isEmpty
+        ? '${model.date} ${model.time}'.trim()
+        : pickStr(invoice, ['date', 'created_at']);
+
+    final qrImage = model.qrImage.startsWith('data:')
+        ? model.qrImage.split(',').last
+        : model.qrImage;
+
+    final totals = _resolveInvoiceTotals(invoice, receiptItems);
+
+    return OrderReceiptData(
+      invoiceNumber: model.invoiceNumber.replaceAll('#', '').trim(),
+      issueDateTime: issueDateTime,
+      sellerNameAr:
+          pickStr(seller, ['name', 'seller_name']).isNotEmpty
+              ? pickStr(seller, ['name', 'seller_name'])
+              : pickStr(branch, ['name']),
+      sellerNameEn: pickStr(seller, ['name_en', 'seller_name_en']),
+      vatNumber: pickStr(seller, ['vat_number', 'tax_number']).isNotEmpty
+          ? pickStr(seller, ['vat_number', 'tax_number'])
+          : pickStr(branch, ['vat_number', 'tax_number']),
+      branchName: pickStr(branch, ['name', 'branch_name']),
+      items: receiptItems,
+      totalExclVat: totals.totalExclVat,
+      vatAmount: totals.vatAmount,
+      totalInclVat: totals.totalInclVat,
+      paymentMethod: paymentMethodLabel,
+      payments: paysList,
+      qrCodeBase64: qrImage,
+      zatcaQrImage: pickStr(invoice, ['zatca_qr_image']).isEmpty
+          ? null
+          : pickStr(invoice, ['zatca_qr_image']),
+      sellerLogo: pickStr(branch, ['logo', 'seller_logo']).isEmpty
+          ? pickStr(seller, ['logo'])
+          : pickStr(branch, ['logo', 'seller_logo']),
+      branchAddress: pickStr(branch, ['address']),
+      branchMobile: pickStr(branch, ['mobile', 'phone']),
+      cashierName: pickStr(invoice, ['cashier_name']).isEmpty
+          ? pickStr(envelope, ['cashier_name'])
+          : pickStr(invoice, ['cashier_name']),
+      orderType: pickStr(invoice, ['order_type']).isEmpty
+          ? null
+          : pickStr(invoice, ['order_type']),
+      orderNumber: model.orderNumber.isEmpty ? null : model.orderNumber,
+      // Customer name / phone can be either inside the resolved client
+      // map or flattened on the invoice/booking root, so try both.
+      clientName: () {
+        final fromClient = pickStr(client, ['name', 'customer_name']);
+        if (fromClient.isNotEmpty) return fromClient;
+        final fromInvoice =
+            pickStr(invoice, ['customer_name', 'client_name', 'client']);
+        if (fromInvoice.isNotEmpty) return fromInvoice;
+        final fromBooking = pickStr(booking, ['customer_name', 'client_name']);
+        return fromBooking.isEmpty ? null : fromBooking;
+      }(),
+      clientPhone: () {
+        final fromClient =
+            pickStr(client, ['mobile', 'phone', 'phone_number']);
+        if (fromClient.isNotEmpty) return fromClient;
+        final fromInvoice =
+            pickStr(invoice, ['customer_phone', 'client_phone', 'phone']);
+        if (fromInvoice.isNotEmpty) return fromInvoice;
+        final fromBooking = pickStr(booking, ['customer_phone', 'client_phone']);
+        return fromBooking.isEmpty ? null : fromBooking;
+      }(),
+      tableNumber: pickStr(invoice, ['table_number', 'table']).isEmpty
+          ? null
+          : pickStr(invoice, ['table_number', 'table']),
+      carNumber: pickStr(invoice, ['car_number']),
+      commercialRegisterNumber:
+          pickStr(seller, ['commercial_register']).isEmpty
+              ? pickStr(branch, ['commercial_register'])
+              : pickStr(seller, ['commercial_register']),
+    );
+  }
+
+  Future<String?> _tryChromiumHtmlToPdf({
+    required String outputDirPath,
+    required String fileName,
+    required String html,
+  }) async {
+    if (!Platform.isLinux && !Platform.isMacOS && !Platform.isWindows) {
+      return null;
+    }
+    final candidates = Platform.isWindows
+        ? const [
+            'chrome.exe',
+            'chromium.exe',
+            'msedge.exe',
+          ]
+        : const [
+            'chromium',
+            'chromium-browser',
+            'google-chrome',
+            'google-chrome-stable',
+            'chrome',
+            'microsoft-edge',
+          ];
+    String? binary;
+    for (final name in candidates) {
+      final found = await _which(name);
+      if (found != null) {
+        binary = found;
+        break;
+      }
+    }
+    if (binary == null) return null;
+
+    final htmlPath = '$outputDirPath/$fileName.html';
+    final pdfPath = '$outputDirPath/$fileName.pdf';
+    final htmlFile = File(htmlPath);
+    await htmlFile.writeAsString(html, flush: true);
+
+    try {
+      final result = await Process.run(binary, [
+        '--headless',
+        '--disable-gpu',
+        '--no-sandbox',
+        '--no-pdf-header-footer',
+        '--print-to-pdf=$pdfPath',
+        Uri.file(htmlPath).toString(),
+      ]).timeout(const Duration(seconds: 30));
+      // Best-effort cleanup of the source HTML — the PDF is what we keep.
+      unawaited(htmlFile.delete().catchError((_) => htmlFile));
+      final pdfFile = File(pdfPath);
+      if (!await pdfFile.exists()) return null;
+      final size = await pdfFile.length();
+      if (size <= 0) {
+        await pdfFile.delete().catchError((_) => pdfFile);
+        return null;
+      }
+      if (result.exitCode != 0) {
+        // Some Chromium builds exit non-zero even on success when DevTools
+        // chatter shows up on stderr — only fail when the PDF is missing.
+        // Fall through.
+      }
+      return pdfPath;
+    } catch (_) {
+      // Cleanup on any failure so we don't leak temp files.
+      unawaited(htmlFile.delete().catchError((_) => htmlFile));
+      unawaited(File(pdfPath).delete().catchError((_) => File(pdfPath)));
+      return null;
+    }
+  }
+
+  Future<String?> _which(String binary) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('where', [binary]);
+        if (result.exitCode != 0) return null;
+        final out = (result.stdout as String).trim();
+        if (out.isEmpty) return null;
+        return out.split('\n').first.trim();
+      }
+      final result = await Process.run('which', [binary]);
+      if (result.exitCode != 0) return null;
+      final out = (result.stdout as String).trim();
+      if (out.isEmpty) return null;
+      return out.split('\n').first.trim();
+    } catch (_) {
+      return null;
     }
   }
 
@@ -99,6 +683,312 @@ class InvoiceHtmlPdfService {
     final file = File('$outputDirPath/$fileName.html');
     await file.writeAsString(html, flush: true);
     return file.path;
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // Dart-native PDF fallback
+  //
+  // Builds a pw.Document directly from [_PrintInvoiceModel] using the
+  // pure-Dart `pdf` package. This path runs on Linux / Windows / macOS
+  // with no external binaries — every glyph is rendered by `pdf` against
+  // the bundled Arabic OTF, so it works on a fresh CI box exactly the
+  // same way it works on a developer laptop.
+  //
+  // The layout is intentionally simple (header / customer / items table /
+  // totals / QR) — pixel parity with the thermal-receipt HTML isn't
+  // required for the WhatsApp use case. The customer just needs a
+  // legible PDF copy of their invoice.
+  // ───────────────────────────────────────────────────────────────────
+
+  /// Bundled Noto Naskh Arabic TTFs. The `pdf` package's `pw.Font.ttf`
+  /// requires a TTF with a Unicode cmap to render Arabic glyphs — the
+  /// previously-shipped Alkhalil OTF threw `Cannot decode the string to
+  /// Latin1` for any Arabic text on the dart-native fallback path.
+  static const String _kArabicFontAssetRegular =
+      'assets/NotoNaskhArabic-Regular.ttf';
+  static const String _kArabicFontAssetBold =
+      'assets/NotoNaskhArabic-Bold.ttf';
+
+  /// Memoized so we don't decode the TTFs every time the WhatsApp
+  /// dispatcher runs.
+  pw.Font? _cachedArabicFont;
+  pw.Font? _cachedArabicBoldFont;
+
+  Future<pw.Font?> _loadArabicFont({bool bold = false}) async {
+    final cached = bold ? _cachedArabicBoldFont : _cachedArabicFont;
+    if (cached != null) return cached;
+    final assetPath = bold ? _kArabicFontAssetBold : _kArabicFontAssetRegular;
+    try {
+      final data = await rootBundle.load(assetPath);
+      final font = pw.Font.ttf(data);
+      if (bold) {
+        _cachedArabicBoldFont = font;
+      } else {
+        _cachedArabicFont = font;
+      }
+      return font;
+    } catch (e) {
+      // ignore: avoid_print
+      print('⚠️ Failed to load bundled Arabic font ($assetPath): $e');
+      return null;
+    }
+  }
+
+  Future<String> _dartNativePdfFromModel({
+    required _PrintInvoiceModel model,
+    required String outputDirPath,
+    required String fileName,
+    int? paperWidthMm,
+  }) async {
+    final regular = await _loadArabicFont();
+    final bold = await _loadArabicFont(bold: true);
+    final theme = (regular != null)
+        ? pw.ThemeData.withFont(
+            base: regular,
+            bold: bold ?? regular,
+            italic: regular,
+            boldItalic: bold ?? regular,
+          )
+        : pw.ThemeData();
+
+    final pdf = pw.Document(theme: theme);
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(24),
+        textDirection: pw.TextDirection.rtl,
+        build: (context) => _buildNativePdfBody(model),
+      ),
+    );
+
+    final bytes = await pdf.save();
+    final pdfPath = '$outputDirPath/$fileName.pdf';
+    final outFile = File(pdfPath);
+    await outFile.writeAsBytes(bytes, flush: true);
+    return pdfPath;
+  }
+
+  List<pw.Widget> _buildNativePdfBody(_PrintInvoiceModel model) {
+    String pickStr(Map<dynamic, dynamic>? map, List<String> keys) {
+      if (map == null) return '';
+      for (final key in keys) {
+        final v = map[key]?.toString().trim();
+        if (v != null && v.isNotEmpty && v.toLowerCase() != 'null') {
+          return v;
+        }
+      }
+      return '';
+    }
+
+    final sellerName = pickStr(model.seller, ['name', 'seller_name']);
+    final branchName = pickStr(model.branch, ['name', 'branch_name']);
+    final headerName = sellerName.isNotEmpty ? sellerName : branchName;
+    final vatNumber = pickStr(model.seller, ['vat_number', 'tax_number']);
+    final branchPhone = pickStr(model.branch, ['mobile', 'phone']);
+    final branchAddress = pickStr(model.branch, ['address']);
+    final clientName = pickStr(model.client, ['name']);
+    final clientPhone = pickStr(model.client, ['mobile', 'phone', 'phone_number']);
+    final dateLine = [model.date, model.time].where((s) => s.isNotEmpty).join(' ');
+
+    return <pw.Widget>[
+      pw.Center(
+        child: pw.Text(
+          headerName.isEmpty ? 'فاتورة' : headerName,
+          style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
+        ),
+      ),
+      if (vatNumber.isNotEmpty)
+        pw.Center(
+          child: pw.Text('الرقم الضريبي: $vatNumber',
+              style: const pw.TextStyle(fontSize: 11)),
+        ),
+      if (branchPhone.isNotEmpty)
+        pw.Center(
+          child: pw.Text('الهاتف: $branchPhone',
+              style: const pw.TextStyle(fontSize: 11)),
+        ),
+      if (branchAddress.isNotEmpty)
+        pw.Center(
+          child: pw.Text(branchAddress,
+              style: const pw.TextStyle(fontSize: 11)),
+        ),
+      pw.SizedBox(height: 8),
+      pw.Divider(thickness: 1),
+      pw.SizedBox(height: 6),
+      pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text('رقم الفاتورة: ${model.invoiceNumber}',
+              style: pw.TextStyle(
+                  fontSize: 12, fontWeight: pw.FontWeight.bold)),
+          if (dateLine.isNotEmpty)
+            pw.Text(dateLine, style: const pw.TextStyle(fontSize: 12)),
+        ],
+      ),
+      if (clientName.isNotEmpty || clientPhone.isNotEmpty) ...[
+        pw.SizedBox(height: 4),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            if (clientName.isNotEmpty)
+              pw.Text('العميل: $clientName',
+                  style: const pw.TextStyle(fontSize: 12)),
+            if (clientPhone.isNotEmpty)
+              pw.Text(clientPhone,
+                  style: const pw.TextStyle(fontSize: 12)),
+          ],
+        ),
+      ],
+      pw.SizedBox(height: 12),
+      _buildNativeItemsTable(model),
+      pw.SizedBox(height: 12),
+      _buildNativeTotals(model),
+      if (model.qrImage.isNotEmpty) ...[
+        pw.SizedBox(height: 16),
+        pw.Center(child: _buildNativeQrImage(model.qrImage) ?? pw.SizedBox()),
+      ],
+      if (model.policy.isNotEmpty) ...[
+        pw.SizedBox(height: 16),
+        pw.Divider(),
+        pw.Text(model.policy,
+            style: pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+      ],
+    ];
+  }
+
+  pw.Widget _buildNativeItemsTable(_PrintInvoiceModel model) {
+    String pickStr(Map<dynamic, dynamic> item, List<String> keys) {
+      for (final key in keys) {
+        final v = item[key]?.toString().trim();
+        if (v != null && v.isNotEmpty && v.toLowerCase() != 'null') return v;
+      }
+      return '';
+    }
+
+    final headerCells = ['الصنف', 'الكمية', 'السعر', 'الإجمالي'];
+
+    return pw.Table(
+      border: pw.TableBorder.all(width: 0.5, color: PdfColors.grey400),
+      columnWidths: const <int, pw.TableColumnWidth>{
+        0: pw.FlexColumnWidth(3.5),
+        1: pw.FlexColumnWidth(1),
+        2: pw.FlexColumnWidth(1.4),
+        3: pw.FlexColumnWidth(1.4),
+      },
+      children: [
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+          children: headerCells
+              .map((label) => _nativeTableCell(label, bold: true))
+              .toList(growable: false),
+        ),
+        ...model.items.map((rawItem) {
+          final item = rawItem;
+          final name = pickStr(item, ['item_name', 'name', 'meal_name']);
+          final qty = pickStr(item, ['quantity', 'qty', 'count']);
+          final price = pickStr(
+              item, ['meal_price', 'unit_price', 'price', 'after_offer_price']);
+          final total = pickStr(item, ['total', 'price_after_tax']);
+          return pw.TableRow(
+            children: [
+              _nativeTableCell(name),
+              _nativeTableCell(qty.isEmpty ? '1' : qty, center: true),
+              _nativeTableCell(price, center: true),
+              _nativeTableCell(total, center: true),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  pw.Widget _nativeTableCell(String text, {bool bold = false, bool center = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: 11,
+          fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+        ),
+        textAlign: center ? pw.TextAlign.center : pw.TextAlign.start,
+      ),
+    );
+  }
+
+  pw.Widget _buildNativeTotals(_PrintInvoiceModel model) {
+    String pickStr(Map<dynamic, dynamic> map, List<String> keys) {
+      for (final key in keys) {
+        final v = map[key]?.toString().trim();
+        if (v != null && v.isNotEmpty && v.toLowerCase() != 'null') return v;
+      }
+      return '';
+    }
+
+    final invoice = model.invoice;
+    final currency = model.currencyAr.isNotEmpty
+        ? model.currencyAr
+        : (model.currencyEn.isNotEmpty ? model.currencyEn : '');
+
+    final subtotal = pickStr(invoice,
+        ['total_excl_tax', 'subtotal', 'price_before_tax', 'before_tax']);
+    final tax = pickStr(invoice, ['tax', 'vat', 'tax_value']);
+    final discount = pickStr(invoice, ['discount']);
+    final grand = pickStr(invoice,
+        ['grand_total', 'total_incl_tax', 'final_total', 'total']);
+
+    pw.Widget row(String label, String value, {bool emphasis = false}) {
+      final style = pw.TextStyle(
+        fontSize: emphasis ? 14 : 12,
+        fontWeight: emphasis ? pw.FontWeight.bold : pw.FontWeight.normal,
+      );
+      return pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(vertical: 2),
+        child: pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text(label, style: style),
+            pw.Text(
+              currency.isEmpty ? value : '$value $currency',
+              style: style,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        if (subtotal.isNotEmpty) row('الإجمالي قبل الضريبة:', subtotal),
+        if (discount.isNotEmpty) row('الخصم:', discount),
+        if (tax.isNotEmpty) row('الضريبة:', tax),
+        pw.Divider(thickness: 1),
+        if (grand.isNotEmpty) row('الإجمالي النهائي:', grand, emphasis: true),
+      ],
+    );
+  }
+
+  pw.Widget? _buildNativeQrImage(String qrImage) {
+    if (qrImage.isEmpty) return null;
+    Uint8List? bytes;
+    try {
+      if (qrImage.startsWith('data:')) {
+        final commaIdx = qrImage.indexOf(',');
+        if (commaIdx <= 0) return null;
+        bytes = base64Decode(qrImage.substring(commaIdx + 1));
+      } else if (qrImage.startsWith('/') || qrImage.contains(':\\')) {
+        final file = File(qrImage);
+        if (file.existsSync()) bytes = file.readAsBytesSync();
+      } else {
+        // Assume bare base64 (some payloads strip the data URL prefix).
+        bytes = base64Decode(qrImage);
+      }
+    } catch (_) {
+      return null;
+    }
+    if (bytes == null || bytes.isEmpty) return null;
+    return pw.Image(pw.MemoryImage(bytes), width: 130, height: 130);
   }
 
   /// Returns the raw HTML string for an invoice (no file I/O).
@@ -277,7 +1167,7 @@ class InvoiceHtmlPdfService {
       mutableBranch['logo'] = resolvedLogoUrl;
     }
 
-    final client = _asMap(invoice['client']).isNotEmpty
+    var client = _asMap(invoice['client']).isNotEmpty
         ? _asMap(invoice['client'])
         : _asMap(envelope['client']);
 
@@ -300,7 +1190,26 @@ class InvoiceHtmlPdfService {
       _pick(order, const ['order_id']),
     ]);
 
-    if (booking.isEmpty && bookingId != null && bookingId.isNotEmpty) {
+    // Backend bug workaround: the invoice serializer sometimes returns
+    // `client.name="عميل عام"` and an empty mobile even when the booking
+    // has a real customer attached. The booking endpoint exposes that
+    // customer under `data.user.{name,mobile}`, so we always fetch the
+    // booking when (a) we don't have it yet, or (b) the invoice client
+    // looks like the placeholder. Mirrors `InvoiceWhatsAppDispatcher`.
+    bool clientLooksPlaceholder() {
+      if (client.isEmpty) return true;
+      final name = _firstNonEmptyString([_pick(client, const ['name'])]) ?? '';
+      final mobile = _firstNonEmptyString([
+            _pick(client, const ['mobile', 'phone', 'phone_number']),
+          ]) ??
+          '';
+      return name.isEmpty || name.trim() == 'عميل عام' || mobile.isEmpty;
+    }
+
+    final shouldFetchBooking = (booking.isEmpty || clientLooksPlaceholder()) &&
+        bookingId != null &&
+        bookingId.isNotEmpty;
+    if (shouldFetchBooking) {
       try {
         final bookingResponse =
             await _orderService.getBookingDetails(bookingId);
@@ -312,6 +1221,32 @@ class InvoiceHtmlPdfService {
         }
       } catch (_) {
         // Keep invoice-only shape when booking details are not available.
+      }
+    }
+
+    // After the booking is loaded, lift its real customer onto `client`
+    // when the invoice payload only carried the "عميل عام" placeholder.
+    if (clientLooksPlaceholder() && booking.isNotEmpty) {
+      final bookingUser = _asMap(booking['user']).isNotEmpty
+          ? _asMap(booking['user'])
+          : _asMap(booking['customer']).isNotEmpty
+              ? _asMap(booking['customer'])
+              : _asMap(booking['userable']);
+      if (bookingUser.isNotEmpty) {
+        final resolved = <String, dynamic>{
+          ...client,
+          if ((_pick(bookingUser, const ['name', 'fullname']) ?? '')
+              .toString()
+              .trim()
+              .isNotEmpty)
+            'name': _pick(bookingUser, const ['name', 'fullname']),
+          if ((_pick(bookingUser, const ['mobile', 'mobile_display', 'phone', 'phone_number']) ?? '')
+              .toString()
+              .trim()
+              .isNotEmpty)
+            'mobile': _pick(bookingUser, const ['mobile', 'mobile_display', 'phone', 'phone_number']),
+        };
+        client = resolved;
       }
     }
 
@@ -1250,7 +2185,7 @@ class InvoiceHtmlPdfService {
         }
         row.write('>');
 
-        final addons = _asMapList(item['addons']);
+        final addons = _extractItemAddonsForRender(item);
         final combos = _asMapList(item['combos']);
         final canRenderAddons = _isRestaurant(model) &&
             key == 'item_name' &&
@@ -2126,6 +3061,69 @@ class InvoiceHtmlPdfService {
         .toList();
   }
 
+  /// Locate an item's addon list across the same key variants probed by
+  /// [extractReceiptAddonsFromItem]. The HTML preview previously read only
+  /// `item['addons']`, so payloads that nested the list under
+  /// `meal_addons` / `extras` / `meal.addons` rendered the meal without its
+  /// addons even though the printer (which uses the extractor) showed them.
+  List<Map<String, dynamic>> _extractItemAddonsForRender(
+    Map<String, dynamic> item,
+  ) {
+    List<dynamic>? probe(List<String> keys) {
+      for (final source in <Map<String, dynamic>>[item, _asMap(item['meal'])]) {
+        if (source.isEmpty) continue;
+        for (final key in keys) {
+          final value = source[key];
+          if (value is List && value.isNotEmpty) return value;
+        }
+      }
+      return null;
+    }
+
+    final raw = probe(const [
+      'addons',
+      'meal_addons',
+      'extras',
+      'selected_addons',
+      'addon_options',
+    ]);
+    if (raw == null) return const [];
+
+    final translations = probe(const [
+      'addons_translations',
+      'meal_addons_translations',
+      'extras_translations',
+    ]);
+
+    final result = <Map<String, dynamic>>[];
+    for (var i = 0; i < raw.length; i++) {
+      final entry = raw[i];
+      if (entry is Map) {
+        final m = _asMap(entry);
+        if (translations != null && i < translations.length) {
+          final t = _asMap(translations[i]);
+          if (t.isNotEmpty) {
+            m.putIfAbsent('attribute', () => t['attribute'] ?? t);
+            m.putIfAbsent('option', () => t['option'] ?? t);
+          }
+        }
+        if (m.isNotEmpty) result.add(m);
+      } else if (entry is String) {
+        final display = entry.trim();
+        if (display.isEmpty) continue;
+        // Saved-invoice endpoint sometimes returns addons as plain strings
+        // ("Cooking type - Medium"). Synthesize the map shape the renderer
+        // expects so the addon still surfaces in the preview.
+        result.add(<String, dynamic>{
+          'attribute': display,
+          'option': '',
+          'total': '',
+        });
+      }
+    }
+    return result;
+  }
+
   dynamic _pick(Map<String, dynamic> map, List<String> keys) {
     for (final key in keys) {
       final value = map[key];
@@ -2496,6 +3494,22 @@ footer p {
 }
 ''';
   }
+}
+
+/// Reconciled totals for a single invoice. Produced by
+/// [InvoiceHtmlPdfService._resolveInvoiceTotals] so the WhatsApp PDF
+/// path always feeds [OrderReceiptData] non-zero, internally consistent
+/// values regardless of which invoice route the backend used.
+class _InvoiceTotals {
+  final double totalExclVat;
+  final double vatAmount;
+  final double totalInclVat;
+
+  const _InvoiceTotals({
+    required this.totalExclVat,
+    required this.vatAmount,
+    required this.totalInclVat,
+  });
 }
 
 class _PrintInvoiceModel {

@@ -298,21 +298,68 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             ? _invoiceDate
             : today;
 
-        // Build pays from the invoice's recorded payments. If we couldn't
-        // resolve any (e.g. the invoice payload didn't expose `pays`), fall
-        // back to a single cash payment for the refund total — the backend
-        // only validates "non-empty" + sum-equality on this endpoint.
-        if (_invoicePays.isNotEmpty) {
+        // The backend's pays validator wants `sum(pays.amount) ==
+        // refund total`. If we just echoed `_invoicePays` from the
+        // original invoice, the sum would be the FULL invoice total —
+        // 700 — and a partial refund of 350 would 422 with "إجمالي
+        // المدفوعات لا يساوي إجمالي الاسترجاع". Compute the actual
+        // refund amount from the selected items (with-tax `c.total`
+        // after the salon fix in `_extractCandidates`) and either scale
+        // the original payment methods proportionally or fall back to a
+        // single cash entry.
+        final refundAmount = _mode == _RefundMode.partial
+            ? _selectedItems.fold(0.0, (sum, c) => sum + c.total)
+            : (_refundAmount > 0
+                ? _refundAmount
+                : (_invoiceTotal > 0 ? _invoiceTotal : 0.0));
+
+        if (_invoicePays.isNotEmpty &&
+            (refundAmount - _invoiceTotal).abs() < 0.01) {
+          // Full refund: send the original payment breakdown verbatim so
+          // the credit note splits across the same methods (e.g. half
+          // cash, half card). Sums already match.
           refundPayload['pays'] = _invoicePays;
+        } else if (_invoicePays.isNotEmpty && _invoiceTotal > 0) {
+          // Partial refund: scale each pay method by the refund ratio so
+          // pays.sum equals refundAmount. Round to 2dp; absorb any
+          // rounding remainder into the first entry so the sum is exact.
+          final ratio = refundAmount / _invoiceTotal;
+          final scaled = <Map<String, dynamic>>[];
+          double runningSum = 0;
+          for (var i = 0; i < _invoicePays.length; i++) {
+            final p = _invoicePays[i];
+            final origAmount = (p['amount'] as num?)?.toDouble() ?? 0.0;
+            var scaledAmount = double.parse(
+                (origAmount * ratio).toStringAsFixed(2));
+            // Last entry absorbs the rounding delta so the total is exact.
+            if (i == _invoicePays.length - 1) {
+              scaledAmount = double.parse(
+                  (refundAmount - runningSum).toStringAsFixed(2));
+            } else {
+              runningSum += scaledAmount;
+            }
+            if (scaledAmount <= 0) continue;
+            scaled.add({
+              'pay_method': p['pay_method'] ?? 'cash',
+              'name': p['name'] ?? 'كاش',
+              'amount': scaledAmount,
+            });
+          }
+          refundPayload['pays'] = scaled.isNotEmpty
+              ? scaled
+              : [
+                  {
+                    'pay_method': 'cash',
+                    'name': 'كاش',
+                    'amount': refundAmount,
+                  }
+                ];
         } else {
-          final amount = _refundAmount > 0
-              ? _refundAmount
-              : (_invoiceTotal > 0 ? _invoiceTotal : 0.0);
           refundPayload['pays'] = [
             {
               'pay_method': 'cash',
               'name': 'كاش',
-              'amount': amount,
+              'amount': refundAmount,
             }
           ];
         }
@@ -961,14 +1008,32 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         );
       }).toList();
 
-      final totalExcl = items.fold(0.0, (sum, item) => sum + item.total);
       // Dynamic tax rate from the active branch — credit notes for
       // non-tax branches would otherwise sprout a phantom 15% VAT line.
       final branchService = getIt<BranchService>();
       final taxRate =
           branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
-      final tax = totalExcl * taxRate;
-      final grandTotal = totalExcl + tax;
+
+      // Salon `_RefundCandidate.total` is already tax-inclusive (it picks
+      // `total_tax` / `total_with_tax` from the invoice — see
+      // `_extractCandidates`). Restaurant items use pre-tax `total`. Without
+      // this branch we'd add VAT on top of a value that already contains it,
+      // printing the credit note with double-taxed totals (e.g. an item the
+      // cashier sold for 350 SAR would show as 402.50 with a fresh 15% line).
+      final isSalonModule = ApiConstants.branchModule == 'salons';
+      final lineSum = items.fold(0.0, (sum, item) => sum + item.total);
+      final double totalExcl;
+      final double tax;
+      final double grandTotal;
+      if (isSalonModule && taxRate > 0) {
+        grandTotal = lineSum;
+        totalExcl = lineSum / (1 + taxRate);
+        tax = grandTotal - totalExcl;
+      } else {
+        totalExcl = lineSum;
+        tax = totalExcl * taxRate;
+        grandTotal = totalExcl + tax;
+      }
 
       final sellerName = pick([branch['seller_name']]);
       final receiptData = OrderReceiptData(
@@ -1088,6 +1153,8 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       results.add(_RefundCandidate(id: id, type: type, name: name, total: total, quantity: qty));
     }
 
+    final isSalonModule = ApiConstants.branchModule == 'salons';
+
     void addFromList(dynamic src, {required _RefundCandidateType type, required List<String> idKeys}) {
       if (src is! List) return;
       for (final item in src.whereType<Map>()) {
@@ -1098,9 +1165,26 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           if (id > 0) break;
         }
         if (id <= 0) continue;
-        final name = m['name']?.toString() ?? m['meal_name']?.toString() ?? m['product_name']?.toString() ?? 'عنصر';
+        final rawName = m['service_name']?.toString().trim() ??
+            m['name']?.toString().trim() ??
+            m['meal_name']?.toString().trim() ??
+            m['product_name']?.toString().trim() ??
+            m['item_name']?.toString().trim();
+        final name = (rawName == null || rawName.isEmpty) ? 'عنصر' : rawName;
         final qty = int.tryParse(m['quantity']?.toString() ?? '1') ?? 1;
-        final total = _parsePrice(m['total'] ?? m['amount'] ?? m['price']);
+        // Salon invoice items carry both `total` (pre-tax, e.g. "304.35")
+        // and `total_tax` (with-tax, e.g. "350.00"). The cashier expects
+        // every refund amount on this dialog to match the invoice grand
+        // total — verified against IN-53158 which had two services at
+        // total=304.35 / total_tax=350.00 and an invoice total of 700.00.
+        // Restaurant items don't have `total_tax`, so the fallback chain
+        // still picks `total` for them and behaviour is unchanged.
+        final total = _parsePrice(
+          (isSalonModule ? (m['total_tax'] ?? m['total_with_tax']) : null) ??
+              m['total'] ??
+              m['amount'] ??
+              m['price'],
+        );
         add(type: type, id: id, name: name, total: total, qty: qty);
       }
     }
