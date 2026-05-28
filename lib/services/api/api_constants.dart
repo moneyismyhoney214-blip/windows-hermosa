@@ -1,13 +1,31 @@
 class ApiConstants {
-  // Base URLs
-  static const String authBaseUrl = 'https://portal.hermosaapp.com';
-  static const String baseUrl = 'https://portal.hermosaapp.com';
-  static const String testBaseUrl = 'https://portal.hermosaapp.com';
-  static const String customersBaseUrl = 'https://portal.hermosaapp.com';
-  // Forgot-password flow lives on the public API host (see HAR capture).
-  static const String forgotBaseUrl = 'https://portal.hermosaapp.com';
+  // Base URLs — override via --dart-define=API_BASE_URL=...
+  // Both `portal.hermosaapp.com` and `api.hermosaapp.com` resolve to the
+  // same backend (shared TLS cert, identical Laravel routes). Portal is
+  // the preferred default; switch via dart-define if a future split needs
+  // the old hostname back.
+  static const String _defaultBaseUrl = 'https://portal.hermosaapp.com';
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: _defaultBaseUrl,
+  );
+  static const String authBaseUrl = String.fromEnvironment(
+    'AUTH_BASE_URL',
+    defaultValue: _defaultBaseUrl,
+  );
+  static const String testBaseUrl = String.fromEnvironment(
+    'TEST_BASE_URL',
+    defaultValue: _defaultBaseUrl,
+  );
+  static const String customersBaseUrl = String.fromEnvironment(
+    'CUSTOMERS_BASE_URL',
+    defaultValue: _defaultBaseUrl,
+  );
+  static const String forgotBaseUrl = String.fromEnvironment(
+    'FORGOT_BASE_URL',
+    defaultValue: _defaultBaseUrl,
+  );
 
-  // API Headers
   static const String _defaultAcceptLanguage = 'ar';
   static String _acceptLanguage = _defaultAcceptLanguage;
 
@@ -29,27 +47,11 @@ class ApiConstants {
         'Accept-ISO': 'SAU',
       };
 
-  // Branch ID - will be set from login response
   static int branchId = 0;
-
-  // Seller ID - will be set from login response (User ID)
   static int sellerId = 1;
-
-  // Currency - will be set from login response (taxObject.currency)
   static String currency = 'ر.س';
 
-  // ── Tax configuration ─────────────────────────────────────────────────
-  // All three fields are sourced from the active branch's `taxObject` at
-  // login time and refreshed via `/seller/filters/branches/{id}/getTax`.
-  //
-  //   * `hasTax`         — branch has VAT enabled
-  //   * `taxPercentage`  — integer percentage (e.g. 15 for 15% VAT)
-  //   * `taxRate`        — same value as a 0.0–1.0 multiplier (15 → 0.15)
-  //   * `digitsNumber`   — currency precision for displays/receipts
-  //
-  // Use `effectiveTaxRate` for math (returns 0 when tax is disabled) and
-  // `isTaxActive` to gate UI that should disappear when the branch has
-  // no VAT configured.
+  // Tax config: sourced from active branch's taxObject at login. Use effectiveTaxRate / isTaxActive.
   static bool hasTax = true;
   static int taxPercentage = 15;
   static double taxRate = 0.15;
@@ -78,41 +80,23 @@ class ApiConstants {
     return value.toStringAsFixed(digits);
   }
 
-  // Branch module - "restaurants" or "salons", set from branch selection
+  // Branch module: "restaurants" or "salons", set from branch selection.
   static String branchModule = '';
 
-  // Country id of the active branch (matches `value` in
-  // `portal.hermosaapp.com/countries/cities`). Drives the default
-  // country code on phone-input pickers — Saudi (1) is the safe
-  // fallback when the branch hasn't been resolved yet.
+  // Active branch country id — drives default country code on phone pickers (Saudi=1 fallback).
   static int branchCountryId = 1;
 
-  // Whether the active branch has WhatsApp notifications enabled.
-  // Sourced from `/seller/branches[*].whatsapp_status`. Used to gate the
-  // waitlist (notify-when-table-ready) UI on both cashier + waiter — when
-  // the branch can't send WhatsApp, hide the entry points instead of
-  // surfacing a button that always errors out.
+  // Gates waitlist (notify-when-table-ready) UI on both cashier + waiter.
   static bool whatsappEnabled = true;
 
-  // Whether the active branch has waiter-module features enabled.
-  // Sourced from `/seller/branches[*].have_waiters` (login response is
-  // missing the field — value is filled at branch-select / bootstrap from
-  // the canonical `/seller/branches` payload). Restaurant-only flag —
-  // when false, the cashier still shows the tables screen but hides the
-  // waiter-mesh actions inside it (pickup / migrate / release / message).
-  // Default `true` keeps existing behaviour for branches/older API
-  // payloads that don't return the field at all.
+  // Restaurant-only flag; when false, cashier hides waiter-mesh actions inside tables screen.
   static bool haveWaiters = true;
 
-  // Auth - JWT login uses different domain
   static const String jwtLoginEndpoint = '/seller/login';
   static const String logoutEndpoint = '/seller/logout';
   static const String profileEndpoint = '/seller/profile';
 
-  // Forgot-password flow — 3 steps. Each step's response returns a
-  // `signed_route` (`/seller/forgot/check?...` then `/seller/forgot/reset?...`)
-  // that the next call must use verbatim — the signature + expires + account
-  // id are baked into that path.
+  // 3-step flow returns `signed_route` per step — caller passes verbatim (signed + account-baked).
   static const String forgotEndpoint = '/seller/forgot';
   static String get branchesEndpoint => '/seller/branches';
   static String get profileBranchesEndpoint => '/seller/profile/branches';
@@ -124,7 +108,7 @@ class ApiConstants {
   static String getBranchTaxEndpoint(int id) =>
       '/seller/filters/branches/$id/getTax';
 
-  // Promo codes
+  // --- Promo codes ---
   static String get promocodesEndpoint =>
       '/seller/branches/$branchId/promocodes';
   static String get allPromocodesFilterEndpoint =>
@@ -132,7 +116,7 @@ class ApiConstants {
   static String getPromoCodeEndpoint(String code) =>
       '/seller/branches/$branchId/getPromoCode?code=$code';
 
-  // Products & Categories
+  // --- Products & Categories ---
   static String get categoriesEndpoint =>
       '/seller/filters/resource/branches/$branchId/categories?scope=types&type=meals&all=false';
   static String get mainCategoriesEndpoint => '/seller/main-categories';
@@ -157,13 +141,13 @@ class ApiConstants {
   static String mealOptionsEndpoint(String mealId) =>
       '/seller/branches/$branchId/meals/$mealId/options';
 
-  // Menu Lists (Hungerstation, etc.)
+  // --- Menu Lists ---
   static String get menuListsEndpoint =>
       '/seller/branches/$branchId/menuLists';
   static String menuListDetailsEndpoint(int menuId) =>
       '/seller/branches/$branchId/menuLists/$menuId';
 
-  // Orders/Bookings
+  // --- Orders/Bookings ---
   static String get bookingsEndpoint => '/seller/branches/$branchId/bookings';
   static String get bookingsPublicEndpoint => '/branches/$branchId/bookings';
   static String get bookingCreateMetadataEndpoint =>
@@ -224,11 +208,11 @@ class ApiConstants {
       '/seller/kitchen-receipts/generate-by-booking';
   static const String getTypesEndpoint = '/seller/get-types';
 
-  // Tables
+  // --- Tables ---
   static String get tablesEndpoint =>
       '/seller/branches/$branchId/restaurantTables';
 
-  // Reports
+  // --- Reports ---
   static String get salesReportsEndpoint =>
       '/seller/branches/$branchId/salesReports';
   static String get salesReportsDetailsEndpoint =>
@@ -253,7 +237,7 @@ class ApiConstants {
   static String get sendReportWhatsAppEndpoint =>
       '/seller/reports/send-whatsapp';
 
-  // Daily Closing Reports - تقارير الإقفالية اليومية
+  // --- Daily Closing Reports (تقارير الإقفالية اليومية) ---
   static String get salesPayReportEndpoint =>
       '/seller/branches/$branchId/salesPay';
   static String get salesPaySummaryEndpoint =>
@@ -283,14 +267,13 @@ class ApiConstants {
   static String get outgoingsStatisticsEndpoint =>
       '/seller/statistics/branches/$branchId/outgoings';
 
-  // Payment Methods
+  // --- Payment Methods ---
   static String get payMethodsEndpoint =>
       '/seller/filters/branches/$branchId/payMethods';
 
-  // NearPay Auth
+  // --- NearPay ---
   static const String nearPayAuthTokenEndpoint = '/nearpay/auth/token';
 
-  // NearPay Sessions & Transactions
   static const String nearPayPurchaseSessionEndpoint =
       '/seller/nearpay/session/purchase';
   static const String nearPayRefundSessionEndpoint =
@@ -302,17 +285,13 @@ class ApiConstants {
   static String nearPayTransactionByIdEndpoint(String transactionId) =>
       '/seller/nearpay/transactions/$transactionId';
 
-  // Customers (Test Server)
+  // --- Customers ---
   static String customersEndpoint(int sellerId) =>
       '/seller/sellers/$sellerId/customers';
   static String customerDetailsEndpoint(int sellerId, int customerId) =>
       '/seller/sellers/$sellerId/customers/$customerId';
 
-  // Salon - Booking Sessions (تذاكر المراجعة)
-  // Each session represents a single visit attached to a booked service —
-  // e.g. a 4-session package generates one row per visit. The UI surfaces
-  // them as "review tickets" so the cashier can confirm + print attendance
-  // for each appointment without touching the parent booking.
+  // --- Salon Booking Sessions (تذاكر المراجعة) — one row per visit; UI shows as review tickets. ---
   static String get bookingSessionsEndpoint =>
       '/seller/branches/$branchId/bookingSessions';
   static String bookingSessionDetailsEndpoint(int sessionId) =>
@@ -322,11 +301,11 @@ class ApiConstants {
   static String get allBookingSessionsFilterEndpoint =>
       '/seller/filters/branches/$branchId/allBookingSessions';
 
-  // Salon - Categories & Services
+  // --- Salon Categories & Services ---
   static String get serviceCategoriesEndpoint =>
       '/seller/filters/resource/branches/$branchId/categories?scope=types&type=services&all=false';
 
-  // Salon - Employees & Appointments
+  // --- Salon Employees & Appointments ---
   static String get salonEmployeeOptionsEndpoint =>
       '/seller/filters/branches/$branchId/allEmployees';
   static String salonEmployeeAvailableTimesEndpoint(int employeeId) =>
@@ -338,7 +317,7 @@ class ApiConstants {
   static String salonEmployeeServiceIncomeReportEndpoint(int employeeId) =>
       '/seller/incomingServiceReport/branches/$branchId/employees/$employeeId';
 
-  // Deposits (عرابين)
+  // --- Deposits (عرابين) ---
   static String depositDetailsEndpoint(int depositId) =>
       '/seller/branches/$branchId/deposits/$depositId';
   static String get allServicesFilterEndpoint =>
@@ -346,7 +325,7 @@ class ApiConstants {
   static String get allDepositsFilterEndpoint =>
       '/seller/filters/branches/$branchId/allDeposits';
 
-  // Locations
+  // --- Locations ---
   static const String countriesEndpoint = '/countries';
   static String citiesEndpoint(int countryId) =>
       '/countries/cities?country_id=$countryId';

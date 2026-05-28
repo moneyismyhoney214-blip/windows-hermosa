@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/models.dart';
-import 'package:hermosa_pos/services/cache_service.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
 import 'package:hermosa_pos/services/api/product_service.dart';
+import 'package:hermosa_pos/services/cache_service.dart';
 
 class DisabledMealState {
   final String mealId;
@@ -241,6 +241,20 @@ class KdsMealAvailabilityService extends ChangeNotifier {
   bool isMealDisabled(String mealId) {
     final state = _disabledMeals[mealId];
     return state?.isDisabled == true;
+  }
+
+  /// Clear a meal's disabled state locally (cashier-triggered re-activation).
+  /// Caller is responsible for broadcasting the WS sync so KDS converges.
+  void markMealAvailable(String mealId, {String? mealName}) {
+    final removed = _disabledMeals.remove(mealId);
+    if (removed == null) return;
+    _appendAudit(
+      action: 'cashier_enable',
+      mealId: mealId,
+      details: 'activated by cashier (${mealName ?? removed.mealName})',
+    );
+    unawaited(_persistCache());
+    notifyListeners();
   }
 
   DisabledMealState? getMealState(String mealId) => _disabledMeals[mealId];

@@ -1,35 +1,34 @@
 library invoice_details_dialog;
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
+import '../locator.dart';
 import '../models.dart';
 import '../models/receipt_data.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/branch_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/order_service.dart';
-import '../services/invoice_html_pdf_service.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/print_audit_service.dart';
+import '../services/printer_language_settings_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/printer_service.dart';
-import '../services/zatca_printer_service.dart';
-import '../services/printer_language_settings_service.dart';
-import '../services/language_service.dart';
 import '../services/receipt_addon_extractor.dart';
-import '../locator.dart';
+import '../utils/ui_feedback.dart';
 import '../widgets/invoice_print_widget.dart';
 import '../widgets/send_invoice_whatsapp_button.dart';
-import '../services/app_themes.dart';
 
 part 'invoice_details_dialog_parts/invoice_details_dialog.actions.dart';
+part 'invoice_details_dialog_parts/invoice_details_dialog.build_widgets.dart';
 part 'invoice_details_dialog_parts/invoice_details_dialog.data_loading.dart';
-part 'invoice_details_dialog_parts/invoice_details_dialog.state_helpers.dart';
 part 'invoice_details_dialog_parts/invoice_details_dialog.refund_helpers.dart';
 part 'invoice_details_dialog_parts/invoice_details_dialog.single_item_refund.dart';
-part 'invoice_details_dialog_parts/invoice_details_dialog.build_widgets.dart';
+part 'invoice_details_dialog_parts/invoice_details_dialog.state_helpers.dart';
 part 'invoice_details_dialog_parts/invoice_details_dialog.utils.dart';
 
 class InvoiceDetailsDialog extends StatefulWidget {
@@ -146,7 +145,7 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
       final String invoicePri = printerLanguageSettings.primary;
       final String invoiceSec = printerLanguageSettings.secondary;
 
-      String _resolveLangName(String langCode, String arName, String enName, Map? translations) {
+      String resolveLangName(String langCode, String arName, String enName, Map? translations) {
         if (translations != null) {
           final resolved = translations[langCode]?.toString().trim() ?? '';
           if (resolved.isNotEmpty) return resolved;
@@ -161,7 +160,9 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
       List<Map<String, dynamic>> refundedMeals = [];
       try {
         refundedMeals = await _orderService.getRefundedMeals(invoiceId: invoiceId);
-      } catch (_) {}
+      } catch (e) {
+        Log.d('InvoiceDetailsDialog', 'getRefundedMeals failed (non-fatal): $e');
+      }
 
       final List<ReceiptItem> items;
       if (refundedMeals.isNotEmpty) {
@@ -179,8 +180,8 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
             enName = name.split(' - ').last.trim();
           }
           final mt = rm['meal_name_translations'];
-          final primaryName = _resolveLangName(invoicePri, arName, enName, mt is Map ? mt : null);
-          final secondaryName = _resolveLangName(invoiceSec, arName, enName, mt is Map ? mt : null);
+          final primaryName = resolveLangName(invoicePri, arName, enName, mt is Map ? mt : null);
+          final secondaryName = resolveLangName(invoiceSec, arName, enName, mt is Map ? mt : null);
           final qty = double.tryParse(rm['quantity']?.toString() ?? '1') ?? 1;
           final price = double.tryParse(rm['price']?.toString() ?? rm['total']?.toString() ?? '0') ?? 0;
           return ReceiptItem(nameAr: primaryName, nameEn: secondaryName != primaryName ? secondaryName : '', quantity: qty, unitPrice: price, total: price * qty);
@@ -196,8 +197,8 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
             enName = name.split(' - ').last.trim();
           }
           final mt = m['meal_name_translations'];
-          final primaryName = _resolveLangName(invoicePri, arName, enName, mt is Map ? mt : null);
-          final secondaryName = _resolveLangName(invoiceSec, arName, enName, mt is Map ? mt : null);
+          final primaryName = resolveLangName(invoicePri, arName, enName, mt is Map ? mt : null);
+          final secondaryName = resolveLangName(invoiceSec, arName, enName, mt is Map ? mt : null);
           final price = double.tryParse(m['meal_price']?.toString() ?? '') ?? double.tryParse(m['total']?.toString() ?? '') ?? 0;
           return ReceiptItem(nameAr: primaryName, nameEn: secondaryName != primaryName ? secondaryName : '', quantity: double.tryParse(m['quantity']?.toString() ?? '') ?? 1, unitPrice: price, total: price);
         }).toList() ?? [];
@@ -302,7 +303,7 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
         }
       }
 
-      String _resolveLangName2(String langCode, String arName, String enName, Map? translations) {
+      String resolveLangName2(String langCode, String arName, String enName, Map? translations) {
         if (translations != null) {
           final resolved = translations[langCode]?.toString().trim() ?? '';
           if (resolved.isNotEmpty) return resolved;
@@ -321,8 +322,8 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
           enName = c.name.split(' - ').last.trim();
         }
         final translations = translationsById2[c.id];
-        final primaryName = _resolveLangName2(invoicePri2, arName, enName, translations);
-        final secondaryName = _resolveLangName2(invoiceSec2, arName, enName, translations);
+        final primaryName = resolveLangName2(invoicePri2, arName, enName, translations);
+        final secondaryName = resolveLangName2(invoiceSec2, arName, enName, translations);
         final unitPrice = c.quantity > 0 ? c.total / c.quantity : c.total;
         return ReceiptItem(nameAr: primaryName, nameEn: secondaryName != primaryName ? secondaryName : '', quantity: c.quantity.toDouble(), unitPrice: unitPrice, total: c.total);
       }).toList();
@@ -505,13 +506,7 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
 
   void _showPrintSnackBar(String message, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        duration: const Duration(seconds: 3),
-      ),
-    );
+    UiFeedback.info(context, message);
   }
 
   Future<void> _printThisInvoice() async {
@@ -569,6 +564,7 @@ class _InvoiceDetailsDialogState extends State<InvoiceDetailsDialog> {
   }
 
 
+  @override
   Widget build(BuildContext context) {
     final formatter = NumberFormat('#,##0.00', 'ar');
     final size = MediaQuery.sizeOf(context);

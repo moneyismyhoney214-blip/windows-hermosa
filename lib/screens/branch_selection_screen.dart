@@ -1,12 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import '../models/branch.dart';
-import '../services/api/auth_service.dart';
-import '../services/api/api_constants.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
+
 import '../locator.dart';
-import 'main_screen.dart';
+import '../models/branch.dart';
+import '../services/api/api_constants.dart';
+import '../services/api/auth_service.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
 import '../waiter_module/waiter_module_entry.dart';
+import 'main_screen.dart';
 
 class BranchSelectionScreen extends StatefulWidget {
   final List<Branch> branches;
@@ -45,26 +49,25 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
       await authService.updateActiveBranch(branch);
 
       if (mounted) {
-        // Waiters land in the waiter module; everyone else goes to the POS.
-        final nextScreen = authService.isWaiter()
+        // Waiters land in the waiter module — but only on a restaurant
+        // branch. The waiter UX is table-service centric (floor plan,
+        // KDS, pickup calls); a salon branch has no tables, so a waiter
+        // account that picked a salon branch falls back to the POS rather
+        // than booting into an empty, broken floor screen.
+        final isRestaurant = branch.module != 'salons';
+        final nextScreen = authService.isWaiter() && isRestaurant
             ? const WaiterModuleEntry()
             : const MainScreen();
-        Navigator.of(context).pushReplacement(
+        unawaited(Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => nextScreen),
-        );
+        ));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              translationService.t(
+        UiFeedback.info(context, translationService.t(
                 'branch_select_error',
                 args: {'error': e},
-              ),
-            ),
-          ),
-        );
+              ));
       }
     } finally {
       if (mounted) setState(() => _isSelecting = false);
@@ -163,6 +166,8 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
                                         color: Color(0xFF64748B),
                                       ),
                                     ),
+                                    const SizedBox(height: 6),
+                                    _SubscriptionExpiryChip(branch: branch),
                                   ],
                                 ),
                               ),
@@ -191,4 +196,87 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
       ),
     );
   }
+}
+
+/// Subscription state derived from a branch's `count_days` + `today`
+/// (the server-clock anchor, so we don't depend on the device's clock).
+class _SubscriptionExpiryChip extends StatelessWidget {
+  final Branch branch;
+  const _SubscriptionExpiryChip({required this.branch});
+
+  @override
+  Widget build(BuildContext context) {
+    final days = branch.countDays;
+    final today = _parseToday(branch.taxObject.today);
+    final expiryDate = today?.add(Duration(days: days));
+
+    final (label, color) = _resolve(days, expiryDate);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.event_outlined, size: 14, color: color),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  (String, Color) _resolve(int days, DateTime? expiryDate) {
+    if (days <= 0) {
+      return (translationService.t('subscription_expired'),
+          const Color(0xFFDC2626));
+    }
+    if (days == 1 || expiryDate != null && _isSameDay(expiryDate, DateTime.now())) {
+      return (translationService.t('subscription_expires_today'),
+          const Color(0xFFDC2626));
+    }
+    final Color color;
+    if (days <= 7) {
+      color = const Color(0xFFDC2626);
+    } else if (days <= 30) {
+      color = const Color(0xFFEA580C);
+    } else {
+      color = const Color(0xFF15803D);
+    }
+    final daysLabel = translationService.t(
+      'subscription_expires_in_days',
+      args: {'days': days},
+    );
+    if (expiryDate == null) return (daysLabel, color);
+    final dateLabel = translationService.t(
+      'subscription_expires_on',
+      args: {'date': _formatDate(expiryDate)},
+    );
+    return ('$daysLabel · $dateLabel', color);
+  }
+
+  DateTime? _parseToday(String raw) {
+    if (raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  String _formatDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 }

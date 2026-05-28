@@ -85,7 +85,7 @@ class _RefundedMealsDialog extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      '${refundedMeals.length} ${_tr('صنف', 'items')}',
+                      '${refundedMeals.length} ${translationService.t('items_word')}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -128,7 +128,7 @@ class _RefundedMealsDialog extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        _tr('إجمالي المرتجعات', 'Total Refunded'),
+                        translationService.t('total_refunded'),
                         style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
@@ -159,7 +159,7 @@ class _RefundedMealsDialog extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       child: Text(
-                        _tr('إغلاق', 'Close'),
+                        translationService.t('close'),
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -176,7 +176,7 @@ class _RefundedMealsDialog extends StatelessWidget {
   Widget _buildMealRow(BuildContext context, Map<String, dynamic> meal) {
     final name = meal['meal_name']?.toString() ??
         meal['name']?.toString() ??
-        _tr('صنف غير معروف', 'Unknown item');
+        translationService.t('unknown_item_label');
     final quantity = int.tryParse(meal['quantity']?.toString() ?? '1') ?? 1;
     final total = _parsePrice(meal['total'] ?? meal['price']);
     final discount = _parsePrice(meal['discount']);
@@ -242,10 +242,10 @@ class _RefundedMealsDialog extends StatelessWidget {
               child: Text(
                 isInvoiced
                     ? (invoiceId != null
-                        ? _tr('مسترجع - فاتورة #$invoiceId',
-                            'Refunded - Invoice #$invoiceId')
-                        : _tr('مسترجع', 'Refunded'))
-                    : _tr('ملغي قبل الفوترة', 'Cancelled before invoice'),
+                        ? translationService.t('refunded_invoice_dash_n',
+                            args: {'id': invoiceId})
+                        : translationService.t('refunded_word'))
+                    : translationService.t('cancelled_before_invoice'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
@@ -264,9 +264,9 @@ class _RefundedMealsDialog extends StatelessWidget {
             child: Text(
               [
                 if (discount > 0)
-                  '${_tr('خصم', 'Discount')}: ${discount.toStringAsFixed(ApiConstants.digitsNumber)}',
+                  '${translationService.t('discount')}: ${discount.toStringAsFixed(ApiConstants.digitsNumber)}',
                 if (tax > 0)
-                  '${_tr('ضريبة', 'Tax')}: ${tax.toStringAsFixed(ApiConstants.digitsNumber)}',
+                  '${translationService.t('tax')}: ${tax.toStringAsFixed(ApiConstants.digitsNumber)}',
               ].join(' | '),
               style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
             ),

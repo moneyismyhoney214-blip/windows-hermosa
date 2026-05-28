@@ -5,9 +5,11 @@ import '../../locator.dart';
 import '../../models.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/api/error_handler.dart';
+import '../../services/app_themes.dart';
 import '../../services/display_app_service.dart';
 import '../../services/language_service.dart';
-import '../../services/app_themes.dart';
+import '../../services/logger_service.dart';
+import '../../utils/ui_feedback.dart';
 
 // Salon branches relabel the in-cash KDS screen as "SDS" (Salon Display
 // System) so floor staff don't see kitchen vocabulary. The wire format
@@ -83,31 +85,17 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
       );
       if (!mounted) return;
       setState(() => device.isOnline = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
+      UiFeedback.success(context, _t(
               'display_link_success',
               args: {'mode': _modeLabel(device)},
-            ),
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
+            ));
     } catch (e) {
       if (!mounted) return;
       setState(() => device.isOnline = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
+      UiFeedback.error(context, _t(
               'display_link_failed',
               args: {'error': e},
-            ),
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+            ));
     } finally {
       if (mounted) setState(() => _busyId = null);
     }
@@ -115,12 +103,7 @@ class _DisplayDevicesTabViewState extends State<DisplayDevicesTabView> {
 
   void _showAddDisplayDialog() {
     if (!widget.cdsEnabled && !widget.kdsEnabled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_t('display_devices_hidden_by_settings')),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      UiFeedback.warning(context, _t('display_devices_hidden_by_settings'));
       return;
     }
     showDialog(
@@ -429,25 +412,23 @@ class _AddDisplayDialogState extends State<_AddDisplayDialog> {
   }
 
   Future<void> _submit() async {
-    print('🖥️ [Display] _submit called');
-    print(
-        '🖥️ [Display] cdsEnabled: ${widget.cdsEnabled}, kdsEnabled: ${widget.kdsEnabled}');
-    print('🖥️ [Display] selected mode: $_mode');
+    Log.d('display',
+        '_submit cds=${widget.cdsEnabled} kds=${widget.kdsEnabled} mode=$_mode');
 
     if (!_formKey.currentState!.validate()) {
-      print('🖥️ [Display] Form validation failed');
+      Log.d('display', 'form validation failed');
       return;
     }
     if (_mode == DisplayMode.cds && !widget.cdsEnabled) {
-      print('🖥️ [Display] CDS not enabled, returning');
+      Log.d('display', 'CDS not enabled — aborting');
       return;
     }
     if (_mode == DisplayMode.kds && !widget.kdsEnabled) {
-      print('🖥️ [Display] KDS not enabled, returning');
+      Log.d('display', 'KDS not enabled — aborting');
       return;
     }
     _formKey.currentState!.save();
-    print('🖥️ [Display] Form saved: name=$_name, ip=$_ip, port=$_port');
+    Log.d('display', 'form saved name=$_name port=$_port');
 
     setState(() => _saving = true);
     try {
@@ -460,24 +441,17 @@ class _AddDisplayDialogState extends State<_AddDisplayDialog> {
         model: 'display',
         copies: 1,
       );
-      print('🖥️ [Display] Creating device: ${device.toJson()}');
+      Log.d('display', 'creating device ${device.name} (${device.type})');
       await widget.onAdd(device);
-      print('🖥️ [Display] Device added successfully');
+      Log.d('display', 'device added');
       if (mounted) Navigator.pop(context);
-    } catch (e) {
-      print('🖥️ [Display] Error adding device: $e');
+    } catch (e, st) {
+      Log.e('display', 'add device failed', error: e, stackTrace: st);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            ErrorHandler.toUserMessage(
+      UiFeedback.error(context, ErrorHandler.toUserMessage(
               e,
               fallback: _t('display_link_failed', args: {'error': e}),
-            ),
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+            ));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

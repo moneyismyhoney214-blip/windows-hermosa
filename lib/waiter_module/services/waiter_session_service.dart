@@ -18,13 +18,23 @@ class WaiterSessionService extends ChangeNotifier {
 
   bool get isSignedIn => _self != null && _self!.name.isNotEmpty;
 
-  Future<Waiter> initialize({required String branchId}) async {
+  /// Read (or mint + persist) the stable per-device id. Pure w.r.t.
+  /// [_self] — callers that don't want a non-viewer identity briefly
+  /// published (see [assignViewerIdentity]) use this instead of
+  /// [initialize].
+  Future<String> _ensureDeviceId() async {
     final prefs = await SharedPreferences.getInstance();
     var deviceId = prefs.getString(_kDeviceIdKey);
     if (deviceId == null || deviceId.isEmpty) {
       deviceId = const Uuid().v4();
       await prefs.setString(_kDeviceIdKey, deviceId);
     }
+    return deviceId;
+  }
+
+  Future<Waiter> initialize({required String branchId}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceId = await _ensureDeviceId();
     final name = prefs.getString(_kNameKey) ?? '';
     final storedBranch = prefs.getString(_kBranchKey) ?? branchId;
 
@@ -57,7 +67,8 @@ class WaiterSessionService extends ChangeNotifier {
     required String name,
     required String branchId,
   }) async {
-    await initialize(branchId: branchId); // ensures device id exists
+    // Skip initialize() — it would briefly publish a non-viewer identity (cashier appears callable).
+    await _ensureDeviceId();
     _self = Waiter(
       id: '${Waiter.viewerIdPrefix}${const Uuid().v4()}',
       name: name,
@@ -69,18 +80,7 @@ class WaiterSessionService extends ChangeNotifier {
 
   Future<void> signOut() async {
     final prefs = await SharedPreferences.getInstance();
-    // Blank the keys before removing them so a force-kill between the
-    // two removes can't leave the device in a "stale branch, no name"
-    // state. setString('') is a single atomic write per key on
-    // SharedPreferences; the subsequent removes are belt-and-braces
-    // cleanup that the next sign-in will overwrite anyway.
-    //
-    // Why both keys must clear in lockstep: if waiter A signs out and
-    // waiter B signs in later on a DIFFERENT branch, initialize() at
-    // line 29 reads `_kBranchKey ?? branchId`. A stale branch value
-    // would seed B's session with A's branch until sign-in overwrites,
-    // and any mesh broadcast in that window leaks to/from the wrong
-    // branch.
+    // Blank both keys atomically before remove() — a stale branch would leak waiter B onto waiter A's branch otherwise.
     await prefs.setString(_kNameKey, '');
     await prefs.setString(_kBranchKey, '');
     await prefs.remove(_kNameKey);

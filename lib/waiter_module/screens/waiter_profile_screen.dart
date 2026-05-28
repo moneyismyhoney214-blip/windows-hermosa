@@ -10,6 +10,7 @@ import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
 import '../models/waiter.dart';
 import '../services/waiter_controller.dart';
+import '../services/waiter_device_prefs.dart';
 import '../theme/waiter_design.dart';
 import '../widgets/waiter_status_chip.dart';
 import 'waiter_printer_settings_screen.dart';
@@ -25,10 +26,15 @@ class WaiterProfileScreen extends StatefulWidget {
 }
 
 class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
+  bool _requireCustomer = false;
+
   @override
   void initState() {
     super.initState();
     widget.controller.session.addListener(_refresh);
+    WaiterDevicePrefs.isRequireCustomerSelectionEnabled().then((v) {
+      if (mounted) setState(() => _requireCustomer = v);
+    });
   }
 
   @override
@@ -39,6 +45,11 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
 
   void _refresh() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleRequireCustomer(bool value) async {
+    setState(() => _requireCustomer = value);
+    await WaiterDevicePrefs.setRequireCustomerSelection(value);
   }
 
   @override
@@ -82,6 +93,44 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
           ],
         ),
         const SizedBox(height: WaiterSpacing.xxl),
+        Text(
+          translationService.t('waiter_ordering_prefs'),
+          style: TextStyle(
+            color: context.appTextMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: WaiterSpacing.sm),
+        Container(
+          decoration: BoxDecoration(
+            color: context.appSurface,
+            borderRadius: BorderRadius.circular(WaiterRadius.md),
+            border: Border.all(color: context.appBorder),
+          ),
+          child: SwitchListTile(
+            value: _requireCustomer,
+            onChanged: _toggleRequireCustomer,
+            activeThumbColor: context.appPrimary,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: WaiterSpacing.md,
+            ),
+            title: Text(
+              translationService.t('waiter_require_customer_selection'),
+              style: TextStyle(
+                color: context.appText,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: Text(
+              translationService.t('waiter_require_customer_selection_hint'),
+              style: TextStyle(color: context.appTextMuted, fontSize: 12),
+            ),
+            secondary: Icon(LucideIcons.userCheck, color: context.appPrimary),
+          ),
+        ),
+        const SizedBox(height: WaiterSpacing.xl),
         SizedBox(
           height: WaiterSizes.primaryButtonHeight,
           child: OutlinedButton.icon(
@@ -96,7 +145,7 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
               ),
             ),
             icon: const Icon(LucideIcons.settings),
-            label: const Text('إعدادات الأجهزة والطباعة'),
+            label: Text(translationService.t('waiter_device_print_settings_label')),
             onPressed: _openPrinterSettings,
           ),
         ),
@@ -161,30 +210,14 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
     );
     if (confirmed != true) return;
     unawaited(WaiterHaptics.warn());
-    // Full logout, in order:
-    //   1. Tear down the mesh controller so no outgoing broadcasts can
-    //      race the signOut.
-    //   2. Clear session-scoped stores (drafts, pickups, messages,
-    //      table registry) so the next user on this device starts
-    //      fresh. Must run AFTER stop() — otherwise in-flight message
-    //      handlers may re-populate the stores.
-    //   3. Sign out from the waiter session (local name/branch reset).
-    //   4. Call AuthService.logout() to revoke the backend token; this
-    //      is the step the old popUntil flow missed, so the waiter
-    //      module re-entry path would auto-sign the user back in.
-    //   5. Navigate to LoginScreen via pushAndRemoveUntil so even when
-    //      WaiterModuleEntry is the root route (the cashier's
-    //      pushReplacement path) the stack is fully cleared.
+    // Order matters: stop() -> clearSessionStores() -> session.signOut() -> AuthService.logout() -> pushAndRemoveUntil. Clearing stores AFTER stop() avoids in-flight message handlers re-populating them.
     try {
       await widget.controller.stop();
     } catch (e) {
       debugPrint('⚠️ Waiter logout stop failed: $e');
     }
     try {
-      // Await so the registry persistence is wiped to disk before the
-      // login screen lets the user sign back in; otherwise a fast
-      // re-login could hydrate the in-flight key the wipe didn't
-      // finish clearing yet.
+      // Await disk wipe — fast re-login could hydrate keys mid-wipe otherwise.
       await widget.controller.clearSessionStores();
     } catch (e) {
       debugPrint('⚠️ Waiter logout store clear failed: $e');
@@ -200,10 +233,10 @@ class _WaiterProfileScreenState extends State<WaiterProfileScreen> {
       debugPrint('⚠️ Waiter logout AuthService.logout failed: $e');
     }
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
+    unawaited(Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (_) => false,
-    );
+    ));
   }
 
   Widget _header(BuildContext context, Waiter me) {

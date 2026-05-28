@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ data-extraction rules covering both cloud auto-backup
+    and the device-transfer flow ("Switch to a new device").
+
+    Mirrors backup_rules.xml: exclude everything credential-bearing so a
+    fresh install on a new device starts from re-login, not from a
+    restore that may carry a stale session, a leaked JWT, or
+    half-synced offline orders into the new device.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+        <exclude domain="sharedpref" path="FlutterSecureStorage" />
+        <exclude domain="database" path="offline_pos.db" />
+        <exclude domain="database" path="offline_database.db" />
+        <exclude domain="file" path="nearpay/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+        <exclude domain="sharedpref" path="FlutterSecureStorage" />
+        <exclude domain="database" path="offline_pos.db" />
+        <exclude domain="database" path="offline_database.db" />
+        <exclude domain="file" path="nearpay/" />
+    </device-transfer>
+</data-extraction-rules>

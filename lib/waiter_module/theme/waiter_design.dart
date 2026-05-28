@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../services/logger_service.dart';
+
 /// Viewport breakpoints used across the waiter module. Resolved from the
 /// shorter side so rotating a tablet doesn't flip the entire layout.
 enum WaiterBreakpoint { compact, medium, expanded }
@@ -68,27 +70,35 @@ class WaiterHaptics {
   static Future<void> tick() async {
     try {
       await HapticFeedback.selectionClick();
-    } catch (_) {}
+    } catch (e) {
+      Log.d('WaiterHaptics', 'tick haptic failed (non-fatal): $e');
+    }
   }
 
   /// Affirmative action landed (send-to-kitchen queued, message sent).
   static Future<void> confirm() async {
     try {
       await HapticFeedback.lightImpact();
-    } catch (_) {}
+    } catch (e) {
+      Log.d('WaiterHaptics', 'confirm haptic failed (non-fatal): $e');
+    }
   }
 
   /// A durable change — claim accepted, bill paid, shift ended.
   static Future<void> success() async {
     try {
       await HapticFeedback.mediumImpact();
-    } catch (_) {}
+    } catch (e) {
+      Log.d('WaiterHaptics', 'success haptic failed (non-fatal): $e');
+    }
   }
 
   /// Something went wrong or a destructive action fired.
   static Future<void> warn() async {
     try {
       await HapticFeedback.heavyImpact();
-    } catch (_) {}
+    } catch (e) {
+      Log.d('WaiterHaptics', 'warn haptic failed (non-fatal): $e');
+    }
   }
 }

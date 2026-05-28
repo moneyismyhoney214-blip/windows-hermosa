@@ -5,9 +5,10 @@ import 'dart:typed_data';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart' as esc;
 import 'package:flutter/material.dart';
-import 'package:image/image.dart' as img;
-import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/utils/paper_width_utils.dart';
+import 'package:image/image.dart' as img;
+
 import '../models.dart';
 import '../models/receipt_data.dart';
 import 'bluetooth_print_channel.dart';

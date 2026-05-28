@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../services/logger_service.dart';
 import '../models/waiter.dart';
 
 /// Zero-config service discovery for the waiter LAN protocol.
@@ -36,12 +37,13 @@ class WaiterDiscoveryService {
   Stream<String> get onLost => _lost.stream;
 
   bool _started = false;
+  bool _disposed = false;
 
   WaiterDiscoveryService({required Waiter self, required this.advertisedPort})
       : _self = self;
 
   Future<void> start() async {
-    if (_started) return;
+    if (_started || _disposed) return;
     _started = true;
     try {
       await _startBroadcast();
@@ -102,7 +104,7 @@ class WaiterDiscoveryService {
               '⚠️ Waiter discovery: resolve failed for ${svc?.name ?? '?'}');
           break;
         case BonsoirDiscoveryEventType.discoveryServiceLost:
-          if (svc != null) {
+          if (svc != null && !_lost.isClosed) {
             debugPrint('🔎 Waiter discovery: lost ${svc.name}');
             _lost.add(svc.name);
           }
@@ -116,9 +118,14 @@ class WaiterDiscoveryService {
   }
 
   void _emitFound(BonsoirService svc) {
+    if (_disposed || _found.isClosed) return;
     final attrs = svc.attributes;
     final id = attrs['id'];
-    final name = attrs['name'] ?? svc.name;
+    // An empty `name` TXT attribute must still fall back to the service
+    // name — `attrs['name'] ?? svc.name` would keep the empty string.
+    final nameAttr = attrs['name'];
+    final name =
+        (nameAttr != null && nameAttr.isNotEmpty) ? nameAttr : svc.name;
     final branchId = attrs['branch_id'] ?? '';
     if (id == null || id.isEmpty) return;
     if (id == _self.id) return; // ignore self
@@ -148,15 +155,17 @@ class WaiterDiscoveryService {
   // disappears) and the live WS broadcast makes it unnecessary.
 
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     try {
       await _discoverySub?.cancel();
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-discovery', 'mDNS op failed', error: e); }
     try {
       await _discovery?.stop();
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-discovery', 'mDNS op failed', error: e); }
     try {
       await _broadcast?.stop();
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-discovery', 'mDNS op failed', error: e); }
     await _found.close();
     await _lost.close();
   }

@@ -208,189 +208,103 @@ extension OrderServiceRefundLogic on OrderService {
     return const <dynamic>[];
   }
 
+  /// Field-name groups checked when scraping refund-item ids from the
+  /// preview payload. Each tuple is (top-level list key, list of id keys
+  /// to try inside each row). Ordered most-specific first.
+  static const _refundIdScanGroups =
+      <({String listKey, List<String> idKeys})>[
+    (listKey: 'sales_meals', idKeys: ['sales_meal_id', 'id']),
+    (listKey: 'sales_products', idKeys: ['sales_product_id', 'id']),
+    (listKey: 'booking_meals', idKeys: ['booking_meal_id', 'id']),
+    (listKey: 'booking_products', idKeys: ['booking_product_id', 'id']),
+    (
+      listKey: 'collection',
+      idKeys: [
+        'id',
+        'booking_meal_id',
+        'booking_product_id',
+        'sales_meal_id',
+        'sales_product_id',
+      ],
+    ),
+    (listKey: 'meals', idKeys: ['id', 'meal_id']),
+    (listKey: 'products', idKeys: ['id', 'product_id']),
+  ];
+
+  /// Extract ids matching the configured key list from a list-of-maps.
+  /// Helper for [_resolveBookingRefundArray] — pulled out so the function
+  /// reads as a clear precedence ladder instead of seven copies of the
+  /// same iteration.
+  List<dynamic> _scanRefundIds(dynamic rows, List<String> idKeys) {
+    if (rows is! List || rows.isEmpty) return const <dynamic>[];
+    final ids = <dynamic>[];
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final map = row.map((k, v) => MapEntry(k.toString(), v));
+      for (final key in idKeys) {
+        final id = map[key];
+        if (id != null) {
+          ids.add(id);
+          break;
+        }
+      }
+    }
+    return ids;
+  }
+
   Future<List<dynamic>> _resolveBookingRefundArray({
     required String normalizedOrderId,
     required dynamic providedRefund,
   }) async {
-    print('🔍 DEBUG _resolveBookingRefundArray:');
-    print('  normalizedOrderId: $normalizedOrderId');
-    print('  providedRefund: $providedRefund');
-
     final direct = _normalizeBookingRefundArray(providedRefund);
-    print('  direct from providedRefund: $direct');
     if (direct.isNotEmpty) return direct;
 
     try {
-      print('  Calling showBookingRefund...');
       final preview = await showBookingRefund(normalizedOrderId);
 
-      // Print full response safely
+      // Refund preview body can carry customer-tied data (booking refs,
+      // amounts). Log only a sanitized + size-capped form so PII doesn't
+      // hit logcat.
       final previewStr = preview.toString();
-      if (previewStr.length > 500) {
-        print(
-            '  preview response (first 500 chars): ${previewStr.substring(0, 500)}...');
-      } else {
-        print('  preview response (full): $previewStr');
-      }
+      final printable = previewStr.length > 500
+          ? '${previewStr.substring(0, 500)}...'
+          : previewStr;
+      Log.d('refund',
+          'resolve booking=$normalizedOrderId preview=${Log.sanitize(printable)}');
 
       final fromPreview = _extractBookingRefundArrayFromPreview(preview);
-      print('  fromPreview: $fromPreview');
       if (fromPreview.isNotEmpty) return fromPreview;
 
       final previewData = _asStringMap(preview['data']) ?? const {};
-      print('  previewData keys: ${previewData.keys.toList()}');
-
       final fromPreviewData =
           _extractBookingRefundArrayFromPreview(previewData);
-      print('  fromPreviewData: $fromPreviewData');
       if (fromPreviewData.isNotEmpty) return fromPreviewData;
 
-      // Check sales_meals for IDs
-      final salesMeals = previewData['sales_meals'];
-      if (salesMeals is List && salesMeals.isNotEmpty) {
-        print('  Found sales_meals: ${salesMeals.length} items');
-        final ids = <dynamic>[];
-        for (final item in salesMeals) {
-          if (item is Map) {
-            final map = item.map((k, v) => MapEntry(k.toString(), v));
-            final id = map['sales_meal_id'] ?? map['id'];
-            if (id != null) {
-              ids.add(id);
-              print('    - sales_meal_id: $id');
-            }
-          }
+      // Precedence-ordered scan: walk the configured id-key tuples and
+      // return the first non-empty match. Replaces seven near-identical
+      // copy-pasted loops that previously lived inline.
+      for (final group in _refundIdScanGroups) {
+        final ids = _scanRefundIds(previewData[group.listKey], group.idKeys);
+        if (ids.isNotEmpty) {
+          Log.d('refund',
+              'extracted ${ids.length} id(s) from "${group.listKey}"');
+          return ids;
         }
-        print('  Extracted sales_meal IDs: $ids');
-        if (ids.isNotEmpty) return ids;
       }
 
-      // Check sales_products for IDs
-      final salesProducts = previewData['sales_products'];
-      if (salesProducts is List && salesProducts.isNotEmpty) {
-        print('  Found sales_products: ${salesProducts.length} items');
-        final ids = <dynamic>[];
-        for (final item in salesProducts) {
-          if (item is Map) {
-            final map = item.map((k, v) => MapEntry(k.toString(), v));
-            final id = map['sales_product_id'] ?? map['id'];
-            if (id != null) {
-              ids.add(id);
-              print('    - sales_product_id: $id');
-            }
-          }
-        }
-        print('  Extracted sales_product IDs: $ids');
-        if (ids.isNotEmpty) return ids;
-      }
-
-      // Check booking_meals for IDs
-      final bookingMeals = previewData['booking_meals'];
-      if (bookingMeals is List && bookingMeals.isNotEmpty) {
-        print('  Found booking_meals: ${bookingMeals.length} items');
-        final ids = <dynamic>[];
-        for (final item in bookingMeals) {
-          if (item is Map) {
-            final map = item.map((k, v) => MapEntry(k.toString(), v));
-            final id = map['booking_meal_id'] ?? map['id'];
-            if (id != null) {
-              ids.add(id);
-              print('    - booking_meal_id: $id');
-            }
-          }
-        }
-        print('  Extracted booking_meal IDs: $ids');
-        if (ids.isNotEmpty) return ids;
-      }
-
-      // Check booking_products for IDs
-      final bookingProducts = previewData['booking_products'];
-      if (bookingProducts is List && bookingProducts.isNotEmpty) {
-        print('  Found booking_products: ${bookingProducts.length} items');
-        final ids = <dynamic>[];
-        for (final item in bookingProducts) {
-          if (item is Map) {
-            final map = item.map((k, v) => MapEntry(k.toString(), v));
-            final id = map['booking_product_id'] ?? map['id'];
-            if (id != null) {
-              ids.add(id);
-              print('    - booking_product_id: $id');
-            }
-          }
-        }
-        print('  Extracted booking_product IDs: $ids');
-        if (ids.isNotEmpty) return ids;
-      }
-
-      // Check if collection exists and has items
-      final collection = previewData['collection'];
-      if (collection is List && collection.isNotEmpty) {
-        print('  Found collection: ${collection.length} items');
-        final ids = <dynamic>[];
-        for (final item in collection) {
-          if (item is Map) {
-            final map = item.map((k, v) => MapEntry(k.toString(), v));
-            final id = map['id'] ??
-                map['booking_meal_id'] ??
-                map['booking_product_id'] ??
-                map['sales_meal_id'] ??
-                map['sales_product_id'];
-            if (id != null) {
-              ids.add(id);
-              print('    - collection id: $id');
-            }
-          }
-        }
-        print('  Extracted collection IDs: $ids');
-        if (ids.isNotEmpty) return ids;
-      }
-
-      // Check meals (generic)
-      final meals = previewData['meals'];
-      if (meals is List && meals.isNotEmpty) {
-        print('  Found meals: ${meals.length} items');
-        final ids = <dynamic>[];
-        for (final item in meals) {
-          if (item is Map) {
-            final map = item.map((k, v) => MapEntry(k.toString(), v));
-            final id = map['id'] ?? map['meal_id'];
-            if (id != null) {
-              ids.add(id);
-              print('    - meal id: $id');
-            }
-          }
-        }
-        print('  Extracted meal IDs: $ids');
-        if (ids.isNotEmpty) return ids;
-      }
-
-      // Check products (generic)
-      final products = previewData['products'];
-      if (products is List && products.isNotEmpty) {
-        print('  Found products: ${products.length} items');
-        final ids = <dynamic>[];
-        for (final item in products) {
-          if (item is Map) {
-            final map = item.map((k, v) => MapEntry(k.toString(), v));
-            final id = map['id'] ?? map['product_id'];
-            if (id != null) {
-              ids.add(id);
-              print('    - product id: $id');
-            }
-          }
-        }
-        print('  Extracted product IDs: $ids');
-        if (ids.isNotEmpty) return ids;
-      }
-
-      print('  ⚠️ No refund items found in preview');
-      print('  ⚠️ Preview data structure: ${previewData.keys.toList()}');
+      Log.w('refund',
+          'no refund items found in preview for booking=$normalizedOrderId '
+          '(keys=${previewData.keys.toList()})');
     } catch (e, stackTrace) {
-      print('  ❌ Error in _resolveBookingRefundArray: $e');
-      print('  ❌ Stack trace: $stackTrace');
+      Log.e('refund',
+          'resolve failed for booking=$normalizedOrderId',
+          error: e, stackTrace: stackTrace);
     }
 
-    // Return empty array - backend may not accept this
-    print('  ⚠️ WARNING: Returning empty array - backend may reject this!');
+    // Return empty array — backend may reject; caller decides how to surface.
+    Log.w('refund',
+        'returning empty refund array for booking=$normalizedOrderId '
+        '— backend may reject');
     return [];
   }
 
@@ -427,8 +341,8 @@ extension OrderServiceRefundLogic on OrderService {
           productTotalById[id] = _toDouble(map['total']);
         }
       }
-    } catch (_) {
-      // Keep fallback logic resilient even if preview endpoint is unavailable.
+    } catch (e) {
+      Log.d('refund', 'preview endpoint unavailable, using fallback (non-fatal): $e');
     }
 
     final refundMealIds = _extractIdList(

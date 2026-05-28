@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import '../../services/display_app_service.dart';
-import '../../locator.dart';
-import '../../services/language_service.dart';
+
 import '../../dialogs/improved_display_connection_dialog.dart';
+import '../../locator.dart';
 import '../../services/app_themes.dart';
+import '../../services/display_app_service.dart';
+import '../../services/language_service.dart';
 
 class DisplaySettingsView extends StatefulWidget {
-  const DisplaySettingsView({Key? key}) : super(key: key);
+  const DisplaySettingsView({super.key});
 
   @override
   State<DisplaySettingsView> createState() => _DisplaySettingsViewState();
@@ -226,27 +227,27 @@ class _DisplaySettingsViewState extends State<DisplaySettingsView> {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: const Color(0xFF22C55E)),
               ),
-              child: Row(
+              child: const Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.credit_card,
                     color: Color(0xFF22C55E),
                     size: 24,
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'NearPay متاح',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF22C55E),
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        const Text(
+                        SizedBox(height: 4),
+                        Text(
                           'يمكنك استخدام الدفع الإلكتروني عبر Tap to Pay',
                           style: TextStyle(
                             fontSize: 12,
@@ -256,7 +257,7 @@ class _DisplaySettingsViewState extends State<DisplaySettingsView> {
                       ],
                     ),
                   ),
-                  const Icon(
+                  Icon(
                     Icons.check_circle,
                     color: Color(0xFF22C55E),
                   ),

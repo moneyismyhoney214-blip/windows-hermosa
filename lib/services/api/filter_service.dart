@@ -1,7 +1,8 @@
-import 'base_client.dart';
-import 'api_constants.dart';
-import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
+import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+
+import 'api_constants.dart';
+import 'base_client.dart';
 
 /// Service for filter/lookup data APIs
 class FilterService {

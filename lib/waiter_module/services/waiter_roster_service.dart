@@ -62,15 +62,29 @@ class WaiterRosterService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Refresh a peer's `lastSeen` without changing any other field. Called
-  /// for every inbound wire message so a silently-listening peer doesn't
-  /// get reaped on the next sweep.
+  /// Refresh a peer's `lastSeen`. Called for every inbound wire message so
+  /// a silently-listening peer doesn't get reaped on the next sweep.
+  ///
+  /// Any message at all proves the peer is alive, so if it was marked
+  /// `offline` (a clean leave, or swept after a heartbeat gap) flip it
+  /// back to `free` right here — that's what makes the cashier's roster
+  /// re-light the instant a waiter reopens the app, instead of waiting for
+  /// a HELLO to be parsed (which can be missed entirely if the cashier was
+  /// the one that re-dialled the socket). A more specific status riding in
+  /// on a HELLO / WAITER_STATUS / HEARTBEAT corrects `free` to the real
+  /// value (busy / on break) when the switch processes that message.
   void touch(String id) {
     final w = _byId[id];
     if (w == null) return;
-    _byId[id] = w.copyWith(lastSeen: DateTime.now());
+    if (w.status == WaiterStatus.offline) {
+      _byId[id] =
+          w.copyWith(status: WaiterStatus.free, lastSeen: DateTime.now());
+      notifyListeners();
+      return;
+    }
     // No notify — staleness change doesn't need a rebuild, but touching
     // updates the sweep window.
+    _byId[id] = w.copyWith(lastSeen: DateTime.now());
   }
 
   /// Scan the roster and mark any peer whose [Waiter.lastSeen] is older

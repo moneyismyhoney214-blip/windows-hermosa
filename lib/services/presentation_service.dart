@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'logger_service.dart';
+
 /// Service that manages the Android Presentation API for dual-screen devices.
 ///
 /// On devices like Sunmi D2s that have two screens in one device,
@@ -50,7 +52,9 @@ class PresentationService extends ChangeNotifier {
   static Future<void> dumpDisplays() async {
     try {
       await _channel.invokeMethod('dumpDisplays');
-    } catch (_) {}
+    } catch (e) {
+      Log.w('presentation', 'dumpDisplays method call failed', error: e);
+    }
   }
 
   // Callbacks from secondary display

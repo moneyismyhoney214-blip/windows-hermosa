@@ -1,13 +1,15 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
+
+import '../security/certificate_pinning.dart';
+import '../security/pinning_http_client.dart';
 import 'api_constants.dart';
 import 'error_handler.dart';
 
-// HTTP Client Configuration Constants
 class _HttpConfig {
   static const Duration requestTimeout = Duration(seconds: 15);
   static const Duration connectionTimeout = Duration(seconds: 8);
@@ -48,7 +50,6 @@ class BaseClient {
   http.Client? _client;
   HttpClient? _httpClient;
 
-  // Singleton pattern
   static final BaseClient _instance = BaseClient._internal();
   factory BaseClient() => _instance;
   BaseClient._internal() {
@@ -61,8 +62,11 @@ class BaseClient {
       ..connectionTimeout = _HttpConfig.connectionTimeout
       ..idleTimeout = _HttpConfig.idleTimeout
       ..maxConnectionsPerHost = _HttpConfig.maxConnectionsPerHost;
+    // Detect-only by default; --dart-define=CERT_PINNING_ENFORCE=true fails closed on mismatch.
+    // PinningHttpClient wrap is what triggers per-response cert checks via checkAccepted.
+    CertificatePinning.attach(_httpClient!);
 
-    _client = IOClient(_httpClient);
+    _client = PinningHttpClient(_httpClient);
     if (kDebugMode) debugPrint('🔧 BaseClient initialized with connection pooling');
   }
 
@@ -80,7 +84,6 @@ class BaseClient {
     try {
       _client?.close();
     } catch (e) {
-      // Ignore close errors
     }
     _initClient();
   }
@@ -100,19 +103,17 @@ class BaseClient {
           errorString.contains('connection closed') ||
               errorString.contains('connection closed before full header');
 
-      // Backend returns HTTP 422 with body `"message":"Too Many Attempts."`
-      // when the per-route rate limiter trips (it's a Laravel throttle that
-      // bursts on the salon employee/service endpoints). Treat it like a
-      // transient error and retry with exponential backoff so the cashier
-      // sees a tiny pause instead of a stack of red banners.
+      // Laravel throttle returns 422 "Too Many Attempts." — treat as transient and back off.
       final isRateLimited = e is ApiException &&
           e.statusCode == 422 &&
           (e.message.toLowerCase().contains('too many attempts') ||
               (e.userMessage ?? '').toLowerCase().contains('too many attempts'));
 
       if (isConnectionClosedError && attempt < _HttpConfig.maxRetries) {
-        if (kDebugMode) debugPrint(
+        if (kDebugMode) {
+          debugPrint(
             '⚠️ Connection closed error detected, retrying... (attempt ${attempt + 1})');
+        }
         _recreateClient();
         await Future.delayed(const Duration(milliseconds: 500));
         return _executeWithRetry(
@@ -126,8 +127,10 @@ class BaseClient {
       if (isRateLimited && attempt < _HttpConfig.maxRetries) {
         // Exponential backoff: 800ms, 1600ms, 3200ms.
         final delayMs = 800 * (1 << attempt);
-        if (kDebugMode) debugPrint(
+        if (kDebugMode) {
+          debugPrint(
             '⏳ Rate limited (Too Many Attempts), backing off ${delayMs}ms… (attempt ${attempt + 1})');
+        }
         await Future.delayed(Duration(milliseconds: delayMs));
         return _executeWithRetry(
           request,
@@ -193,8 +196,7 @@ class BaseClient {
       Map<String, String>? headers}) async {
     final uri = _getUri(endpoint, customBaseUrl: customBaseUrl);
     try {
-      // Per-request header overrides (e.g. forcing Accept-Language for a
-      // printed report) layer on top of the base auth/accept headers.
+      // Per-request header overrides layer on top of base auth/accept headers.
       final effectiveHeaders = {..._headers, ...?headers};
       final response = await _safeClient
           .get(uri, headers: effectiveHeaders)
@@ -283,7 +285,7 @@ class BaseClient {
       bool skipGlobalAuth = false}) async {
     final uri = _getUri(endpoint, customBaseUrl: customBaseUrl);
     try {
-      var request = http.MultipartRequest('POST', uri);
+      final request = http.MultipartRequest('POST', uri);
       request.fields.addAll(fields);
 
       if (files != null) {
@@ -371,7 +373,7 @@ class BaseClient {
       bool skipGlobalAuth = false}) async {
     final uri = _getUri(endpoint, customBaseUrl: customBaseUrl);
     try {
-      var request = http.MultipartRequest('PATCH', uri);
+      final request = http.MultipartRequest('PATCH', uri);
       request.fields.addAll(fields);
 
       if (files != null) {
@@ -577,7 +579,6 @@ class BaseClient {
 
   dynamic _processResponse(http.Response response,
       {bool skipGlobalAuth = false, String? requestUrl}) async {
-    // Handle redirects (301, 302, 307, 308)
     if (response.statusCode == 301 ||
         response.statusCode == 302 ||
         response.statusCode == 307 ||
@@ -605,14 +606,13 @@ class BaseClient {
       }
     } else if (response.statusCode == 401) {
       if (kDebugMode) debugPrint('🚫 401 Unauthorized from: ${requestUrl ?? 'unknown'}');
-      // Trigger unauthorized callback (with guard to prevent multiple triggers)
       if (!skipGlobalAuth && !_isHandlingUnauthorized) {
         _isHandlingUnauthorized = true;
         if (kDebugMode) debugPrint('🚫 401 Unauthorized - triggering logout callback');
         try {
           await onUnauthorized?.call();
         } finally {
-          // Keep guard active for 2 seconds to prevent cascading 401s
+          // Guard active 2s to prevent cascading 401s.
           Future.delayed(const Duration(seconds: 2), () {
             _isHandlingUnauthorized = false;
           });

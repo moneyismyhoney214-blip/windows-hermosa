@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenMenuLists on _MainScreenState {
@@ -58,6 +58,8 @@ extension MainScreenMenuLists on _MainScreenState {
         for (final rawItem in items) {
           if (rawItem is! Map) continue;
           final meal = rawItem['meal'] is Map ? rawItem['meal'] as Map : {};
+          // Skip meals the merchant disabled — even when bundled in a combo.
+          if (meal['is_active'] == false) continue;
           final deliveryPrice =
               double.tryParse(rawItem['delivery_price']?.toString() ?? '') ?? 0;
           final pickupPrice =
@@ -95,12 +97,7 @@ extension MainScreenMenuLists on _MainScreenState {
     } catch (e) {
       debugPrint('⚠️ Failed to load menu list: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_trUi('فشل تحميل قائمة الأسعار', 'Failed to load price list')),
-            backgroundColor: Colors.red,
-          ),
-        );
+        UiFeedback.error(context, _trUi('فشل تحميل قائمة الأسعار', 'Failed to load price list'));
       }
     }
   }
@@ -111,17 +108,12 @@ extension MainScreenMenuLists on _MainScreenState {
     }
     if (_availableMenuLists.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_trUi('لا توجد قوائم أسعار', 'No price lists available')),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        UiFeedback.warning(context, _trUi('لا توجد قوائم أسعار', 'No price lists available'));
       }
       return;
     }
     if (!mounted) return;
-    showModalBottomSheet(
+    unawaited(showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -215,7 +207,7 @@ extension MainScreenMenuLists on _MainScreenState {
           ],
         ),
       ),
-    );
+    ));
   }
 
   void _switchMenuListPriceType(String type) {

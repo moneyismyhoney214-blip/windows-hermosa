@@ -1,14 +1,17 @@
+// ignore_for_file: avoid_dynamic_calls
+// JSON wire-boundary layer — dynamic accesses accepted pending typed-model refactor.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/models.dart';
-import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
+import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
-import 'package:hermosa_pos/services/offline/connectivity_service.dart';
-import 'package:hermosa_pos/locator.dart';
 
 class ProductService {
   final BaseClient _client = BaseClient();
@@ -90,7 +93,9 @@ class ProductService {
     for (final cb in List<VoidCallback>.from(_cacheListeners)) {
       try {
         cb();
-      } catch (_) {}
+      } catch (e) {
+        Log.w('products', 'cache listener threw', error: e);
+      }
     }
   }
 
@@ -147,9 +152,7 @@ class ProductService {
       unawaited(_ensureNamesForPage(page, categoryId: categoryId));
     }
 
-    // Re-prime addon translations for every meal whose addons we've
-    // already fetched, so cart items that already include addons flip to
-    // the new language within a couple of seconds.
+    // Re-prime addon translations so existing cart items flip language within seconds.
     for (final mealId in _addonFetchedMeals.toList()) {
       unawaited(_ensureAddonNamesForMeal(mealId));
     }
@@ -358,9 +361,7 @@ class ProductService {
         if (opt is! Map) continue;
         final name = opt['name']?.toString().trim() ?? '';
         if (name.isEmpty) continue;
-        // Cache under both the top-level addon-entry id and the
-        // `option.id` so a lookup by whichever identifier ended up on
-        // `Extra.id` hits.
+        // Cache under both entry id and option.id so any Extra.id form hits.
         final entryId = raw['id']?.toString();
         final optionId = (opt['id'] ?? opt['option_id'])?.toString();
         for (final key in <String?>[entryId, optionId]) {
@@ -432,7 +433,6 @@ class ProductService {
 
     String endpoint = ApiConstants.categoriesEndpoint;
 
-    // Add query params for filtering
     final params = <String>[];
     if (type != null) {
       params.add('type=$type');
@@ -453,17 +453,14 @@ class ProductService {
             .map((e) => CategoryModel.fromJson(e as Map<String, dynamic>))
             .toList();
 
-        // Cache successful response
         await _cache.set('categories_$type', response['data'],
             expiry: const Duration(hours: 24));
-        // Save to SQLite for offline
         await _offlineDb.saveCategories(
             (response['data'] as List).cast<Map<String, dynamic>>(),
             ApiConstants.branchId);
       }
       return categories;
     } catch (e) {
-      // Return from local database on error
       final local = await _getCategoriesFromLocal();
       if (local.isNotEmpty) return local;
       rethrow;
@@ -476,14 +473,17 @@ class ProductService {
       if (localData.isNotEmpty) {
         return localData.map((e) => CategoryModel.fromJson(e)).toList();
       }
-    } catch (_) {}
-    // Try bundled POS database
+    } catch (e) {
+      Log.w('products', 'offline DB categories read failed', error: e);
+    }
     try {
       final posData = await _posDb.getCategories(ApiConstants.branchId);
       if (posData.isNotEmpty) {
         return posData.map((e) => CategoryModel.fromJson(e)).toList();
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.w('products', 'POS DB categories read failed', error: e);
+    }
     final cached = await _cache.get('categories_null');
     if (cached is List) {
       return cached.map((e) => CategoryModel.fromJson(e)).toList();
@@ -497,14 +497,12 @@ class ProductService {
       return _getCategoriesFromLocal();
     }
 
-    // Check if token is available first
     final token = _client.getToken();
     if (token == null || token.isEmpty) {
-      print('⚠️ getMealCategories: No token available, returning empty list');
+      Log.w('product', 'getMealCategories called with no token — local fallback');
       return _getCategoriesFromLocal();
     }
 
-    // Try multiple endpoints to get categories
     final possibleEndpoints = [
       ApiConstants.mealCategoriesEndpoint,
       ApiConstants.categoriesWithMealsEndpoint,
@@ -526,7 +524,6 @@ class ProductService {
             // Cache successful result
             await _cache.set('meal_categories', data,
                 expiry: const Duration(hours: 24));
-            // Save to SQLite for offline
             await _offlineDb.saveCategories(
                 data.cast<Map<String, dynamic>>(), ApiConstants.branchId);
             return categories;
@@ -535,18 +532,16 @@ class ProductService {
       } on UnauthorizedException {
         rethrow;
       } catch (e) {
-        print('Failed to fetch categories from $endpoint: $e');
+        Log.w('product', 'fetch categories failed at $endpoint', error: e);
         continue;
       }
     }
 
-    // Fallback to local database then cache
     return _getCategoriesFromLocal();
   }
 
   /// Fetch categories with products/meals count
   Future<List<CategoryModel>> getCategoriesWithMeals() async {
-    // Check if token is available first
     final token = _client.getToken();
     if (token == null || token.isEmpty) {
       return [];
@@ -644,18 +639,13 @@ class ProductService {
       return _getProductsFromLocal(categoryId);
     }
 
-    // PERF: in-memory cache per (category, page) with a 60s TTL. Before this
-    // every category tap paid a full network round-trip even when the user
-    // had just viewed the same page; now subsequent taps within the TTL are
-    // served from memory instantly.
+    // PERF: 60s in-memory cache per (category, page) to skip repeat round-trips.
     final cacheKey = 'products_cat_${categoryId ?? "all"}_page_$page';
     final memCached = _memProductCache[cacheKey];
     if (memCached != null && !memCached.isExpired(_memProductTtl)) {
       return memCached.value;
     }
-    // In-flight dedup: if a concurrent caller is already fetching the same
-    // (category, page), piggy-back on its Future instead of firing a second
-    // request. Prevents thrash when rapid scrolls trigger duplicate loads.
+    // In-flight dedup: piggy-back on concurrent fetch for same (category, page).
     final pending = _inFlightProducts[cacheKey];
     if (pending != null) return pending;
 
@@ -683,13 +673,14 @@ class ProductService {
 
         if (response is Map && response['data'] is List) {
           final data = response['data'] as List;
-          final products =
-              data.map((e) => Product.fromJson(e)).toList(growable: false);
-          // Remember this (category, page) pair so [primeLanguages] can
-          // back-fill any newly added language on the same dataset.
+          // Hide meals the merchant toggled off — they must never reach
+          // ordering/sale/KDS surfaces. Re-enable from portal/admin only.
+          final products = data
+              .map((e) => Product.fromJson(e))
+              .where((p) => p.isActive)
+              .toList(growable: false);
+          // Track (category, page) so primeLanguages can back-fill new languages.
           _fetchedPageKeys.add('${categoryId ?? "all"}|$page');
-          // Populate the active-language bucket + english (via translation
-          // maps or explicit `name_en` fields) from the primary response.
           final activeLang = ApiConstants.acceptLanguage.toLowerCase();
           _harvestNamesFromPrimary(
             data,
@@ -697,8 +688,7 @@ class ProductService {
             rawNameMatchesLang: true,
           );
           if (!activeLang.startsWith('en')) {
-            // Pull English only from structured translation fields — the raw
-            // `name` string is in the active language, not English.
+            // Pull English only from translation fields — raw `name` is active-language.
             _harvestNamesFromPrimary(
               data,
               lang: 'en',
@@ -706,11 +696,9 @@ class ProductService {
             );
           }
           _notifyCacheListeners();
-          // Fire-and-forget parallel fetches for any other primed language
-          // (e.g. the CDS needs Arabic while cashier is running English).
+          // Fire-and-forget parallel fetches for other primed languages (CDS).
           unawaited(_ensureNamesForPage(page, categoryId: categoryId));
           _memProductCache[cacheKey] = _CachedEntry(products);
-          // Disk cache page 1 for offline resilience.
           if (page == 1) {
             await _cache.set('products_cat_${categoryId ?? "all"}', data,
                 expiry: const Duration(hours: 1));
@@ -724,7 +712,7 @@ class ProductService {
       } catch (e) {
         return _getProductsFromLocal(categoryId);
       } finally {
-        _inFlightProducts.remove(cacheKey);
+        unawaited(_inFlightProducts.remove(cacheKey));
       }
     }();
     _inFlightProducts[cacheKey] = future;
@@ -745,8 +733,9 @@ class ProductService {
       if (localData.isNotEmpty) {
         return localData.map((e) => Product.fromJson(e)).toList();
       }
-    } catch (_) {}
-    // Try bundled POS database (meals table)
+    } catch (e) {
+      Log.w('products', 'offline DB products read failed', error: e);
+    }
     try {
       final catId = categoryId != null ? int.tryParse(categoryId) : null;
       final posData =
@@ -754,7 +743,9 @@ class ProductService {
       if (posData.isNotEmpty) {
         return posData.map((e) => Product.fromJson(e)).toList();
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.w('products', 'POS DB meals read failed', error: e);
+    }
     final cached = await _cache.get('products_cat_${categoryId ?? "all"}');
     if (cached is List) {
       return cached.map((e) => Product.fromJson(e)).toList();
@@ -767,7 +758,10 @@ class ProductService {
     if (cached is List) {
       try {
         return cached.map((e) => CategoryModel.fromJson(e as Map<String, dynamic>)).toList();
-      } catch (_) {}
+      } catch (e) {
+        // Log stale-cache parse failures so they don't silently empty the panel.
+        Log.w('products', 'meal-categories cache parse failed', error: e);
+      }
     }
     return [];
   }
@@ -777,7 +771,9 @@ class ProductService {
     if (cached is List) {
       try {
         return cached.map((e) => Product.fromJson(e as Map<String, dynamic>)).toList();
-      } catch (_) {}
+      } catch (e) {
+        Log.w('products', 'products cache parse failed', error: e);
+      }
     }
     return [];
   }
@@ -814,7 +810,6 @@ class ProductService {
   /// Note: The API doesn't support GET /meals/{id}, so we filter from list
   Future<Product?> getMealWithDetails(String mealId) async {
     try {
-      // API doesn't support GET for single meal, fetch from list with filter
       final endpoint =
           '/seller/branches/${ApiConstants.branchId}/meals?meal_id=$mealId';
       final response = await _client.get(endpoint);
@@ -824,7 +819,6 @@ class ProductService {
         if (data is List && data.isNotEmpty) {
           final mealData = data.first as Map<String, dynamic>;
 
-          // Also try to fetch meal options/addons separately if not included
           if (mealData['extras'] == null &&
               mealData['add_ons'] == null &&
               mealData['options'] == null) {
@@ -834,8 +828,8 @@ class ProductService {
               if (optionsResponse is Map && optionsResponse['data'] is List) {
                 mealData['extras'] = optionsResponse['data'];
               }
-            } catch (_) {
-              // Options endpoint might not exist, continue without it
+            } catch (e) {
+              Log.d('product', 'options endpoint unavailable for meal=$mealId (non-fatal): $e');
             }
           }
 
@@ -844,7 +838,7 @@ class ProductService {
       }
       return null;
     } catch (e) {
-      print('Error fetching meal details: $e');
+      Log.w('product', 'fetch meal details failed', error: e);
       return null;
     }
   }
@@ -856,9 +850,7 @@ class ProductService {
       final response = await _client.get(endpoint);
 
       final addonEntries = _extractAddonEntries(response);
-      // Seed the active-language option-name bucket, then fire background
-      // fetches for every primed non-active language so CDS invoice-lang
-      // resolution works immediately once the user adds the addon.
+      // Seed active-language bucket + fire background fetches for primed langs (CDS).
       final activeLang = ApiConstants.acceptLanguage.toLowerCase();
       _harvestAddonNamesFromPrimary(addonEntries, lang: activeLang);
       _addonFetchedMeals.add(mealId);
@@ -867,7 +859,7 @@ class ProductService {
           .map((e) => Extra.fromJson(_normalizeExtraJson(e)))
           .toList();
     } catch (e) {
-      print('Error fetching meal add-ons: $e');
+      Log.w('product', 'fetch meal add-ons failed', error: e);
       return [];
     }
   }
@@ -889,7 +881,6 @@ class ProductService {
         final data = response['data'];
 
         if (data is Map) {
-          // Case: data is a Map { "Category1": [...], "Category2": [...] }
           data.forEach((key, value) {
             if (value is List) {
               groupedAddons[key.toString()] = value
@@ -898,7 +889,6 @@ class ProductService {
             }
           });
         } else if (data is List) {
-          // Group by attribute/category name when available.
           for (final item in data) {
             final groupName = _extractAddonGroupName(item);
             final normalized = _normalizeExtraJson(item);
@@ -907,11 +897,7 @@ class ProductService {
           }
         }
 
-        // Seed the active-language bucket from this response, then fire
-        // parallel fetches for every primed non-active language so the CDS
-        // can resolve addon names in any invoice-language pair the cashier
-        // picks — even when the mealAddons endpoint only serves one
-        // language at a time.
+        // Seed active-language + fire parallel fetches for primed langs.
         final activeLang = ApiConstants.acceptLanguage.toLowerCase();
         _harvestAddonNamesFromPrimary(
           data is List ? data : _flattenAddonMap(data as Map),
@@ -920,14 +906,12 @@ class ProductService {
         _addonFetchedMeals.add(mealId);
         unawaited(_ensureAddonNamesForMeal(mealId));
       }
-      // Refresh the presence cache — any non-empty group counts as "has
-      // add-ons". Keeping it in sync with the grouped-fetch saves a second
-      // round-trip when the customization dialog opens right after the tap.
+      // Refresh presence cache to skip round-trip when customization dialog opens.
       final hasAny = groupedAddons.values.any((g) => g.isNotEmpty);
       _addonPresenceCache[mealId] = hasAny;
       return groupedAddons;
     } catch (e) {
-      print('Error fetching grouped meal add-ons: $e');
+      Log.w('product', 'fetch grouped meal add-ons failed', error: e);
       return {};
     }
   }
@@ -941,9 +925,7 @@ class ProductService {
     final cached = _addonPresenceCache[mealId];
     if (cached != null) return cached;
     final grouped = await getMealAddonsGrouped(mealId);
-    // getMealAddonsGrouped already populates the cache, but set explicitly
-    // so a caller that swallowed an exception still gets a deterministic
-    // answer instead of re-fetching forever.
+    // Explicit set in case caller swallowed exception — avoids re-fetch loop.
     final hasAny = grouped.values.any((g) => g.isNotEmpty);
     _addonPresenceCache[mealId] = hasAny;
     return hasAny;
@@ -1001,7 +983,6 @@ class ProductService {
             : <String, dynamic>{'id': payload};
     final normalized = <String, dynamic>{};
 
-    // ID
     if (json['id'] != null) {
       normalized['id'] = json['id'].toString();
     } else if (json['option'] is Map &&
@@ -1020,7 +1001,6 @@ class ProductService {
       normalized['id'] = DateTime.now().millisecondsSinceEpoch.toString();
     }
 
-    // Name
     if (json['name'] != null) {
       normalized['name'] = _readLocalizedText(json['name']);
     } else if (json['option'] is Map && json['option']['name'] != null) {
@@ -1043,7 +1023,6 @@ class ProductService {
       normalized['name'] = 'Extra';
     }
 
-    // Price
     var priceVal = json['price'] ??
         json['operation_price'] ??
         json['attribute_price'] ??
@@ -1054,11 +1033,7 @@ class ProductService {
     priceVal = _parseApiPrice(priceVal);
     normalized['price'] = priceVal is num ? priceVal.toDouble() : 0.0;
 
-    // Preserve translation maps so Extra.fromJson can fill `optionTranslations`
-    // / `attributeTranslations`. Without this, the kitchen ticket + CDS would
-    // lose the cashier's language on cart-side addons because
-    // _normalizeExtraJson strips nested translation fields before forwarding
-    // to the model.
+    // Preserve translation maps so Extra.fromJson can fill optionTranslations/attributeTranslations.
     if (json['option'] is Map) normalized['option'] = json['option'];
     if (json['attribute'] is Map) normalized['attribute'] = json['attribute'];
     for (final key in const [
@@ -1122,7 +1097,7 @@ class ProductService {
 
     text = text.replaceAll('٫', '.').replaceAll('٬', ',');
 
-    // Extract first numeric token to avoid currency dots like "ر.س".
+    // Extract first numeric token to skip currency dots like "ر.س".
     final match = RegExp(r'-?\d+(?:[.,]\d+)?').firstMatch(text);
     if (match == null) return 0.0;
 

@@ -149,9 +149,9 @@ extension OrderServiceBookingHelpers on OrderService {
           rethrow;
         }
         final retryAttempt = attempt + 1;
-        print(
-          '⚠️ createBooking transport error, retrying JSON request (attempt $retryAttempt/$maxAttempts): $e',
-        );
+        Log.w('booking',
+            'createBooking transport error — retrying JSON '
+            'attempt $retryAttempt/$maxAttempts', error: e);
         await Future<void>.delayed(
           Duration(milliseconds: 350 * retryAttempt),
         );
@@ -177,9 +177,9 @@ extension OrderServiceBookingHelpers on OrderService {
           rethrow;
         }
         final retryAttempt = attempt + 1;
-        print(
-          '⚠️ createBooking transport error, retrying multipart request (attempt $retryAttempt/$maxAttempts): $e',
-        );
+        Log.w('booking',
+            'createBooking transport error — retrying multipart '
+            'attempt $retryAttempt/$maxAttempts', error: e);
         await Future<void>.delayed(
           Duration(milliseconds: 350 * retryAttempt),
         );

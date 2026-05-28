@@ -79,10 +79,10 @@ class DottedDivider extends StatelessWidget {
           direction: Axis.horizontal,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: List.generate(dotCount, (_) {
-            return SizedBox(
+            return const SizedBox(
               width: dotWidth,
               height: 2,
-              child: const DecoratedBox(
+              child: DecoratedBox(
                 decoration: BoxDecoration(color: Colors.grey),
               ),
             );

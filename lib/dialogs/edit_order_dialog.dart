@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:hermosa_pos/dialogs/product_customization_dialog.dart';
+import 'package:hermosa_pos/dialogs/salon_service_picker_dialog.dart';
+import 'package:hermosa_pos/dialogs/salon_service_selection_dialog.dart';
 import 'package:hermosa_pos/models.dart';
 import 'package:hermosa_pos/models/booking_invoice.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
@@ -11,13 +14,17 @@ import 'package:hermosa_pos/services/api/error_handler.dart';
 import 'package:hermosa_pos/services/api/order_service.dart';
 import 'package:hermosa_pos/services/api/product_service.dart';
 import 'package:hermosa_pos/services/api/salon_employee_service.dart';
-import 'package:hermosa_pos/dialogs/product_customization_dialog.dart';
-import 'package:hermosa_pos/dialogs/salon_service_picker_dialog.dart';
-import 'package:hermosa_pos/dialogs/salon_service_selection_dialog.dart';
+import 'package:hermosa_pos/services/display_app_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
 import 'package:hermosa_pos/widgets/product_card.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+
 import '../locator.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
+
+part 'edit_order_dialog_parts/edit_order_dialog.helpers.dart';
 
 /// Describes a single change in an order edit.
 /// Types:
@@ -33,8 +40,7 @@ class OrderChange {
   final int? cancelledQuantity;
   final Map<String, String>? localizedNames;
   final List<Extra> extras;
-  // Salon-only: populated for `employee_change` so the kitchen ticket can
-  // print "من <X> إلى <Y>". Null for restaurant rows.
+  // Salon-only: populated for `employee_change` so kitchen ticket prints "من <X> إلى <Y>".
   final String? oldEmployeeName;
   final String? newEmployeeName;
 
@@ -81,23 +87,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
   final List<_EditableOrderItem> _originalItems = [];
   bool _saving = false;
 
-  bool get _useArabicUi {
-    final code = translationService.currentLanguageCode.trim().toLowerCase();
-    return code.startsWith('ar') || code.startsWith('ur');
-  }
-
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
-
-  /// Salon bookings carry `booking_services` while restaurants carry
-  /// `booking_meals`. The product picker pulls the branch's restaurant
-  /// menu (categories like صوصات / تكة دجاج), which is meaningless for a
-  /// salon and lets users build payloads the salon backend can't accept.
-  /// Hide the "+ Add Item" button when the booking is salon — the dialog
-  /// then only supports removing services, which the save-handler routes
-  /// through `processBookingRefund`.
-  /// Customer name for the salon edit ticket. Pulls from the booking
-  /// payload first (carries the freshest client name when a clerk just
-  /// edited it on the booking screen) and falls back to the model field.
+  /// Customer name for the salon edit ticket; prefers booking payload over model field.
   String? get _salonCustomerName {
     final data = _asMap(widget.bookingData['data']) ?? widget.bookingData;
     final raw = (data['customer_name'] ??
@@ -109,11 +99,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     return raw.isEmpty ? null : raw;
   }
 
-  /// Employee name(s) for the salon edit ticket. A salon booking can hold
-  /// services across multiple employees — we join distinct names with " · "
-  /// so the staff sees every person whose schedule the change touches.
-  /// Falls back to the original snapshot when the live `_items` list is
-  /// empty (e.g. a full cancellation).
+  /// Employee names joined with " · "; falls back to original snapshot for full cancellations.
   String? get _salonEmployeeName {
     final names = <String>[];
     final seen = <String>{};
@@ -166,20 +152,14 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     for (final meal in meals) {
       final fresh = _EditableOrderItem.fromMap(meal);
       final original = _EditableOrderItem.fromMap(meal);
-      // Attach the raw salon payload so a rebuild via `?create_order` can
-      // re-emit `card[i]` rows that retain the existing employee/date/time.
-      // Restaurant rows pass through with `salonData == null`.
+      // Attach salon payload so `?create_order` rebuild can re-emit `card[i]` with employee/date/time.
       final isSalonRow =
           meal['service_id'] != null || meal['service_name'] != null;
       if (isSalonRow) {
         final salon = _buildSalonPayloadFromBookingService(meal);
         fresh.salonData = salon;
         original.salonData = salon;
-        // Backend stores salon prices pre-tax (e.g. 260.87 for a 300 SAR
-        // service at 15% VAT). The cashier expects to see and edit the
-        // tax-included price, so gross up for display. The save handler
-        // divides by the same multiplier before posting back to
-        // `?create_order`, so the round-trip stays correct.
+        // Backend stores salon prices pre-tax; gross up for display, save handler divides before POST.
         if (taxMul > 1.0) {
           fresh.unitPrice = fresh.unitPrice * taxMul;
           original.unitPrice = original.unitPrice * taxMul;
@@ -190,9 +170,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     }
   }
 
-  /// Tax multiplier used by salon edit/add to round-trip between the
-  /// pre-tax prices the backend stores and the with-tax prices the cashier
-  /// sees in the edit dialog. Returns 1.0 when the branch has tax disabled.
+  /// Tax multiplier for round-tripping pre-tax backend prices to with-tax UI; 1.0 when disabled.
   double get _salonTaxMultiplier {
     if (!_isSalonBooking) return 1.0;
     final branchService = getIt<BranchService>();
@@ -248,9 +226,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     final matchedOriginals = <int>{};
     final matchedNew = <int>{};
 
-    // PERF: build a mealId → [original indices] index so matching is O(n)
-    // instead of the previous O(n²) nested scan. With 50+ items this cuts
-    // the ~2500-comparison hot path down to one linear pass on save.
+    // PERF: mealId index makes matching O(n) instead of O(n²).
     final originalByMealId = <Object, List<int>>{};
     for (var i = 0; i < _originalItems.length; i++) {
       originalByMealId
@@ -258,7 +234,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
           .add(i);
     }
 
-    // Step 1: Match items by mealId — detect quantity changes
     for (var n = 0; n < _items.length; n++) {
       final newItem = _items[n];
       int? bestMatch;
@@ -282,7 +257,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
 
         if (oldQty != newQty) {
           if (newQty < oldQty) {
-            // Partial cancel — quantity decreased
             changes.add(OrderChange(
               type: 'partial_cancel',
               name: newItem.name,
@@ -293,7 +267,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
               extras: newItem.extras,
             ));
           } else {
-            // Quantity increased
             changes.add(OrderChange(
               type: 'qty_change',
               name: newItem.name,
@@ -307,7 +280,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       }
     }
 
-    // Step 2: Collect unmatched (removed & added)
     final removed = <_EditableOrderItem>[];
     for (var i = 0; i < _originalItems.length; i++) {
       if (!matchedOriginals.contains(i)) removed.add(_originalItems[i]);
@@ -317,13 +289,11 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       if (!matchedNew.contains(n)) added.add(_items[n]);
     }
 
-    // Step 3: Pair removed+added as replacements
     final pairedRemoved = <int>{};
     final pairedAdded = <int>{};
     for (var r = 0; r < removed.length && r < added.length; r++) {
       pairedRemoved.add(r);
       pairedAdded.add(r);
-      // Old item cancelled
       changes.add(OrderChange(
         type: 'replace_old',
         name: removed[r].name,
@@ -331,7 +301,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         localizedNames: removed[r].localizedNames,
         extras: removed[r].extras,
       ));
-      // New item replaces it
       changes.add(OrderChange(
         type: 'replace_new',
         name: added[r].name,
@@ -341,7 +310,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       ));
     }
 
-    // Step 4: Remaining removed = fully cancelled
     for (var r = 0; r < removed.length; r++) {
       if (pairedRemoved.contains(r)) continue;
       changes.add(OrderChange(
@@ -353,7 +321,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       ));
     }
 
-    // Step 5: Remaining added = new additions
     for (var a = 0; a < added.length; a++) {
       if (pairedAdded.contains(a)) continue;
       changes.add(OrderChange(
@@ -368,16 +335,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     return changes;
   }
 
-  /// Salon-aware diff. Mirrors `_detectChanges` for adds / removes / qty
-  /// changes, plus a new `employee_change` row when the service kept its
-  /// id but had its assigned employee swapped (the "تحويل" case the
-  /// cashier asked for). The kitchen-ticket printer renders these as
-  /// "من <X> إلى <Y>".
-  ///
-  /// Inline employee edits committed via `update-booking-data/{id}` only
-  /// mutate `_items[i].salonData`; `_originalItems[i].salonData` keeps the
-  /// pre-edit snapshot, so the comparison here picks up the swap even
-  /// though the network call already happened.
+  /// Salon-aware diff: adds/removes/qty plus `employee_change` (the "تحويل" case).
   List<OrderChange> _detectSalonChanges() {
     final changes = <OrderChange>[];
     final matchedOriginal = <int>{};
@@ -398,8 +356,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       return raw == null || raw.isEmpty ? null : raw;
     }
 
-    // Index originals by mealId (booking_service_id). New rows have
-    // `mealId` starting with `new_` so they never collide.
+    // New rows have `mealId` starting with `new_` so they never collide with originals.
     final originalByMealId = <String, List<int>>{};
     for (var i = 0; i < _originalItems.length; i++) {
       originalByMealId
@@ -463,9 +420,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       }
     }
 
-    // Removed (refunded) services — full cancellations from the dialog's
-    // perspective. The salon save flow routes these through
-    // `processBookingRefund`, so the printed ticket reads as a refund.
+    // Removed services routed via `processBookingRefund` so ticket reads as refund.
     for (var i = 0; i < _originalItems.length; i++) {
       if (matchedOriginal.contains(i)) continue;
       changes.add(OrderChange(
@@ -476,7 +431,6 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       ));
     }
 
-    // Newly added services.
     for (var n = 0; n < _items.length; n++) {
       if (matchedNew.contains(n)) continue;
       changes.add(OrderChange(
@@ -523,7 +477,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       'card',
     ];
 
-    String? _resolveLocalizedName(dynamic value) {
+    String? resolveLocalizedName(dynamic value) {
       if (value == null) return null;
       if (value is Map) {
         final langCode = translationService.currentLanguageCode
@@ -540,15 +494,16 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         }
         return null;
       }
-      var s = value.toString().trim();
-      // Handle JSON-encoded name strings like '{"ar":"...","en":"..."}'
+      final s = value.toString().trim();
       if (s.startsWith('{') && s.contains('"ar"')) {
         try {
           final parsed = Map<String, dynamic>.from(
             (const JsonCodec()).decode(s) as Map,
           );
-          return _resolveLocalizedName(parsed);
-        } catch (_) {}
+          return resolveLocalizedName(parsed);
+        } catch (e) {
+          Log.d('EditOrderDialog', 'localized-name JSON decode failed (non-fatal): $e');
+        }
       }
       return s.isNotEmpty ? s : null;
     }
@@ -564,12 +519,12 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
           final serviceMap = row['service'] is Map
               ? (row['service'] as Map).map((k, v) => MapEntry(k.toString(), v))
               : <String, dynamic>{};
-          final resolvedName = _resolveLocalizedName(row['service_name']) ??
-              _resolveLocalizedName(row['meal_name']) ??
-              _resolveLocalizedName(mealMap['name']) ??
-              _resolveLocalizedName(serviceMap['name']) ??
-              _resolveLocalizedName(row['name']) ??
-              _resolveLocalizedName(row['item_name']);
+          final resolvedName = resolveLocalizedName(row['service_name']) ??
+              resolveLocalizedName(row['meal_name']) ??
+              resolveLocalizedName(mealMap['name']) ??
+              resolveLocalizedName(serviceMap['name']) ??
+              resolveLocalizedName(row['name']) ??
+              resolveLocalizedName(row['item_name']);
           if (resolvedName != null) result['meal_name'] = resolvedName;
           result['quantity'] ??= 1;
           final resolvedPrice = row['unit_price'] ?? row['price'] ??
@@ -615,10 +570,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     await _addProductWithCustomization(product);
   }
 
-  /// Salon add-service flow: pick a service from the catalog, fetch the
-  /// employees that can perform it, then run the existing employee/date/time
-  /// dialog. The accepted result is appended to `_items` carrying its full
-  /// salon payload so the save handler can emit it back as a `card[i]` row.
+  /// Salon add-service: pick service, fetch employees, run selection dialog, append to `_items`.
   Future<void> _addSalonService() async {
     final service =
         await SalonServicePickerDialog.show(context);
@@ -630,17 +582,18 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         : int.tryParse(serviceIdRaw?.toString() ?? '') ?? 0;
     if (serviceId <= 0) return;
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     List<Map<String, dynamic>> employees;
     try {
       employees = await getIt<SalonEmployeeService>()
           .getServiceEmployees(serviceId);
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       employees = const [];
     } finally {
       if (mounted) Navigator.pop(context);
@@ -648,17 +601,11 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
 
     if (!mounted) return;
     if (employees.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_tr(
-          'لا يوجد موظفون متاحون لهذه الخدمة',
-          'No employees available for this service',
-        )),
-      ));
+      UiFeedback.info(context, translationService.t('no_employees_for_service'));
       return;
     }
 
-    // SalonServiceSelectionDialog expects employees as `{id, name}`; the
-    // service-employees endpoint returns `{value, label}` — translate.
+    // Translate `{value, label}` from endpoint to `{id, name}` for SalonServiceSelectionDialog.
     final mapped = employees
         .map((e) => <String, dynamic>{
               'id': e['value'] ?? e['id'],
@@ -667,13 +614,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
             })
         .toList();
 
-    // The catalog price stored on `service['price']` is pre-tax. Gross it
-    // up BEFORE seeding the selection dialog so the cashier sees the
-    // with-tax amount in the price input — consistent with how existing
-    // rows are rendered. We do NOT gross up the dialog's *return* value
-    // because the user already typed/confirmed a with-tax number in that
-    // input; doubling the multiplication produced 350 → 402.50 on a
-    // freshly added مكياج خطوبة (the bug from the screenshot).
+    // Gross up catalog price for selection dialog only; the dialog's return value is already with-tax.
     final taxMul = _salonTaxMultiplier;
     final pickerService = (taxMul > 1.0 && service['price'] is num)
         ? <String, dynamic>{
@@ -694,9 +635,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     });
   }
 
-  /// Salon edit-existing flow: tap on a service row to change its employee /
-  /// date / time. Persists immediately via `update-booking-data/{id}` so the
-  /// surgical edit doesn't get clobbered by a later `?create_order` rebuild.
+  /// Salon edit-existing: persist immediately via `update-booking-data/{id}` to avoid clobbering on rebuild.
   Future<void> _editSalonItem(_EditableOrderItem item) async {
     final salon = item.salonData;
     if (salon == null) return;
@@ -706,11 +645,11 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         : int.tryParse(salon['service_id']?.toString() ?? '') ?? 0;
     if (serviceId <= 0) return;
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     Map<String, dynamic>? serviceData;
     List<Map<String, dynamic>> employees;
@@ -734,15 +673,15 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       }
       employees = await getIt<SalonEmployeeService>()
           .getServiceEmployees(serviceId);
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       employees = const [];
     } finally {
       if (mounted) Navigator.pop(context);
     }
 
     if (!mounted) return;
-    // Fall back to the cached salon payload when the catalog lookup misses
-    // (search by name can be flaky across paginated branches).
+    // Fall back to cached salon payload when catalog search by name misses.
     serviceData ??= <String, dynamic>{
       'id': serviceId,
       'name': salon['item_name'] ?? item.name,
@@ -751,12 +690,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       'minutes_format': '',
     };
     if (employees.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_tr(
-          'لا يوجد موظفون متاحون لهذه الخدمة',
-          'No employees available for this service',
-        )),
-      ));
+      UiFeedback.info(context, translationService.t('no_employees_for_service'));
       return;
     }
 
@@ -791,10 +725,10 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       initialQuantity: salon['quantity'] is int
           ? salon['quantity'] as int
           : int.tryParse(salon['quantity']?.toString() ?? '1') ?? 1,
-      // `item.unitPrice` is already the with-tax display price (grossed up
-      // in `_seedItems`). Falling back to `salon['unitPrice']` would show
-      // the raw pre-tax number (260 instead of 300) — exactly the bug the
-      // user reported.
+      initialSessionNumbers: salon['session_numbers'] is int
+          ? salon['session_numbers'] as int
+          : int.tryParse(salon['session_numbers']?.toString() ?? '0') ?? 0,
+      // `item.unitPrice` is grossed-up in `_seedItems`; salon['unitPrice'] would show pre-tax.
       initialPrice: item.unitPrice > 0
           ? item.unitPrice
           : _parseNum(salon['unitPrice'] ?? salon['price']) *
@@ -802,9 +736,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
     );
     if (result == null || !mounted) return;
 
-    // Persist surgically. `update-booking-data/{bookingServiceId}` updates
-    // employee/date/time in place — preserves the booking_service_id, so a
-    // subsequent refund / receipt referencing it stays correct.
+    // Persist via `update-booking-data/{bookingServiceId}` to preserve the booking_service_id.
     final bookingServiceId = int.tryParse(item.mealId);
     if (bookingServiceId != null && bookingServiceId > 0) {
       try {
@@ -821,23 +753,18 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                 result['employee_name']?.toString() ?? '',
           },
         );
-        // Editing employee / date / time mutates the slot graph in two
-        // places at once: the old (employee, date) tuple frees the slot,
-        // the new (employee, date) tuple consumes one. Both keys are
-        // cached for 2 minutes, so without a clear here the next picker
-        // open will show the old time as still booked AND the new time
-        // as still free — the very symptom the user reported.
+        // Invalidate slot cache: old (employee, date) frees, new consumes — both keys are cached.
         try {
           getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-        } catch (_) {}
+        } catch (e) {
+          Log.d('EditOrderDialog', 'invalidate salon slot cache after service update failed (non-fatal): $e');
+        }
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(ErrorHandler.toUserMessage(
+        UiFeedback.info(context, ErrorHandler.toUserMessage(
             e,
-            fallback: _tr('فشل تعديل الخدمة', 'Failed to update service'),
-          )),
-        ));
+            fallback: translationService.t('service_update_failed'),
+          ));
         return;
       }
     }
@@ -855,11 +782,11 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
 
   Future<void> _addProductWithCustomization(Product product) async {
     if (!mounted) return;
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       final productService = getIt<ProductService>();
@@ -882,7 +809,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         return;
       }
 
-      showDialog(
+      unawaited(showDialog(
         context: context,
         builder: (context) => ProductCustomizationDialog(
           product: activeProduct,
@@ -896,7 +823,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
             ));
           },
         ),
-      );
+      ));
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
@@ -919,20 +846,16 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
   Future<void> _saveChanges() async {
     if (_saving) return;
 
-    // If all items removed, cancel the order instead
     if (_items.isEmpty) {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text(_tr('إلغاء الطلب', 'Cancel Order')),
-          content: Text(_tr(
-            'لا يوجد عناصر في الطلب. هل تريد إلغاء الطلب بالكامل؟',
-            'No items in order. Cancel the entire order?',
-          )),
+          title: Text(translationService.t('cancel_order_title')),
+          content: Text(translationService.t('cancel_entire_order_q')),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: Text(_tr('لا', 'No')),
+              child: Text(translationService.t('no')),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(ctx, true),
@@ -940,7 +863,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                 backgroundColor: const Color(0xFFEF4444),
                 foregroundColor: Colors.white,
               ),
-              child: Text(_tr('نعم، إلغاء الطلب', 'Yes, Cancel Order')),
+              child: Text(translationService.t('yes_cancel_order')),
             ),
           ],
         ),
@@ -953,7 +876,8 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
           orderId: widget.booking.id.toString(),
           status: 8,
         );
-        // Print cancellation ticket for all original items
+        getIt<DisplayAppService>().notifyOrderCancelled(
+            orderId: widget.booking.id.toString());
         if (widget.onPrintChanges != null) {
           final cancelChanges = _originalItems.map((item) => OrderChange(
             type: 'cancel',
@@ -961,9 +885,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
             quantity: item.quantity.round(),
             localizedNames: item.localizedNames,
           )).toList();
-          // Salon kitchen ticket header is the daily_order_number ONLY —
-          // booking_number / id fallbacks are the restaurant convention
-          // and don't apply to the salon edit ticket.
+          // Salon kitchen ticket header uses daily_order_number ONLY (no booking_number/id fallback).
           final mapped =
               _asMap(widget.bookingData['data']) ?? widget.bookingData;
           final dailyOnly = mapped['daily_order_number']?.toString() ?? '';
@@ -987,9 +909,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         Navigator.pop(context, true);
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_tr('فشل إلغاء الطلب', 'Failed to cancel order'))),
-        );
+        UiFeedback.info(context, translationService.t('cancel_order_failed'));
       } finally {
         if (mounted) setState(() => _saving = false);
       }
@@ -1009,26 +929,10 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
           widget.booking.updatedAt ??
           widget.booking.raw['updated_at']?.toString();
 
-      // Salon save flow:
-      //   - Edits to existing services (employee/date/time) were already
-      //     committed inline through `update-booking-data/{id}` in
-      //     `_editSalonItem`, so no extra work is needed here for those.
-      //   - If new services were added, we have to rebuild the booking via
-      //     POST `?create_order` with a full `card[]` (the endpoint replaces
-      //     all booking_services — confirmed against the salon backend).
-      //     This is destructive of booking_service_ids, so we only do it
-      //     when there is at least one new row.
-      //   - When the only change is removals, we route through the refund
-      //     endpoint instead — that preserves audit history (refund_id) and
-      //     keeps the surviving rows' ids intact.
+      // Salon save: inline edits already persisted; additions → `?create_order` rebuild (destructive); removals-only → refund endpoint to preserve ids.
       if (_isSalonBooking) {
-        // Snapshot the diff BEFORE we mutate the backend — the refund /
-        // create_order calls below reset booking_service ids and would
-        // make a post-save diff unreliable.
+        // Snapshot diff before mutating backend (refund/create_order resets booking_service ids).
         final salonChanges = _detectSalonChanges();
-        // Salon kitchen ticket header uses ONLY daily_order_number per the
-        // user's spec — booking_number / id fallbacks are intentionally
-        // dropped here so the printout is consistent across edits.
         final salonOrderNum = data['daily_order_number']?.toString() ?? '';
         final isFullSalonCancel = _items.isEmpty;
 
@@ -1043,15 +947,9 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
             it.salonData != null && it.mealId.startsWith('new_'));
 
         if (hasAdditions) {
-          // Rebuild via ?create_order. Send all surviving + new rows as
-          // card[i]. The backend wipes existing booking_services and
-          // recreates fresh rows from the payload.
+          // Rebuild via ?create_order; backend wipes existing booking_services and recreates from payload.
           final fields = <String, String>{'_method': 'PATCH'};
-          // `_items[i].unitPrice` is the WITH-TAX display price the cashier
-          // sees. Backend stores prices pre-tax, so divide by the tax
-          // multiplier before posting to `?create_order` — otherwise the
-          // service is double-taxed (300 displayed → 300 sent → 300 × 1.15
-          // shown back as 345 next time the dialog opens).
+          // Display price is WITH-TAX; divide by multiplier before POST or service double-taxes.
           final taxMul = _salonTaxMultiplier;
           for (var i = 0; i < _items.length; i++) {
             final it = _items[i];
@@ -1066,8 +964,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
             fields['card[$i][price]'] = (unit * qty).toString();
             fields['card[$i][unitPrice]'] = unit.toString();
             if (salon['modified_unit_price'] != null) {
-              // `modified_unit_price` follows the same pre-tax convention
-              // as `unit_price` on the backend — convert back from display.
+              // `modified_unit_price` is pre-tax on backend like `unit_price` — convert back.
               final modDisplay = _parseNum(salon['modified_unit_price']);
               final modPreTax =
                   taxMul > 1.0 ? modDisplay / taxMul : modDisplay;
@@ -1091,21 +988,18 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
               '/seller/branches/${ApiConstants.branchId}/bookings/${widget.booking.id}?create_order',
               fields,
             );
-            // Salon items in this PATCH-like POST may have shifted dates,
-            // times, or employees. Drop the slot cache so the next booking
-            // picker re-queries the backend instead of re-offering slots
-            // that are now stale.
+            // Invalidate slot cache; PATCH may have shifted dates/times/employees.
             try {
               getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-            } catch (_) {}
+            } catch (e) {
+              Log.d('EditOrderDialog', 'invalidate salon slot cache after order update failed (non-fatal): $e');
+            }
           } catch (e) {
             if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(ErrorHandler.toUserMessage(
+            UiFeedback.info(context, ErrorHandler.toUserMessage(
                 e,
-                fallback: _tr('فشل تعديل الطلب', 'Unable to update order'),
-              )),
-            ));
+                fallback: translationService.t('order_update_failed'),
+              ));
             return;
           }
           if (salonChanges.isNotEmpty &&
@@ -1125,9 +1019,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         }
 
         if (removedIds.isEmpty) {
-          // Edits were already persisted inline (e.g. employee swap via
-          // update-booking-data) — print the diff so the cashier still
-          // gets the "تحويل" / qty-change ticket even when no items moved.
+          // Edits already persisted inline; still print diff for "تحويل"/qty-change ticket.
           if (salonChanges.isNotEmpty &&
               widget.onPrintChanges != null &&
               salonOrderNum.isNotEmpty) {
@@ -1172,8 +1064,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
 
       final payloadItems = _items.map((e) => e.toPayload()).toList();
 
-      // Build type_extra: merge data['type_extra'] with booking.typeExtra,
-      // ensuring table_name is present for restaurant_internal orders.
+      // Merge type_extra ensuring table_name is present for restaurant_internal.
       Map<String, dynamic>? typeExtra;
       final rawTypeExtra = _asMap(data['type_extra']) ?? widget.booking.typeExtra;
       if (rawTypeExtra != null && rawTypeExtra.isNotEmpty) {
@@ -1196,8 +1087,15 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         updatedAt: updatedAt,
         typeExtra: typeExtra,
       );
+      // Stream the new authoritative items to display/KDS so the kitchen sees
+      // adds/removes/quantity edits without waiting on the polling fallback.
+      getIt<DisplayAppService>().notifyOrderItemsChanged(
+        orderId: widget.booking.id.toString(),
+        items: payloadItems,
+        orderNumber: widget.booking.orderNumber,
+        note: notes,
+      );
 
-      // Detect changes and trigger print
       final changes = _detectChanges();
       debugPrint('🔄 Order edit: ${changes.length} changes detected (original=${_originalItems.length} items, new=${_items.length} items)');
       for (final c in changes) {
@@ -1219,11 +1117,9 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       if (!mounted) return;
       final message = ErrorHandler.toUserMessage(
         e,
-        fallback: _tr('تعذر تحديث الطلب', 'Unable to update order'),
+        fallback: translationService.t('order_update_failed'),
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      UiFeedback.info(context, message);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1251,12 +1147,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
         widget.booking.id.toString();
 
     return PopScope(
-      // Block accidental swipe-back / system-back / outside-tap when the
-      // user has unsaved changes — without this, a misclick on the
-      // overlay or a hardware back-press silently throws away their
-      // edits with no chance to recover. We compute "has changes" via
-      // the same diff engine the Save button uses, so a no-op edit
-      // (open/close without touching anything) still pops cleanly.
+      // Block back/swipe/outside-tap when unsaved; uses same diff engine as Save button.
       canPop: !_saving && _detectChanges().isEmpty,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
@@ -1266,22 +1157,19 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
           builder: (ctx) => AlertDialog(
             backgroundColor: Theme.of(ctx).dialogTheme.backgroundColor ??
                 Theme.of(ctx).colorScheme.surface,
-            title: Text(_tr('تجاهل التعديلات؟', 'Discard changes?')),
-            content: Text(_tr(
-              'لديك تعديلات غير محفوظة. هل تريد الخروج بدون حفظ؟',
-              'You have unsaved changes. Exit without saving?',
-            )),
+            title: Text(translationService.t('discard_changes_q')),
+            content: Text(translationService.t('unsaved_changes_exit')),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(false),
-                child: Text(_tr('استمرار التعديل', 'Keep editing')),
+                child: Text(translationService.t('keep_editing')),
               ),
               FilledButton(
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFFDC2626),
                 ),
                 onPressed: () => Navigator.of(ctx).pop(true),
-                child: Text(_tr('تجاهل', 'Discard')),
+                child: Text(translationService.t('discard_label')),
               ),
             ],
           ),
@@ -1325,8 +1213,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _tr('عدّل الأصناف ثم احفظ التغييرات',
-                              'Edit items then save changes'),
+                          translationService.t('edit_items_then_save'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -1362,8 +1249,8 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                                 : _showProductPicker,
                             icon: const Icon(LucideIcons.plus, size: 16),
                             label: Text(_isSalonBooking
-                                ? _tr('إضافة خدمة', 'Add Service')
-                                : _tr('إضافة صنف', 'Add Item')),
+                                ? translationService.t('add_service_btn')
+                                : translationService.t('add_item_btn')),
                           ),
                         ],
                       ),
@@ -1382,8 +1269,8 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                                   : _showProductPicker,
                               icon: const Icon(LucideIcons.plus, size: 16),
                               label: Text(_isSalonBooking
-                                  ? _tr('إضافة خدمة', 'Add Service')
-                                  : _tr('إضافة صنف', 'Add Item')),
+                                  ? translationService.t('add_service_btn')
+                                  : translationService.t('add_item_btn')),
                             ),
                           );
                         }
@@ -1407,7 +1294,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: Text(_tr('إلغاء', 'Cancel')),
+                      child: Text(translationService.t('cancel')),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1426,8 +1313,8 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                           : const Icon(LucideIcons.save, size: 16),
                       label: Text(
                         _saving
-                            ? _tr('جارٍ الحفظ...', 'Saving...')
-                            : _tr('حفظ التعديلات', 'Save Changes'),
+                            ? translationService.t('saving_dots')
+                            : translationService.t('save_changes_btn'),
                       ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF58220),
@@ -1499,13 +1386,13 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
                   onPressed: () => _editSalonItem(item),
                   icon: const Icon(LucideIcons.pencil, size: 16),
                   color: const Color(0xFFF58220),
-                  tooltip: _tr('تعديل الخدمة', 'Edit service'),
+                  tooltip: translationService.t('edit_service'),
                 ),
               IconButton(
                 onPressed: () => setState(() => _items.remove(item)),
                 icon: const Icon(LucideIcons.trash2, size: 16),
                 color: const Color(0xFFEF4444),
-                tooltip: _tr('حذف', 'Remove'),
+                tooltip: translationService.t('remove_word'),
               ),
             ],
           ),
@@ -1590,8 +1477,7 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       ),
     );
     if (isSalonRow) {
-      // Tapping anywhere on a salon row opens the same employee/date/time
-      // editor as the pencil button — easier hit target on touch screens.
+      // Tap anywhere on salon row to open the editor (easier touch target).
       return InkWell(
         onTap: () => _editSalonItem(item),
         borderRadius: BorderRadius.circular(12),
@@ -1599,524 +1485,5 @@ class _EditOrderDialogState extends State<EditOrderDialog> {
       );
     }
     return card;
-  }
-}
-
-class _QtyButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  const _QtyButton({required this.icon, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: context.appSurfaceAlt,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: context.appBorder),
-        ),
-        child: Icon(icon, size: 14, color: context.appText),
-      ),
-    );
-  }
-}
-
-class _EditableOrderItem {
-  final String mealId;
-  String name;
-  double quantity;
-  double unitPrice;
-  final List<Extra> extras;
-  final String notes;
-  final Map<String, String>? localizedNames;
-
-  /// Salon-only payload mirroring the booking-create `card[i]` shape.
-  /// Set when the row represents a salon `booking_service` (existing or
-  /// freshly added through SalonServiceSelectionDialog). Restaurant rows
-  /// leave this null.
-  Map<String, dynamic>? salonData;
-
-  _EditableOrderItem({
-    required this.mealId,
-    required this.name,
-    required this.quantity,
-    required this.unitPrice,
-    required this.extras,
-    required this.notes,
-    this.localizedNames,
-    this.salonData,
-  });
-
-  double get totalPrice {
-    final extrasTotal = extras.fold<double>(0.0, (sum, e) => sum + e.price);
-    return (unitPrice + extrasTotal) * quantity;
-  }
-
-  bool isSameLine(_EditableOrderItem other) {
-    if (mealId != other.mealId) return false;
-    if (notes.trim() != other.notes.trim()) return false;
-    final a = extras.map((e) => e.id).toList()..sort();
-    final b = other.extras.map((e) => e.id).toList()..sort();
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  Map<String, dynamic> toPayload() {
-    return {
-      'meal_id': mealId,
-      'meal_name': name,
-      'item_name': name,
-      'quantity': quantity.round().clamp(1, 9999),
-      'price': unitPrice,
-      'unit_price': unitPrice,
-      if (notes.isNotEmpty) 'note': notes,
-      if (extras.isNotEmpty)
-        'addons': extras
-            .map((e) => int.tryParse(e.id.toString().trim()))
-            .whereType<int>()
-            .toList(),
-    };
-  }
-
-  static _EditableOrderItem fromProduct(
-    Product product, {
-    double quantity = 1,
-    List<Extra> extras = const [],
-    String notes = '',
-  }) {
-    return _EditableOrderItem(
-      mealId: product.id,
-      name: product.name,
-      quantity: quantity,
-      unitPrice: product.price,
-      extras: extras,
-      notes: notes,
-      localizedNames: product.localizedNames.isNotEmpty ? product.localizedNames : null,
-    );
-  }
-
-  /// Build an editable row from a freshly-picked salon service. The dialog
-  /// returns a payload identical in shape to the salon `card[i]` row, so we
-  /// stash it on `salonData` for the save handler to re-emit verbatim.
-  static _EditableOrderItem fromSalonResult(Map<String, dynamic> result) {
-    final unit = result['unitPrice'] is num
-        ? (result['unitPrice'] as num).toDouble()
-        : double.tryParse(result['unitPrice']?.toString() ?? '') ?? 0.0;
-    final qty = result['quantity'] is num
-        ? (result['quantity'] as num).toInt()
-        : int.tryParse(result['quantity']?.toString() ?? '') ?? 1;
-    return _EditableOrderItem(
-      // Negative synthetic id keeps the new row distinguishable from any
-      // existing booking_service_id (always positive). The save handler
-      // emits a plain card[i] for these without a `booking_service_id`.
-      mealId:
-          'new_${DateTime.now().microsecondsSinceEpoch}_${result['service_id']}',
-      name: result['item_name']?.toString() ?? '',
-      quantity: qty.toDouble(),
-      unitPrice: unit,
-      extras: const [],
-      notes: '',
-      salonData: Map<String, dynamic>.from(result),
-    );
-  }
-
-  static _EditableOrderItem fromMap(Map<String, dynamic> map) {
-    final langCode = translationService.currentLanguageCode
-        .trim()
-        .toLowerCase();
-    final useAr = langCode.startsWith('ar') || langCode.startsWith('ur');
-    final preferredLang = useAr ? 'ar' : 'en';
-
-    String? resolveLocalized(dynamic value) {
-      if (value == null) return null;
-      if (value is Map) {
-        final localized = value[preferredLang]?.toString().trim();
-        if (localized != null && localized.isNotEmpty) return localized;
-        for (final v in value.values) {
-          final s = v?.toString().trim() ?? '';
-          if (s.isNotEmpty) return s;
-        }
-        return null;
-      }
-      var s = value.toString().trim();
-      if (s.startsWith('{') && s.contains('"ar"')) {
-        try {
-          final parsed = Map<String, dynamic>.from(jsonDecode(s) as Map);
-          return resolveLocalized(parsed);
-        } catch (_) {}
-      }
-      return s.isNotEmpty ? s : null;
-    }
-
-    String? pickText(List<dynamic> values) {
-      for (final value in values) {
-        final text = resolveLocalized(value);
-        if (text != null && text.isNotEmpty) return text;
-      }
-      return null;
-    }
-
-    String mealId = pickText([
-          map['meal_id'],
-          map['product_id'],
-          map['item_id'],
-          map['id'],
-          map['meal'] is Map ? (map['meal'] as Map)['id'] : null,
-        ]) ??
-        '';
-    if (mealId.isEmpty) {
-      mealId = DateTime.now().millisecondsSinceEpoch.toString();
-    }
-
-    final mealMap = map['meal'] is Map
-        ? (map['meal'] as Map).map((k, v) => MapEntry(k.toString(), v))
-        : <String, dynamic>{};
-    final serviceMap = map['service'] is Map
-        ? (map['service'] as Map).map((k, v) => MapEntry(k.toString(), v))
-        : <String, dynamic>{};
-
-    // Salon rows expose `service_name`; restaurant rows use `meal_name`.
-    // Without `service_name` first, salon services rendered as the literal
-    // "Item" fallback in the edit-order dialog list.
-    final name = pickText([
-          map['service_name'],
-          map['meal_name'],
-          map['item_name'],
-          map['name'],
-          map['title'],
-          mealMap['name'],
-          serviceMap['name'],
-        ]) ??
-        'Item';
-
-    double parseNum(dynamic value) {
-      if (value == null) return 0.0;
-      if (value is num) return value.toDouble();
-      if (value is Map) return 0.0;
-      final cleaned =
-          value.toString().replaceAll(',', '').replaceAll(RegExp(r'[^\d.\-]'), '');
-      return double.tryParse(cleaned) ?? 0.0;
-    }
-
-    final quantity = parseNum(map['quantity']).clamp(1, 9999).toDouble();
-    var unitPrice =
-        parseNum(map['unit_price'] ?? map['unitPrice'] ?? map['price']);
-    if (unitPrice == 0 && mealMap.isNotEmpty) {
-      unitPrice = parseNum(mealMap['price'] ?? mealMap['unit_price']);
-    }
-
-    final extras = <Extra>[];
-    final extrasRaw = map['extras'] ??
-        map['addons'] ??
-        map['add_ons'] ??
-        map['options'] ??
-        map['modifiers'] ??
-        map['operations'];
-    if (extrasRaw is List) {
-      for (final entry in extrasRaw) {
-        if (entry is Map) {
-          extras.add(Extra.fromJson(
-              entry.map((k, v) => MapEntry(k.toString(), v))));
-        } else if (entry != null) {
-          extras.add(Extra(id: entry.toString(), name: entry.toString(), price: 0));
-        }
-      }
-    } else if (extrasRaw is Map) {
-      final nested = extrasRaw['operations'] ?? extrasRaw['items'];
-      if (nested is List) {
-        for (final entry in nested) {
-          if (entry is Map) {
-            extras.add(Extra.fromJson(
-                entry.map((k, v) => MapEntry(k.toString(), v))));
-          }
-        }
-      }
-    }
-
-    // Extract localizedNames from meal_name_translations
-    final Map<String, String>? locNames;
-    final mt = map['meal_name_translations'];
-    if (mt is Map) {
-      locNames = {};
-      for (final e in mt.entries) {
-        final v = e.value?.toString().trim() ?? '';
-        if (v.isNotEmpty) locNames[e.key.toString()] = v;
-      }
-    } else {
-      locNames = null;
-    }
-
-    return _EditableOrderItem(
-      mealId: mealId,
-      name: name,
-      quantity: quantity,
-      unitPrice: unitPrice,
-      extras: extras,
-      notes: map['note']?.toString() ?? map['notes']?.toString() ?? '',
-      localizedNames: locNames,
-    );
-  }
-}
-
-class _ProductPickerDialog extends StatefulWidget {
-  final double taxRate;
-  const _ProductPickerDialog({this.taxRate = 0.0});
-
-  @override
-  State<_ProductPickerDialog> createState() => _ProductPickerDialogState();
-}
-
-class _ProductPickerDialogState extends State<_ProductPickerDialog> {
-  final ProductService _productService = getIt<ProductService>();
-  final ScrollController _scrollController = ScrollController();
-  final TextEditingController _searchController = TextEditingController();
-
-  String? get _salonPlaceholderLogo {
-    if (ApiConstants.branchModule != 'salons') return null;
-    final cached = getIt<BranchService>().cachedBranchReceiptInfo;
-    if (cached == null) return null;
-    String url = (cached['branch_logo_url']?.toString() ?? '').trim();
-    if (url.isEmpty) {
-      final branch = cached['branch'];
-      if (branch is Map) {
-        for (final key in const ['logo', 'image']) {
-          final v = branch[key]?.toString().trim() ?? '';
-          if (v.isNotEmpty && v.toLowerCase() != 'null') {
-            url = v;
-            break;
-          }
-        }
-      }
-    }
-    if (url.isEmpty) return null;
-    if (url.startsWith('/')) url = '${ApiConstants.baseUrl}$url';
-    return url;
-  }
-
-  List<CategoryModel> _categories = [];
-  List<Product> _products = [];
-  String _selectedCategory = 'all';
-  bool _isLoading = false;
-  bool _isLastPage = false;
-  int _page = 1;
-
-  bool get _useArabicUi {
-    final code = translationService.currentLanguageCode.trim().toLowerCase();
-    return code.startsWith('ar') || code.startsWith('ur');
-  }
-
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCategories();
-    _loadProducts();
-    _scrollController.addListener(_onScroll);
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-            _scrollController.position.maxScrollExtent - 180 &&
-        !_isLoading &&
-        !_isLastPage) {
-      _loadMore();
-    }
-  }
-
-  Future<void> _loadCategories() async {
-    try {
-      final categories = await _productService.getMealCategories();
-      if (!mounted) return;
-      setState(() => _categories = categories);
-    } catch (_) {
-      // Ignore.
-    }
-  }
-
-  Future<void> _loadProducts({bool reset = true}) async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
-
-    if (reset) {
-      _page = 1;
-      _isLastPage = false;
-    }
-
-    try {
-      final products = await _productService.getProducts(
-        categoryId: _selectedCategory,
-        page: _page,
-      );
-      if (!mounted) return;
-      setState(() {
-        if (reset) {
-          _products = products;
-        } else {
-          _products.addAll(products);
-        }
-        _isLastPage = products.length < 10;
-      });
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _loadMore() async {
-    if (_isLastPage || _isLoading) return;
-    setState(() => _page += 1);
-    await _loadProducts(reset: false);
-  }
-
-  List<Product> get _filteredProducts {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) return _products;
-    return _products
-        .where((p) => p.name.toLowerCase().contains(query))
-        .toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    final isCompact = size.width < 700;
-    final dialogWidth = isCompact ? size.width * 0.92 : size.width * 0.8;
-    final dialogHeight = isCompact ? size.height * 0.82 : size.height * 0.78;
-
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: SizedBox(
-        width: dialogWidth,
-        height: dialogHeight,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _tr('اختر صنفاً', 'Select an item'),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: _searchController,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  hintText: _tr('ابحث عن صنف', 'Search items'),
-                  prefixIcon: const Icon(Icons.search),
-                  filled: true,
-                  fillColor: context.appSurfaceAlt,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (_categories.isNotEmpty)
-              SizedBox(
-                height: 40,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  itemCount: _categories.length + 1,
-                  itemBuilder: (context, index) {
-                    final isAll = index == 0;
-                    final category =
-                        isAll ? null : _categories[index - 1];
-                    final label = isAll
-                        ? _tr('الكل', 'All')
-                        : category?.name ?? '';
-                    final value = isAll ? 'all' : category!.id;
-                    final selected = _selectedCategory == value;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        selected: selected,
-                        label: Text(label),
-                        onSelected: (_) {
-                          setState(() => _selectedCategory = value);
-                          _loadProducts(reset: true);
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: _filteredProducts.isEmpty && !_isLoading
-                  ? Center(
-                      child: Text(
-                        translationService.t('no_products'),
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                    )
-                  : GridView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(16),
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: isCompact ? 2 : 4,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: isCompact ? 0.72 : 0.78,
-                      ),
-                      itemCount: _filteredProducts.length +
-                          (_isLoading || !_isLastPage ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index >= _filteredProducts.length) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-                        final product = _filteredProducts[index];
-                        return ProductCard(
-                          product: product,
-                          taxRate: widget.taxRate,
-                          priceIsTaxInclusive:
-                              ApiConstants.branchModule == 'salons',
-                          placeholderImageUrl: _salonPlaceholderLogo,
-                          onTap: () => Navigator.pop(context, product),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

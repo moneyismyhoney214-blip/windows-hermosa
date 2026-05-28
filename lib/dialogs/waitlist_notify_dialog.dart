@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../locator.dart';
 import '../models/waitlist_entry.dart';
+import '../services/api/branch_service.dart';
+import '../services/api/country_code_service.dart';
 import '../services/app_themes.dart';
 import '../services/language_service.dart';
 import '../services/waitlist_assign_controller.dart';
 import '../services/waitlist_service.dart';
 import '../services/whatsapp_service.dart';
+import '../utils/ui_feedback.dart';
+import '../waiter_module/services/waiter_controller.dart';
 
-// SMS as a notification channel was removed — every dispatch goes
-// through WhatsApp (WAWP API → wa.me fallback).
+// SMS removed — every dispatch goes through WhatsApp (WAWP API → wa.me fallback).
 
 /// Confirmation + send dialog used by both the cashier and waiter
 /// screens. Shows the rendered message preview, lets the host flip
@@ -61,11 +65,45 @@ class _WaitlistNotifyDialogState extends State<WaitlistNotifyDialog> {
   Future<void> _send() async {
     setState(() => _sending = true);
 
+    // WAWP creds aren't persisted; pull from memory, branch-settings fetch, then LAN mesh — otherwise waiter falls back to host's personal WhatsApp.
+    await whatsAppService.initialize();
+    if (!whatsAppService.config.isApiReady) {
+      debugPrint('📨 [Waitlist-WA] no WAWP creds yet — fetching branch settings');
+      try {
+        final s = await getIt<BranchService>().getBranchSettings(forceRefresh: true);
+        debugPrint('📨 [Waitlist-WA] branch-settings whatsapp block: ${s['whatsapp']}');
+      } catch (e) {
+        debugPrint('📨 [Waitlist-WA] getBranchSettings failed: $e');
+      }
+    }
+    if (!whatsAppService.config.isApiReady) {
+      // Waiter device: prod the connected cashier to (re)push its config.
+      try {
+        final wc = getIt<WaiterController>();
+        if (wc.isRunning) {
+          wc.requestConfigSync();
+          for (var i = 0; i < 12; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 250));
+            if (whatsAppService.config.isApiReady) break;
+          }
+        }
+      } catch (e) {
+        debugPrint('📨 [Waitlist-WA] config-sync request failed: $e');
+      }
+    }
+    debugPrint('📨 [Waitlist-WA] sending — isApiReady=${whatsAppService.config.isApiReady} '
+        'instanceLen=${(whatsAppService.config.instanceId ?? '').length} '
+        'tokenLen=${(whatsAppService.config.accessToken ?? '').length}');
+
+    // Pass branch country code so prefix-less stored numbers (e.g. EG "1090081223") get normalized — otherwise WAWP rejects as +1/AG.
     final result = await whatsAppService.sendTableReady(
       rawPhone: widget.entry.phoneNumber,
       customerName: widget.entry.customerName,
       tableNumber: widget.tableNumber,
+      countryCodeOverride: countryCodeService.defaultForBranch().areaCode,
     );
+    debugPrint('📨 [Waitlist-WA] result — ok=${result.ok} '
+        'via=${result.deliveredVia} err=${result.errorMessage}');
 
     if (!mounted) return;
 
@@ -85,57 +123,21 @@ class _WaitlistNotifyDialogState extends State<WaitlistNotifyDialog> {
     waitlistAssignController.clear();
 
     if (!mounted) return;
-    _showSuccessSnack(result.deliveredVia);
     Navigator.of(context).pop(true);
   }
 
   String _translateFailureReason(String reason) {
-    // Map the service's raw reason codes to a user-friendly key.
+    // No wa.me fallback — non-phone failures funnel into a single support message.
     switch (reason) {
       case 'invalid_phone':
         return 'waitlist_send_error_phone';
-      case 'wa_not_installed':
-        return 'waitlist_send_error_whatsapp_missing';
-      case 'wawp_timeout':
-        return 'waitlist_send_error_timeout';
       default:
-        return 'waitlist_send_error_generic';
+        return 'waitlist_send_error_support';
     }
   }
 
   void _showErrorSnack(String key) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFFDC2626),
-        behavior: SnackBarBehavior.floating,
-        content: Text(
-          translationService.t(key),
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
-  }
-
-  void _showSuccessSnack(WhatsAppSendChannel via) {
-    final key = via == WhatsAppSendChannel.wawpApi
-        ? 'waitlist_send_success_api'
-        : 'waitlist_send_success_whatsapp';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFF10B981),
-        behavior: SnackBarBehavior.floating,
-        content: Text(
-          translationService.t(
-            key,
-            args: {
-              'name': widget.entry.customerName,
-              'table': widget.tableNumber,
-            },
-          ),
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
+    UiFeedback.error(context, translationService.t(key));
   }
 
   @override

@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../order_panel.dart';
 
 extension OrderPanelCartWidgets on _OrderPanelState {
@@ -148,11 +148,8 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                   widget.selectedCustomer?.name ??
                       ((widget.isSalonMode ||
                               widget.requireCustomerSelection)
-                          ? _tr('يجب اختيار عميل', 'Customer is required')
-                          : _tr(
-                              'اختيار العميل (اختياري)',
-                              'Select Customer (Optional)',
-                            )),
+                          ? translationService.t('customer_required')
+                          : translationService.t('select_customer_optional')),
                   style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: widget.selectedCustomer != null
@@ -189,7 +186,7 @@ extension OrderPanelCartWidgets on _OrderPanelState {
           : '${promoCode.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
       displayText = '${promoCode.code} ($discountText)';
     } else {
-      displayText = _tr('كود الكوبون - اضغط للبحث', 'Coupon Code - Tap to search');
+      displayText = translationService.t('coupon_code_tap_search_v2');
     }
 
     return Padding(
@@ -283,16 +280,14 @@ extension OrderPanelCartWidgets on _OrderPanelState {
           const SizedBox(height: 16),
           Text(
               widget.isSalonMode
-                  ? _tr('لا توجد خدمات', 'No services')
-                  : _tr('لا توجد عناصر', 'No items'),
+                  ? translationService.t('no_services_v2')
+                  : translationService.t('no_items_label'),
               style: TextStyle(color: context.appTextMuted, fontSize: 16)),
           const SizedBox(height: 4),
           Text(
               widget.isSalonMode
-                  ? _tr('ابدأ بإضافة خدمات للحجز',
-                      'Start adding services to booking')
-                  : _tr('ابدأ بإضافة منتجات للسلة',
-                      'Start adding products to cart'),
+                  ? translationService.t('start_adding_services_booking')
+                  : translationService.t('start_adding_products'),
               style: TextStyle(color: context.appTextSubtle, fontSize: 12)),
         ],
       ),
@@ -347,7 +342,7 @@ extension OrderPanelCartWidgets on _OrderPanelState {
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '${_tr('ملاحظة', 'Note')}: ${item.notes}',
+                  '${translationService.t('note_label')}: ${item.notes}',
                   style: const TextStyle(
                       fontSize: 11,
                       color: Colors.orange,
@@ -370,7 +365,7 @@ extension OrderPanelCartWidgets on _OrderPanelState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _tr('الإضافات', 'Add-ons'),
+                        translationService.t('addons_word'),
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -535,7 +530,7 @@ extension OrderPanelCartWidgets on _OrderPanelState {
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '${_tr('ملاحظة', 'Note')}: ${item.notes}',
+                  '${translationService.t('note_label')}: ${item.notes}',
                   style: const TextStyle(
                       fontSize: 11,
                       color: Colors.orange,

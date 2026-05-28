@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenSession on _MainScreenState {
@@ -16,7 +16,8 @@ extension MainScreenSession on _MainScreenState {
     final CashierMeshBootstrap bootstrap;
     try {
       bootstrap = getIt<CashierMeshBootstrap>();
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       return;
     }
     bootstrap.setDevicesProvider(() => _devices);
@@ -37,15 +38,17 @@ extension MainScreenSession on _MainScreenState {
       final bootstrap = getIt<CashierMeshBootstrap>();
       if (!bootstrap.isStarted) return;
       unawaited(bootstrap.broadcastKitchenPrintersConfig());
-    } catch (_) {}
+    } catch (e) {
+      Log.d('MainScreenSession', 'broadcast cashier printers config failed (non-fatal): $e');
+    }
   }
 
   Future<void> _redirectToLogin() async {
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
+    unawaited(Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const LoginScreen()),
       (route) => false,
-    );
+    ));
   }
 
   Future<void> _bootstrapSessionAndLoad() async {
@@ -72,18 +75,15 @@ extension MainScreenSession on _MainScreenState {
           return;
         }
 
-        Navigator.of(context).pushReplacement(
+        unawaited(Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => BranchSelectionScreen(branches: branches),
           ),
-        );
+        ));
         return;
       }
 
-      // Always refresh branchModule + haveWaiters from /seller/branches —
-      // login response lacks these keys, and a stale `haveWaiters=true`
-      // from a prior session would leak waiter buttons into a branch that
-      // had the feature disabled afterwards.
+      // Refresh branchModule + haveWaiters from /seller/branches — login response lacks these keys.
       try {
         final authService = getIt<AuthService>();
         final branches = await authService.getBranches();
@@ -96,21 +96,17 @@ extension MainScreenSession on _MainScreenState {
           await authService.persistHaveWaiters(active.haveWaiters);
           await authService.persistWhatsappEnabled(active.whatsappStatus);
         }
-      } catch (_) {}
+      } catch (e) {
+        Log.d('MainScreenSession', 'refresh branchModule/haveWaiters failed (non-fatal): $e');
+      }
 
-      // Kick the waiter-mesh viewer once the branch is confirmed. Runs in
-      // parallel with the bootstrap data loads — the mesh doesn't need
-      // products / settings to come up, and the printer snapshot uses
-      // the provider callback so it stays accurate as devices load.
+      // Mesh viewer runs in parallel with bootstrap; printer snapshot via provider keeps device list live.
       _startCashierMesh();
 
-      // PERF: parallelize the independent bootstrap calls. Cashier settings,
-      // user profile, branch settings, and initial data have no inter-deps,
-      // so run them concurrently instead of sequentially.
+      // PERF: parallelise bootstrap (no inter-deps between these calls).
       final branchService = getIt<BranchService>();
       unawaited(branchService.getBranchSettings());
-      // Authoritative tax refresh — wins over the login-payload values
-      // when the branch's VAT settings change between sessions.
+      // Tax refresh wins over login-payload values when VAT settings change between sessions.
       unawaited(branchService.refreshTaxConfig());
       unawaited(branchService.fetchAndCacheBranchReceiptInfo().then((_) {
         _prewarmReceiptCache();
@@ -141,9 +137,9 @@ extension MainScreenSession on _MainScreenState {
       _cachedBranchMap = Map<String, dynamic>.from(branch);
       final seller = branch['seller'];
       final originalSeller = branch['original_seller'];
-      if (seller is Map && (seller as Map).isNotEmpty) {
+      if (seller is Map && (seller).isNotEmpty) {
         _cachedSellerInfo ??= Map<String, dynamic>.from(seller);
-      } else if (originalSeller is Map && (originalSeller as Map).isNotEmpty) {
+      } else if (originalSeller is Map && (originalSeller).isNotEmpty) {
         _cachedSellerInfo ??= Map<String, dynamic>.from(originalSeller);
       }
     }
@@ -155,20 +151,18 @@ extension MainScreenSession on _MainScreenState {
   Future<void> _loadUserData() async {
     final authService = getIt<AuthService>();
 
-    // First try from cached/stored data
     final cachedUser = authService.getUser();
     if (cachedUser != null) {
       _updateUserUI(cachedUser);
     }
 
-    // Then fetch fresh profile from API
     try {
       final profile = await authService.getProfile();
       if (profile['data'] != null) {
         _updateUserUI(profile['data']);
       }
     } catch (e) {
-      print('⚠️ Failed to fetch fresh profile: $e');
+      Log.w('session', 'failed to fetch fresh profile', error: e);
     }
   }
 
@@ -182,21 +176,18 @@ extension MainScreenSession on _MainScreenState {
     getIt<DisplayAppService>().setProfileNearPayOption(
       nearPayEnabledFromProfile,
     );
-    // Gate the local SDK on the same profile flag — mirrors what the reference
-    // Display App does when it receives NEARPAY_INIT over WebSocket
-    // (display_app/lib/services/socket_service.dart: setNearPayEnabled).
+    // Gate local SDK on the profile flag — mirrors Display App's NEARPAY_INIT handler.
     NearPayConfigService().setNearPayEnabled(nearPayEnabledFromProfile);
     debugPrint(
       '🔷 Profile options: nearpay=$nearPayEnabledFromProfile '
       '(raw options keys: ${optionsMap.keys.join(',')})',
     );
-    // Pre-warm the JWT cache so AUTH_CHALLENGE always gets a JWT immediately.
+    // Pre-warm JWT cache so AUTH_CHALLENGE gets a JWT immediately.
     if (nearPayEnabledFromProfile) {
       NearPayService().generateJwt().then((_) {}).catchError((Object e) {
         debugPrint('⚠️ NearPay JWT pre-warm failed: $e');
       });
-      // Bootstrap the local NearPay SDK (same flow the reference Display App
-      // runs after receiving NEARPAY_INIT over WebSocket).
+      // Bootstrap local NearPay SDK (matches Display App's NEARPAY_INIT flow).
       NearPayBootstrap.ensureInitialized().then((ok) {
         debugPrint(ok
             ? '✅ NearPayBootstrap: SDK ready'
@@ -284,7 +275,6 @@ extension MainScreenSession on _MainScreenState {
   Future<void> _handleLogout() async {
     final authService = AuthService();
 
-    // Show confirmation dialog
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -305,35 +295,32 @@ extension MainScreenSession on _MainScreenState {
     );
 
     if (confirm == true) {
-      // Show loading
       if (mounted) {
-        showDialog(
+        unawaited(showDialog(
           context: context,
           barrierDismissible: false,
           builder: (context) =>
               const Center(child: CircularProgressIndicator()),
-        );
+        ));
       }
 
       await authService.logout();
 
       if (mounted) {
-        // Clear navigation and go to login
-        Navigator.of(context).pushAndRemoveUntil(
+        unawaited(Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginScreen()),
           (route) => false,
-        );
+        ));
       }
     }
   }
 
   Future<void> _handleSwitchBranch() async {
-    // Show loading
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       final authService = getIt<AuthService>();
@@ -347,6 +334,7 @@ extension MainScreenSession on _MainScreenState {
             context,
           ).showSnackBar(
             SnackBar(
+                duration: const Duration(seconds: 3),
                 content: Text(translationService.t('no_branches_available'))),
           );
         }
@@ -354,11 +342,11 @@ extension MainScreenSession on _MainScreenState {
       }
 
       if (mounted) {
-        Navigator.of(context).push(
+        unawaited(Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => BranchSelectionScreen(branches: branches),
           ),
-        );
+        ));
       }
     } catch (e) {
       if (mounted) {
@@ -367,6 +355,7 @@ extension MainScreenSession on _MainScreenState {
           context,
         ).showSnackBar(
           SnackBar(
+            duration: const Duration(seconds: 3),
             content: Text(
               translationService.t('branch_fetch_error', args: {'error': e}),
             ),

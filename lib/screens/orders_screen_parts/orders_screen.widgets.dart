@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../orders_screen.dart';
 
 extension OrdersScreenWidgets on _OrdersScreenState {
@@ -8,7 +8,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
     final searchWidth = (width * 0.25).clamp(180.0, 280.0).toDouble();
     final isSalonMode = ApiConstants.branchModule == 'salons';
     final headerTitle = isSalonMode
-        ? _tr('فواتير معلقة', 'Pending Invoices')
+        ? translationService.t('pending_invoices')
         : translationService.t('orders');
 
     final searchField = TextField(
@@ -28,10 +28,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
         _loadData();
       },
       decoration: InputDecoration(
-        hintText: _tr(
-          'بحث برقم الطلب (مثال: #258469)',
-          'Search by order ID (e.g. #258469)',
-        ),
+        hintText: translationService.t('search_by_order_id'),
         isDense: true,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -53,8 +50,6 @@ extension OrdersScreenWidgets on _OrdersScreenState {
     );
 
     return Container(
-      padding:
-          EdgeInsets.symmetric(horizontal: isCompact ? 12 : 16, vertical: 12),
       decoration: BoxDecoration(
         color: context.appCardBg,
         boxShadow: [
@@ -65,7 +60,15 @@ extension OrdersScreenWidgets on _OrdersScreenState {
           ),
         ],
       ),
-      child: isCompact
+      // Paint the header background up into the status-bar inset, but keep
+      // the actual controls below the notch so the title never collides with
+      // the OS clock / signal indicators.
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+              horizontal: isCompact ? 12 : 16, vertical: 12),
+          child: isCompact
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -137,6 +140,8 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                 ),
               ],
             ),
+        ),
+      ),
     );
   }
 
@@ -304,8 +309,8 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      _tr('طاولة: ${booking.tableName}',
-                          'Table: ${booking.tableName}'),
+                      translationService.t('table_colon_n',
+                          args: {'name': booking.tableName ?? ''}),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: Colors.grey.shade700),
@@ -322,7 +327,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _tr('الإجمالي', 'Total'),
+                        translationService.t('total'),
                         style: TextStyle(
                           color: Colors.grey.shade500,
                           fontSize: 12,
@@ -346,7 +351,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                     TextButton.icon(
                       onPressed: () => _showBookingDetails(booking.id),
                       icon: const Icon(LucideIcons.fileText, size: 16),
-                      label: Text(_tr('عرض التفاصيل', 'View details')),
+                      label: Text(translationService.t('view_details_btn')),
                       style: TextButton.styleFrom(
                         foregroundColor: context.isDark
                             ? const Color(0xFF60A5FA)
@@ -359,7 +364,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                             ? () => _showEditOrderDialog(booking)
                             : null,
                         icon: const Icon(LucideIcons.edit3, size: 16),
-                        label: Text(_tr('تعديل الطلب', 'Edit Order')),
+                        label: Text(translationService.t('edit_order')),
                       ),
                   ],
                 ),
@@ -385,8 +390,8 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                         : const Icon(Icons.receipt, size: 16),
                     label: Text(
                       isPaying
-                          ? _tr('جارٍ الإنشاء...', 'Creating...')
-                          : _tr('إنشاء فاتورة', 'Create Invoice'),
+                          ? translationService.t('creating_dots_label')
+                          : translationService.t('create_invoice_btn'),
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF10B981),
@@ -396,7 +401,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                   OutlinedButton.icon(
                     onPressed: () => _cancelBooking(booking),
                     icon: const Icon(LucideIcons.xCircle, size: 16),
-                    label: Text(_tr('إلغاء الحجز', 'Cancel Booking')),
+                    label: Text(translationService.t('cancel_booking_title')),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFEF4444),
                       side: const BorderSide(color: Color(0xFFEF4444)),
@@ -405,7 +410,7 @@ extension OrdersScreenWidgets on _OrdersScreenState {
                   OutlinedButton.icon(
                     onPressed: () => _showBookingRefundDialog(booking),
                     icon: const Icon(LucideIcons.refreshCw, size: 16),
-                    label: Text(_tr('استرجاع', 'Refund')),
+                    label: Text(translationService.t('refund')),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFDC2626),
                       side: const BorderSide(color: Color(0xFFDC2626)),

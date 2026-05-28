@@ -21,12 +21,29 @@ class WaitlistAssignController extends ChangeNotifier {
   WaitlistEntry? get pending => _pending;
   bool get isAssigning => _pending != null;
 
+  /// When true the host should skip the "notify & wait" flow: the picked
+  /// table is held for the party and the order screen opens immediately
+  /// so the waiter can start taking the order ("Seat now" button).
+  bool _seatImmediately = false;
+  bool get seatImmediately => _seatImmediately;
+
   /// Enter assign mode with the given entry. No-ops when already
   /// assigning — a second tap on the same entry shouldn't toggle it
   /// off by accident.
   void beginAssign(WaitlistEntry entry) {
-    if (_pending?.id == entry.id) return;
+    if (_pending?.id == entry.id && !_seatImmediately) return;
     _pending = entry;
+    _seatImmediately = false;
+    notifyListeners();
+  }
+
+  /// Enter assign mode in "seat now" intent — same table-picking UX, but
+  /// the host seats the party (holds the table) and opens the order
+  /// screen straight away instead of sending a waiting message.
+  void beginSeat(WaitlistEntry entry) {
+    if (_pending?.id == entry.id && _seatImmediately) return;
+    _pending = entry;
+    _seatImmediately = true;
     notifyListeners();
   }
 
@@ -34,8 +51,9 @@ class WaitlistAssignController extends ChangeNotifier {
   /// dismisses the banner, or when the entry is removed/updated from
   /// under us.
   void clear() {
-    if (_pending == null) return;
+    if (_pending == null && !_seatImmediately) return;
     _pending = null;
+    _seatImmediately = false;
     notifyListeners();
   }
 }

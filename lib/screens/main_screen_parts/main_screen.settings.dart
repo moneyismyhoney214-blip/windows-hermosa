@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenSettings on _MainScreenState {
@@ -6,6 +6,10 @@ extension MainScreenSettings on _MainScreenState {
     try {
       final prefs = await SharedPreferences.getInstance();
       final value = prefs.getBool(_requireCustomerSelectionKey);
+      final customerRequiredByBackend = prefs.getBool(
+            _customerRequiredByBackendKeyFor(ApiConstants.branchId),
+          ) ??
+          false;
       final cdsEnabled = prefs.getBool(_cdsEnabledKey) ?? true;
       final kdsEnabled = prefs.getBool(_kdsEnabledKey) ?? true;
       final autoPrintCashier = prefs.getBool(_autoPrintCashierKey) ?? true;
@@ -28,6 +32,7 @@ extension MainScreenSettings on _MainScreenState {
           if (value != null) {
             _requireCustomerSelection = value;
           }
+          _customerRequiredByBackend = customerRequiredByBackend;
           _isCdsEnabled = cdsEnabled;
           _isKdsEnabled = kdsEnabled;
           _autoPrintCashier = autoPrintCashier;
@@ -52,7 +57,7 @@ extension MainScreenSettings on _MainScreenState {
         sync: false,
       );
     } catch (e) {
-      print('⚠️ Failed to load cashier settings: $e');
+      Log.w('settings', 'failed to load cashier settings', error: e);
     }
   }
 
@@ -65,7 +70,7 @@ extension MainScreenSettings on _MainScreenState {
         _cashTransactionsTotal,
       );
     } catch (e) {
-      print('⚠️ Failed to persist cash float: $e');
+      Log.w('settings', 'failed to persist cash float', error: e);
     }
   }
 
@@ -107,6 +112,8 @@ extension MainScreenSettings on _MainScreenState {
   }
 
   Future<void> _setRequireCustomerSelection(bool value) async {
+    // Backend-locked branches can't be toggled off — silently no-op.
+    if (_customerRequiredByBackend && !value) return;
     setState(() {
       _requireCustomerSelection = value;
     });
@@ -114,7 +121,28 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_requireCustomerSelectionKey, value);
     } catch (e) {
-      print('⚠️ Failed to save cashier settings: $e');
+      Log.w('settings', 'failed to save customer-selection setting', error: e);
+    }
+  }
+
+  /// Mark this branch as backend-enforcing customer selection. Triggered
+  /// from payment.process.dart when a 422 with `customer_id` errors fires.
+  /// Once tripped, the settings toggle is locked on and the cart label
+  /// switches to the "* required" treatment.
+  Future<void> _markCustomerRequiredByBackend() async {
+    if (_customerRequiredByBackend) return;
+    setState(() {
+      _customerRequiredByBackend = true;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(
+        _customerRequiredByBackendKeyFor(ApiConstants.branchId),
+        true,
+      );
+    } catch (e) {
+      Log.w('settings',
+          'failed to persist backend customer requirement', error: e);
     }
   }
 
@@ -131,7 +159,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_cdsEnabledKey, value);
     } catch (e) {
-      print('⚠️ Failed to save CDS setting: $e');
+      Log.w('settings', 'failed to save CDS setting', error: e);
     }
 
     if (!value) {
@@ -155,7 +183,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kdsEnabledKey, value);
     } catch (e) {
-      print('⚠️ Failed to save KDS setting: $e');
+      Log.w('settings', 'failed to save KDS setting', error: e);
     }
 
     if (value) {
@@ -183,7 +211,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_allowPrintWithKdsKey, value);
     } catch (e) {
-      print('⚠️ Failed to save print-with-kds setting: $e');
+      Log.w('settings', 'failed to save print-with-kds setting', error: e);
     }
   }
 
@@ -195,7 +223,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_autoPrintCashierKey, value);
     } catch (e) {
-      print('⚠️ Failed to save auto-print cashier setting: $e');
+      Log.w('settings', 'failed to save auto-print cashier setting', error: e);
     }
   }
 
@@ -207,7 +235,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_autoPrintCustomerKey, value);
     } catch (e) {
-      print('⚠️ Failed to save auto-print customer setting: $e');
+      Log.w('settings', 'failed to save auto-print customer setting', error: e);
     }
   }
 
@@ -219,7 +247,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_autoPrintCustomerSecondCopyKey, value);
     } catch (e) {
-      print('⚠️ Failed to save auto-print customer second copy setting: $e');
+      Log.w('settings', 'failed to save auto-print customer second-copy setting', error: e);
     }
   }
 
@@ -231,7 +259,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_printKitchenInvoicesKey, value);
     } catch (e) {
-      print('⚠️ Failed to save print kitchen setting: $e');
+      Log.w('settings', 'failed to save print-kitchen setting', error: e);
     }
   }
 
@@ -244,7 +272,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_mealIconScaleKey, clamped);
     } catch (e) {
-      print('⚠️ Failed to save meal icon scale setting: $e');
+      Log.w('settings', 'failed to save meal-icon-scale setting', error: e);
     }
   }
 
@@ -257,7 +285,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_sidebarIconScaleKey, clamped);
     } catch (e) {
-      print('⚠️ Failed to save sidebar icon scale setting: $e');
+      Log.w('settings', 'failed to save sidebar-icon-scale setting', error: e);
     }
   }
 
@@ -269,7 +297,7 @@ extension MainScreenSettings on _MainScreenState {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_categoryLayoutVerticalKey, value);
     } catch (e) {
-      print('⚠️ Failed to save category layout setting: $e');
+      Log.w('settings', 'failed to save category-layout setting', error: e);
     }
   }
 }

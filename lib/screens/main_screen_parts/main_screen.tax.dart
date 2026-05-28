@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenTax on _MainScreenState {
@@ -15,7 +15,7 @@ extension MainScreenTax on _MainScreenState {
       resolvedRate = ApiConstants.taxRate;
       resolvedHasTax = ApiConstants.hasTax;
     } catch (e) {
-      print('⚠️ Failed to refresh tax via getTax: $e');
+      Log.w('tax', 'getTax endpoint failed', error: e);
     }
 
     // Secondary source: branch settings cache (multi-endpoint racer).
@@ -27,7 +27,7 @@ extension MainScreenTax on _MainScreenState {
           resolvedHasTax ??= _findHasTaxInPayload(settings);
         }
       } catch (e) {
-        print('⚠️ Failed to read tax config from branch settings: $e');
+        Log.w('tax', 'branch settings failed', error: e);
       }
     }
 
@@ -51,7 +51,7 @@ extension MainScreenTax on _MainScreenState {
           resolvedHasTax ??= _findHasTaxInPayload(currentBranch);
         }
       } catch (e) {
-        print('⚠️ Failed to read tax config from branches: $e');
+        Log.w('tax', 'branches scan failed', error: e);
       }
     }
 
@@ -69,22 +69,23 @@ extension MainScreenTax on _MainScreenState {
     }
   }
 
-  double _taxAmountFromSubtotal(double subtotal) {
-    if (!_isTaxEnabled || _taxRate <= 0 || subtotal <= 0) return 0.0;
-    return subtotal * _taxRate;
-  }
+  /// Snapshot of the current branch tax config as a pure calculator.
+  /// Recomputed each call so it reflects whatever `_loadTaxConfiguration`
+  /// last wrote into `_isTaxEnabled` + `_taxRate`. Kept private so the
+  /// rest of the screen can keep referencing the existing local helpers;
+  /// new code outside this file should construct its own
+  /// [OrderTotalsCalculator] from `ApiConstants`.
+  OrderTotalsCalculator get _totalsCalculator => OrderTotalsCalculator(
+        isTaxEnabled: _isTaxEnabled,
+        taxRate: _taxRate,
+      );
+
+  double _taxAmountFromSubtotal(double subtotal) =>
+      _totalsCalculator.taxAmountFromSubtotal(subtotal);
 
   double _subtotalFromTaxInclusiveTotal(double total) =>
-      ReceiptBuilderService.subtotalFromTaxInclusiveTotal(
-        total,
-        isTaxEnabled: _isTaxEnabled,
-        taxRate: _taxRate,
-      );
+      _totalsCalculator.subtotalFromTaxInclusiveTotal(total);
 
   double _taxFromTaxInclusiveTotal(double total) =>
-      ReceiptBuilderService.taxFromTaxInclusiveTotal(
-        total,
-        isTaxEnabled: _isTaxEnabled,
-        taxRate: _taxRate,
-      );
+      _totalsCalculator.taxFromTaxInclusiveTotal(total);
 }

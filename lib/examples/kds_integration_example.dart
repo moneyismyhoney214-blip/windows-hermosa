@@ -1,5 +1,8 @@
-import '../services/display_app_service.dart';
+// Dev-reference documentation in code form — not imported by running app; print() is intentional.
+// ignore_for_file: avoid_print
+
 import '../services/api/api_constants.dart';
+import '../services/display_app_service.dart';
 
 /// Example: How to integrate KDS (Kitchen Display System) in Cashier App
 ///
@@ -17,7 +20,6 @@ class KDSIntegrationExample {
   /// 3. Customer pays (NearPay)
   /// 4. Order automatically sent to Kitchen (KDS)
   void standardOrderWorkflow() {
-    // Step 1: Build cart items
     final cartItems = [
       {
         'name': 'Spanish Latte',
@@ -35,11 +37,10 @@ class KDSIntegrationExample {
     ];
 
     final orderNumber = 'ORD-${DateTime.now().millisecondsSinceEpoch}';
-    final subtotal = 71.0;
-    final tax = 10.65;
-    final total = 81.65;
+    const subtotal = 71.0;
+    const tax = 10.65;
+    const total = 81.65;
 
-    // Step 2: Update Display App (CDS)
     _displayAppService.updateCartDisplay(
       items: cartItems,
       subtotal: subtotal,
@@ -50,30 +51,18 @@ class KDSIntegrationExample {
       note: 'Extra sauce on the side',
     );
 
-    // Step 3: Setup payment callbacks
     _displayAppService.setCallbacks(
       onPaymentSuccess: (transactionData) {
-        // Payment successful!
-        // Order is automatically sent to KDS by the service
         print('Payment successful! Transaction: $transactionData');
         print('Order sent to kitchen automatically!');
-
-        // Optional: Print receipt
         _printReceipt(orderNumber, total);
-
-        // Optional: Save to database
         _saveOrderToDatabase(orderNumber, cartItems, total);
       },
       onPaymentFailed: (errorMessage) {
-        // Payment failed
         print('Payment failed: $errorMessage');
-        // Show error to cashier
-        // Stay on cart screen for retry
       },
       onPaymentCancelled: () {
-        // Customer cancelled
         print('Payment cancelled by customer');
-        // Return to cart
       },
       onOrderReady: ({
         required String orderId,
@@ -82,22 +71,17 @@ class KDSIntegrationExample {
         double? total,
         String? note,
       }) {
-        // This is called when order is sent to KDS
         print('Order $orderNumber sent to kitchen!');
       },
     );
 
-    // Step 4: Start payment (shows "Tap to Pay" on CDS)
     _displayAppService.startPayment(
       amount: total,
       orderNumber: orderNumber,
-      customerReference: 'Table 5', // or customer name/number
+      customerReference: 'Table 5',
     );
 
-    // Step 5: Process payment with NearPay SDK
-    // (This would be done via NearPay SDK in real implementation)
-    // When payment succeeds, call:
-    // _displayAppService.notifyPaymentSuccess(transactionData);
+    // Real impl: call _displayAppService.notifyPaymentSuccess(...) once NearPay confirms.
   }
 
   /// Workflow 2: Direct to Kitchen (Skip Payment)
@@ -118,7 +102,6 @@ class KDSIntegrationExample {
       total: 52.0,
     );
 
-    // Switch Display to KDS mode
     _displayAppService.setMode(DisplayMode.kds);
   }
 
@@ -126,21 +109,17 @@ class KDSIntegrationExample {
   ///
   /// For takeaway orders where customer pays before preparation
   void payFirstWorkflow() {
-    final orderNumber = '#1029';
-    final total = 45.0;
+    const orderNumber = '#1029';
+    const total = 45.0;
 
-    // 1. Start payment
     _displayAppService.startPayment(
       amount: total,
       orderNumber: orderNumber,
     );
 
-    // 2. Setup callback for success
     _displayAppService.setCallbacks(
       onPaymentSuccess: (transactionData) {
         print('Takeaway payment received!');
-
-        // Now send to kitchen for preparation
         _displayAppService.sendOrderToKitchen(
           orderId: 'ORD-${DateTime.now().millisecondsSinceEpoch}',
           orderNumber: orderNumber,
@@ -151,8 +130,6 @@ class KDSIntegrationExample {
           ],
           total: total,
         );
-
-        // Switch Display to show KDS
         _displayAppService.setMode(DisplayMode.kds);
       },
     );
@@ -162,7 +139,6 @@ class KDSIntegrationExample {
   ///
   /// Handle multiple orders and track their status
   void multipleOrdersWorkflow() {
-    // Order 1
     _displayAppService.updateCartDisplay(
       items: [
         {'name': 'Latte', 'quantity': 1}
@@ -174,13 +150,11 @@ class KDSIntegrationExample {
       orderType: 'dine_in',
     );
 
-    // When paid, automatically goes to KDS
     _displayAppService.startPayment(
       amount: 20.7,
       orderNumber: '#1030',
     );
 
-    // Later... Order 2
     Future.delayed(const Duration(minutes: 2), () {
       _displayAppService.updateCartDisplay(
         items: [
@@ -204,16 +178,12 @@ class KDSIntegrationExample {
   ///
   /// Update KDS status from Cashier (optional)
   void kitchenStatusWorkflow() {
-    // Mark an order as completed from Cashier side
     _displayAppService.markOrderCompleted('order-id-123');
-
-    // Or mark as ready
     _displayAppService.markOrderReady('order-id-123');
   }
 
   /// Helper: Print Receipt
   void _printReceipt(String orderNumber, double total) {
-    // Implement receipt printing
     print('Printing receipt for $orderNumber: ${total.toStringAsFixed(ApiConstants.digitsNumber)} SAR');
   }
 
@@ -223,7 +193,6 @@ class KDSIntegrationExample {
     List<Map<String, dynamic>> items,
     double total,
   ) {
-    // Implement database save
     print('Saving order $orderNumber to database');
   }
 }
@@ -265,10 +234,8 @@ class CompleteKDSIntegration {
     _isProcessing = true;
 
     try {
-      // 1. Generate order number
       final orderNumber = 'ORD-${DateTime.now().millisecondsSinceEpoch}';
 
-      // 2. Show cart on CDS
       _displayAppService.updateCartDisplay(
         items: cartItems,
         subtotal: subtotal,
@@ -279,58 +246,34 @@ class CompleteKDSIntegration {
         note: note,
       );
 
-      // 3. Set up callbacks
       _displayAppService.setCallbacks(
         onPaymentSuccess: (transactionData) async {
-          // SUCCESS! Payment received
           print('✅ Payment Success!');
           print('Transaction ID: ${transactionData['transactionId']}');
           print('Amount: ${transactionData['amount']}');
-
-          // Order automatically sent to KDS!
           print('🍳 Order sent to kitchen automatically');
-
-          // Clear cart after successful payment
           _displayAppService.clearCart();
-
-          // Reset state
           _isProcessing = false;
-
-          // Show success to cashier
-          // (Show snackbar, dialog, etc.)
         },
         onPaymentFailed: (errorMessage) {
-          // FAILED
           print('❌ Payment Failed: $errorMessage');
           _isProcessing = false;
-
-          // Show error to cashier
-          // Allow retry
         },
         onPaymentCancelled: () {
-          // CANCELLED
           print('🚫 Payment Cancelled');
           _isProcessing = false;
-
-          // Return to cart screen
         },
       );
 
-      // 4. Start payment on CDS (shows "Tap to Pay" screen)
       _displayAppService.startPayment(
         amount: total,
         orderNumber: orderNumber,
         customerReference: tableNumber,
       );
 
-      // 5. Now process with NearPay SDK
-      // (This is where you integrate with NearPay)
-      // await _processNearPayPayment(total);
-
-      // For demo: simulate success after 3 seconds
+      // Demo: simulate success after 3s. Real impl calls _processNearPayPayment(total).
       await Future.delayed(const Duration(seconds: 3));
 
-      // 6. Notify success (this triggers KDS automatically)
       _displayAppService.notifyPaymentSuccess({
         'transactionId': 'TXN-${DateTime.now().millisecondsSinceEpoch}',
         'amount': total,

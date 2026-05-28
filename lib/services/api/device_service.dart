@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/models.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -80,7 +81,8 @@ class DeviceService {
       final collected = <String>{..._fallbackDeviceTypes};
       _collectKnownTypes(res, collected);
       return collected.toList()..sort();
-    } catch (_) {
+    } catch (e) {
+      Log.d('device', 'getSupportedDeviceTypes failed, using fallback (non-fatal): $e');
       return List<String>.from(_fallbackDeviceTypes);
     }
   }
@@ -203,7 +205,10 @@ class DeviceService {
         await _cache.set(_devicesCacheKey, filtered,
             expiry: const Duration(hours: 12));
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.w('devices', 'failed to prune $deviceId from device cache',
+          error: e);
+    }
   }
 
   Future<void> updateLocalDeviceConfig(DeviceConfig device) async {
@@ -252,7 +257,11 @@ class DeviceService {
       if (!roleRegistry.hasExplicitRole(device.id)) {
         await roleRegistry.setRole(device.id, PrinterRole.cashierReceipt);
       }
-    } catch (_) {}
+    } catch (e) {
+      // Failing to set the auto-role isn't fatal — the printer is
+      // still registered above; just defaults to inferred role.
+      Log.w('devices', 'Q7 auto-role assignment failed', error: e);
+    }
 
     return device;
   }
@@ -366,7 +375,8 @@ class DeviceService {
             : <String, dynamic>{};
         return MapEntry(key.toString(), mapValue);
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('device', 'decode failed, returning empty map (non-fatal): $e');
       return {};
     }
   }
@@ -407,7 +417,9 @@ class DeviceService {
         'bluetooth_name': isQ7 ? null : device.bluetoothName,
       };
       await _persistLocalOverrides(map);
-    } catch (_) {}
+    } catch (e) {
+      Log.w('devices', 'persist local override failed', error: e);
+    }
   }
 
   PrinterConnectionType _parseConnectionType(dynamic raw) {
@@ -428,7 +440,9 @@ class DeviceService {
       if (map.remove(deviceId) != null) {
         await _persistLocalOverrides(map);
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.w('devices', 'remove local override $deviceId failed', error: e);
+    }
   }
 
 

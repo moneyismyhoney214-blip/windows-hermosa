@@ -98,7 +98,13 @@ dependencies {
     implementation "io.nearpay:terminalsdk-release:0.0.187"
     
     implementation 'com.google.android.gms:play-services-location:20.0.0'
-    implementation 'com.huawei.hms:location:6.4.0.300'
+    // Huawei HMS Location intentionally dropped: NearpayProvider now skips
+    // the huaweiSafetyDetectApiKey builder call when the cashier passes
+    // a blank key (always the case in this app), so com.huawei.hms:core's
+    // libTransform.so was dead weight — and the only 4KB-aligned native
+    // lib still failing Play Console's 16KB-page check from a removable
+    // dependency. Re-add ONLY if the cashier starts supplying a Huawei
+    // Safety Detect API key.
     implementation 'com.jakewharton.timber:timber:5.0.1'
     implementation 'com.google.code.gson:gson:2.13.2'
 

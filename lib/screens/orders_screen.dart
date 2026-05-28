@@ -6,37 +6,41 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../models/booking_invoice.dart';
-import '../services/api/order_service.dart';
-import '../services/api/base_client.dart';
-import '../services/cache_service.dart';
-import '../services/api/error_handler.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
-import '../services/api/api_constants.dart';
-import '../services/display_app_service.dart';
-import '../services/salon_invoice_events.dart';
+
 import '../dialogs/booking_details_dialog.dart';
-import '../dialogs/edit_order_dialog.dart';
-import '../locator.dart';
-import '../dialogs/payment_tender_dialog.dart';
 import '../dialogs/booking_refund_dialog.dart';
-import '../utils/order_status.dart';
+import '../dialogs/edit_order_dialog.dart';
+import '../dialogs/payment_tender_dialog.dart';
+import '../locator.dart';
+import '../models/booking_invoice.dart';
+import '../models/receipt_data.dart';
+import '../services/api/api_constants.dart';
+import '../services/api/base_client.dart';
 import '../services/api/branch_service.dart';
 import '../services/api/device_service.dart';
-import '../services/printer_service.dart';
+import '../services/api/error_handler.dart';
+import '../services/api/order_service.dart';
+import '../services/app_themes.dart';
+import '../services/cache_service.dart';
+import '../services/cashier_mesh_bootstrap.dart';
+import '../services/display_app_service.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/printer_role_registry.dart';
-import '../models/receipt_data.dart';
+import '../services/printer_service.dart';
+import '../services/salon_invoice_events.dart';
+import '../utils/order_status.dart';
+import '../utils/ui_feedback.dart';
 
-part 'orders_screen_parts/orders_screen.helpers.dart';
-part 'orders_screen_parts/orders_screen.lifecycle.dart';
-part 'orders_screen_parts/orders_screen.data.dart';
-part 'orders_screen_parts/orders_screen.processing.dart';
-part 'orders_screen_parts/orders_screen.widgets.dart';
 part 'orders_screen_parts/orders_screen.actions.dart';
+part 'orders_screen_parts/orders_screen.data.dart';
 part 'orders_screen_parts/orders_screen.details.dart';
-part 'orders_screen_parts/orders_screen.utils.dart';
+part 'orders_screen_parts/orders_screen.helpers.dart';
 part 'orders_screen_parts/orders_screen.legacy.dart';
+part 'orders_screen_parts/orders_screen.lifecycle.dart';
+part 'orders_screen_parts/orders_screen.processing.dart';
+part 'orders_screen_parts/orders_screen.utils.dart';
+part 'orders_screen_parts/orders_screen.widgets.dart';
 
 class OrdersScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -81,9 +85,9 @@ class _OrdersScreenState extends State<OrdersScreen>
   Map<String, dynamic> _orderDetailsRawResponse = {};
   Map<String, dynamic> _orderInvoiceRawResponse = {};
   Map<String, dynamic> _updateStatusRawResponse = {};
-  Map<String, dynamic> _updateDataRawResponse = {};
-  Map<String, dynamic> _singleWhatsAppRawResponse = {};
-  Map<String, dynamic> _multiWhatsAppRawResponse = {};
+  final Map<String, dynamic> _updateDataRawResponse = {};
+  final Map<String, dynamic> _singleWhatsAppRawResponse = {};
+  final Map<String, dynamic> _multiWhatsAppRawResponse = {};
   bool _isLoading = true;
   bool _isLoadingMore = false;
   String? _error;
@@ -92,47 +96,29 @@ class _OrdersScreenState extends State<OrdersScreen>
   Timer? _autoRefreshTimer;
   bool _isRealtimeRefreshing = false;
 
-  // Pagination
   int _bookingPage = 1;
   bool _hasMoreBookings = true;
 
-  // Track refunded amounts locally (pre-tax) so card totals update immediately
+  // Pre-tax refund totals so card totals update immediately
   final Map<int, double> _bookingRefundedAmounts = {};
 
-  // After a salon refund the backend keeps `total_price` / `grand_total`
-  // frozen at the original amount and the bookings-list endpoint may not
-  // include the per-row services. These overrides hold the authoritative
-  // post-refund state pulled from the booking-detail endpoint so the card
-  // total + the create-invoice flow both reflect the remaining items
-  // instead of the stale frozen total.
+  // Salon refunds freeze total_price/grand_total in the list endpoint; these overrides hold authoritative post-refund state from the detail endpoint.
   final Map<int, double> _bookingRemainingPreTaxOverride = {};
   final Map<int, List<Map<String, dynamic>>> _bookingItemsOverride = {};
 
-  // Pending background detail refreshes for salon bookings flagged with
-  // `has_cancelled=true` — the list endpoint freezes their `total_price`
-  // even though their booking_services are gone, so we lazily fetch the
-  // detail to populate the override. The set guards against duplicate
-  // in-flight requests when the card re-paints during scroll.
+  // Guards duplicate in-flight detail fetches for has_cancelled=true salon bookings (list endpoint freezes their total_price).
   final Set<int> _bookingDetailRefreshInFlight = {};
 
-  // Salon-only: booking IDs that already have an invoice attached. The
-  // /bookings list endpoint returns pay-now bookings without `is_paid`,
-  // `has_invoice`, `invoice_id`, or any other indicator — so the orders
-  // screen otherwise renders them with the "Create Invoice / Refund /
-  // Cancel" buttons. Clicking Create Invoice then errors with 422
-  // "booking_id already used". We resolve this by cross-referencing
-  // today's invoices in a background fetch and excluding any booking
-  // whose id appears there.
+  // Salon-only cross-ref: /bookings list lacks is_paid/has_invoice/invoice_id for pay-now bookings, so we derive invoiced IDs from today's invoices to suppress Create-Invoice/Refund/Cancel buttons (avoids 422 "booking_id already used").
   final Set<int> _bookingIdsWithInvoice = <int>{};
   bool _invoiceCrossRefInFlight = false;
   StreamSubscription<SalonInvoiceCreatedEvent>? _salonInvoiceCreatedSub;
 
   final ScrollController _bookingScrollController = ScrollController();
 
-  // Filters
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String _selectedStatus = 'all';
+  final String _selectedStatus = 'all';
   Timer? _searchDebounce;
 
   @override
@@ -141,11 +127,7 @@ class _OrdersScreenState extends State<OrdersScreen>
     WidgetsBinding.instance.addObserver(this);
     translationService.addListener(_onLanguageChanged);
     _bookingScrollController.addListener(_onBookingScroll);
-    // Salon-only: drain any invoice-creation events fired while this screen
-    // was unmounted (the user creates the invoice from main_screen, then
-    // navigates here — a stream listener can't cover that gap). Apply them
-    // BEFORE _loadData so the first paint already excludes invoiced
-    // bookings from the action-button list.
+    // Drain invoice-creation events fired while this screen was unmounted (stream listener can't cover that gap) BEFORE _loadData.
     if (ApiConstants.branchModule == 'salons') {
       for (final event in getIt<SalonInvoiceEvents>().recentEvents()) {
         _applySalonInvoiceEvent(event);
@@ -153,14 +135,16 @@ class _OrdersScreenState extends State<OrdersScreen>
       _salonInvoiceCreatedSub =
           getIt<SalonInvoiceEvents>().stream.listen(_onSalonInvoiceCreated);
     }
+    // Realtime status push from KDS — avoids the 10s HTTP poll lag after a
+    // kitchen bump (waiter would see "جاري التحضير" stale otherwise).
+    _displayAppService.addOrderStatusListener(_onKdsOrderStatusChanged);
     _loadData();
     _startAutoRefresh();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // PERF: pause the 10-s polling timer while the app is backgrounded/hidden
-    // so we don't drain battery and fire needless API calls.
+    // PERF: pause 10-s polling while backgrounded to save battery + API calls.
     if (state == AppLifecycleState.resumed) {
       _startAutoRefresh();
     } else {
@@ -173,11 +157,28 @@ class _OrdersScreenState extends State<OrdersScreen>
     WidgetsBinding.instance.removeObserver(this);
     _searchDebounce?.cancel();
     translationService.removeListener(_onLanguageChanged);
+    _displayAppService.removeOrderStatusListener(_onKdsOrderStatusChanged);
     _bookingScrollController.dispose();
     _searchController.dispose();
     _autoRefreshTimer?.cancel();
     _salonInvoiceCreatedSub?.cancel();
     super.dispose();
+  }
+
+  void _onKdsOrderStatusChanged(String orderId, int status) {
+    if (!mounted) return;
+    final idx = _bookings.indexWhere((b) => b.id.toString() == orderId);
+    if (idx < 0) return;
+    final booking = _bookings[idx];
+    final currentStatus = booking.raw['status']?.toString();
+    if (currentStatus == status.toString()) return;
+    setState(() {
+      booking.raw['status'] = status;
+      // Drop server-supplied display so Booking.statusDisplay falls back to
+      // the switch and renders the new label without waiting for the next
+      // 10s HTTP poll. The poll will refresh both fields authoritatively.
+      booking.raw.remove('status_display');
+    });
   }
 
   void _onSalonInvoiceCreated(SalonInvoiceCreatedEvent event) {
@@ -194,22 +195,17 @@ class _OrdersScreenState extends State<OrdersScreen>
     final bookingId = int.tryParse(event.bookingId ?? '');
     if (bookingId == null || bookingId <= 0) return;
     _bookingIdsWithInvoice.add(bookingId);
-    // Pending Invoices tab must show only Pay-Later bookings that are
-    // still awaiting an invoice. Once an invoice is posted, drop the
-    // booking from the list immediately so the cashier doesn't see it
-    // in both Pending and Posted at the same time.
+    // Drop the booking from Pending Invoices immediately so it doesn't appear in both Pending + Posted.
     _bookings.removeWhere((booking) => booking.id == bookingId);
     _selectedBookingIds.remove(bookingId);
     _payingBookingIds.remove(bookingId);
 
-    // Persist into the same map the cross-ref scan uses so re-entering the
-    // screen still hides the buttons even before any network call lands.
+    // Persist into the cross-ref cache so re-entry hides buttons before any network call lands.
     final invoiceIdInt = int.tryParse(event.invoiceId ?? '');
     if (invoiceIdInt != null && invoiceIdInt > 0) {
       final dateStr = _todayForApi();
       final cacheKey = _salonInvoiceLinkCacheKey(dateStr);
-      // Fire-and-forget — failures here are harmless; the next cross-ref
-      // scan would re-derive the entry anyway.
+      // Fire-and-forget — next cross-ref scan re-derives on failure.
       () async {
         try {
           final cachedRaw = await _cache.get(cacheKey);
@@ -229,7 +225,9 @@ class _OrdersScreenState extends State<OrdersScreen>
             merged,
             expiry: const Duration(hours: 6),
           );
-        } catch (_) {}
+        } catch (e) {
+          Log.d('OrdersScreen', 'update invoice→booking cache failed (non-fatal): $e');
+        }
       }();
     }
   }
@@ -238,20 +236,22 @@ class _OrdersScreenState extends State<OrdersScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.appBg,
-      body: Column(
-        children: [
-          // Header
-          _buildHeader(),
+      // Owns its own safe-area: header paints behind the status-bar inset; body needs only the bottom home-indicator inset.
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            _buildHeader(),
 
-          // Content
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? _buildErrorView()
-                    : _buildBookingsList(),
-          ),
-        ],
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? _buildErrorView()
+                      : _buildBookingsList(),
+            ),
+          ],
+        ),
       ),
     );
   }

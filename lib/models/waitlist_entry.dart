@@ -31,6 +31,13 @@ class WaitlistEntry {
   /// Free-form host note ("prefers window", "birthday", ...).
   final String? notes;
 
+  /// Backend customer id this party is linked to. Set when the party is
+  /// added via the waitlist dialog (which now creates — or picks — a real
+  /// customer record), so the booking opened on the assigned table carries
+  /// the same `customer_id` and the order shows up against that customer
+  /// on the backend instead of an anonymous walk-in.
+  final String? customerId;
+
   /// See [WaitlistStatus].
   final WaitlistStatus status;
 
@@ -53,6 +60,7 @@ class WaitlistEntry {
     required this.phoneNumber,
     this.partySize = 1,
     this.notes,
+    this.customerId,
     this.status = WaitlistStatus.waiting,
     DateTime? createdAt,
     this.notifiedAt,
@@ -81,6 +89,7 @@ class WaitlistEntry {
     int? partySize,
     String? notes,
     bool clearNotes = false,
+    String? customerId,
     WaitlistStatus? status,
     DateTime? notifiedAt,
     bool clearNotifiedAt = false,
@@ -94,6 +103,7 @@ class WaitlistEntry {
       phoneNumber: phoneNumber ?? this.phoneNumber,
       partySize: partySize ?? this.partySize,
       notes: clearNotes ? null : (notes ?? this.notes),
+      customerId: customerId ?? this.customerId,
       status: status ?? this.status,
       createdAt: createdAt,
       notifiedAt: clearNotifiedAt ? null : (notifiedAt ?? this.notifiedAt),
@@ -112,6 +122,7 @@ class WaitlistEntry {
         'phoneNumber': phoneNumber,
         'partySize': partySize,
         if (notes != null) 'notes': notes,
+        if (customerId != null) 'customerId': customerId,
         'status': status.name,
         'createdAt': createdAt.toIso8601String(),
         if (notifiedAt != null) 'notifiedAt': notifiedAt!.toIso8601String(),
@@ -127,6 +138,7 @@ class WaitlistEntry {
       phoneNumber: (json['phoneNumber'] as String?)?.trim() ?? '',
       partySize: (json['partySize'] as num?)?.toInt() ?? 1,
       notes: (json['notes'] as String?)?.trim(),
+      customerId: json['customerId']?.toString(),
       status: _statusFrom(json['status']),
       createdAt:
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??

@@ -2,29 +2,30 @@ library display_app_service;
 
 import 'dart:async';
 import 'dart:convert';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:flutter/foundation.dart';
+
 import 'package:crypto/crypto.dart';
-import 'package:uuid/uuid.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'security/security_config.dart';
-import 'api/error_handler.dart';
+import 'package:uuid/uuid.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+import '../locator.dart';
 import 'api/api_constants.dart';
 import 'api/base_client.dart';
+import 'api/error_handler.dart';
 import 'api/order_service.dart';
-import '../locator.dart';
 import 'api/product_service.dart';
 import 'kds_meal_availability_service.dart';
 import 'language_service.dart';
 import 'nearpay/nearpay_service.dart';
 import 'presentation_service.dart';
+import 'security/security_config.dart';
 
-
+part 'display_app_service_parts/display_app_service.api.dart';
+part 'display_app_service_parts/display_app_service.auth_payment.dart';
+part 'display_app_service_parts/display_app_service.internals.dart';
 part 'display_app_service_parts/display_app_service.lifecycle.dart';
 part 'display_app_service_parts/display_app_service.messaging.dart';
-part 'display_app_service_parts/display_app_service.auth_payment.dart';
-part 'display_app_service_parts/display_app_service.api.dart';
-part 'display_app_service_parts/display_app_service.internals.dart';
 
 // Static constants relocated from DisplayAppService class to library-level
 // so extensions can reference them without qualification. Values verbatim.
@@ -139,6 +140,15 @@ class DisplayAppService extends ChangeNotifier {
   final List<void Function(Map<String, dynamic>)> _mealAvailabilityListeners =
       [];
 
+  // KDS-driven order status cache. Updated by ORDER_STATUS_UPDATE / ORDER_READY
+  // / ORDER_COMPLETED / ORDER_COMPLETED_SYNC websocket frames. KDS owns the
+  // preparing→ready transitions on the backend, so the cashier records the
+  // value locally and notifies listeners instead of re-PATCHing (which caused
+  // 422 rate-limit storms when both sides wrote concurrently).
+  final Map<String, int> _kdsOrderStatuses = <String, int>{};
+  final List<void Function(String orderId, int status)>
+      _orderStatusListeners = <void Function(String, int)>[];
+
   // Store current order data for KDS
   Map<String, dynamic>? _currentOrderData;
 
@@ -183,6 +193,11 @@ class DisplayAppService extends ChangeNotifier {
   String? get lastOrderAckId => _lastOrderAckId;
   DateTime? get lastOrderAckAt => _lastOrderAckAt;
   bool get isCdsModePinned => _isCdsLockActive();
+
+  /// Latest KDS-reported status for an order, or null if KDS hasn't pushed one
+  /// since this session started. Backed by realtime websocket updates only —
+  /// authoritative source for paid/cancelled lifecycle is still the HTTP poll.
+  int? kdsOrderStatus(String orderId) => _kdsOrderStatuses[orderId.trim()];
 
   /// Check if NearPay payment is available
   bool get isNearPayAvailable => isConnected && supportsNearPay;

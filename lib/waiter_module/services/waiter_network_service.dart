@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../../services/logger_service.dart';
 import '../models/network_message.dart';
 import '../models/waiter.dart';
 import 'mesh_auth_service.dart';
@@ -37,13 +38,10 @@ class WaiterNetworkService {
   bool _disposed = false;
 
   final Map<String, _PeerConnection> _peers = {};
-  // Remember the last resolved host:port for each peer so we can reconnect
-  // autonomously after a WS drop without waiting for a new mDNS event.
+  // Last host:port per peer for autonomous reconnect without a new mDNS event.
   final Map<String, _PeerAddress> _lastKnownAddresses = {};
   final Map<String, Timer> _reconnectTimers = {};
-  // Track outbound connects that haven't produced a registered socket yet
-  // so two rapid discovery events don't spawn two parallel connections to
-  // the same peer.
+  // Track in-flight outbound connects so a discovery burst doesn't spawn parallel sockets.
   final Set<String> _connectingPeerIds = <String>{};
   final StreamController<WireMessage> _incoming =
       StreamController<WireMessage>.broadcast();
@@ -56,9 +54,7 @@ class WaiterNetworkService {
   /// can't grow unbounded over a long shift.
   static const int _seenIdLimit = 512;
   final LinkedHashSet<String> _seenMessageIds = LinkedHashSet<String>();
-  // Inbound channels that haven't sent HELLO yet — closed after the
-  // handshake timeout fires (MESH-5). A rogue half-open peer would
-  // otherwise tie up server file descriptors until the roster sweep.
+  // Inbound channels closed after handshake timeout (MESH-5) to avoid FD exhaustion.
   static const Duration _helloTimeout = Duration(seconds: 5);
   final Map<_PeerConnection, Timer> _helloTimers = {};
 
@@ -73,9 +69,7 @@ class WaiterNetworkService {
     this.auth,
   });
 
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
+  // --- Lifecycle ---
 
   Future<int> startServer() async {
     if (_server != null) return _boundPort;
@@ -90,10 +84,7 @@ class WaiterNetworkService {
         attempt += 1;
       }
     }
-    if (server == null) {
-      // Last resort — let the OS pick any port.
-      server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
-    }
+    server ??= await HttpServer.bind(InternetAddress.anyIPv4, 0);
     _server = server;
     _boundPort = server.port;
     debugPrint('🖧 Waiter WS server listening on :$_boundPort');
@@ -105,6 +96,7 @@ class WaiterNetworkService {
         return;
       }
       try {
+        // ignore: close_sinks  // ownership passes to _handleChannel via the channel
         final ws = await WebSocketTransformer.upgrade(req);
         final channel = IOWebSocketChannel(ws);
         _handleChannel(channel, inbound: true);
@@ -120,14 +112,11 @@ class WaiterNetworkService {
 
   Future<void> connectToPeer(Waiter peer) async {
     if (peer.host == null || peer.port == null) return;
-    // Remember the target so [_scheduleReconnect] can try again later even
-    // after mDNS stops re-emitting.
+    // Remember target so _scheduleReconnect can retry without mDNS.
     _lastKnownAddresses[peer.id] =
         _PeerAddress(host: peer.host!, port: peer.port!);
     if (_peers.containsKey(peer.id)) return; // already connected
-    // Dedup overlapping attempts: a burst of mDNS events (common when a
-    // peer comes online) can fire this twice before the first socket is
-    // registered, producing two parallel connections to the same peer.
+    // Dedup overlapping mDNS-event-driven connect attempts.
     if (_connectingPeerIds.contains(peer.id)) return;
     _connectingPeerIds.add(peer.id);
     try {
@@ -147,14 +136,12 @@ class WaiterNetworkService {
   void _scheduleReconnect(String peerId) {
     if (_disposed) return;
     if (!_lastKnownAddresses.containsKey(peerId)) return;
-    // Coalesce overlapping retries.
     _reconnectTimers[peerId]?.cancel();
     _reconnectTimers[peerId] = Timer(const Duration(seconds: 3), () {
       _reconnectTimers.remove(peerId);
       final addr = _lastKnownAddresses[peerId];
       if (_disposed || addr == null || _peers.containsKey(peerId)) return;
       debugPrint('🔁 Reconnecting to peer $peerId at ${addr.host}:${addr.port}');
-      // Reconstruct a minimal Waiter to reuse [connectToPeer].
       final self = selfProvider();
       connectToPeer(Waiter(
         id: peerId,
@@ -177,16 +164,9 @@ class WaiterNetworkService {
       inbound: inbound,
     );
 
-    // Index by whatever id we have so duplicate connects are avoided.
     if (knownPeerId != null) _peers[knownPeerId] = conn;
 
-    // Inbound channels must HELLO promptly. A rogue or flapping peer
-    // that opens a TCP connection and stays silent would otherwise sit
-    // open until the controller's ~55s roster sweep — multiplied by
-    // many such half-open connections, that exhausts server FDs and
-    // blocks legitimate waiters from connecting. Outbound channels are
-    // safe (we control them and send HELLO immediately in
-    // connectToPeer), so the timer only arms for inbound.
+    // Inbound HELLO timeout — silent half-open peers would exhaust server FDs otherwise.
     if (inbound) {
       _helloTimers[conn] = Timer(_helloTimeout, () {
         _helloTimers.remove(conn);
@@ -202,12 +182,7 @@ class WaiterNetworkService {
     channel.stream.listen(
       (raw) {
         if (raw is! String) return;
-        // App-layer auth check BEFORE we even parse the envelope —
-        // a forged message with a bad MAC is dropped silently so it
-        // can't pollute the dedup cache or trigger any handler. The
-        // service accepts unsigned messages during the pre-login
-        // boot window (when both sides haven't hydrated yet) so a
-        // freshly-launched mesh doesn't deadlock on its own auth.
+        // App-layer auth before parse — bad-MAC forgeries dropped silently to avoid polluting dedup. Unsigned accepted in pre-login boot window.
         if (auth != null && !auth!.verifyRaw(raw)) {
           debugPrint('🚫 Waiter mesh: dropping unsigned/forged message');
           return;
@@ -215,43 +190,31 @@ class WaiterNetworkService {
         final msg = WireMessage.tryDecode(raw);
         if (msg == null) return;
 
-        // Drop replays / multicast bounces. A peer that flaps its WS
-        // can re-emit the same message; without this guard, listeners
-        // would double-process and produce phantom kitchen tickets,
-        // duplicate paymentPending broadcasts, and double pickup-acks.
-        // We keep the most recent _seenIdLimit ids in insertion order
-        // so the cap also acts as a sliding window — old entries are
-        // evicted when the set grows past the limit.
+        // Drop replays/multicast bounces — sliding LRU window prevents double-processing.
         if (_seenMessageIds.contains(msg.id)) {
           return;
         }
         _seenMessageIds.add(msg.id);
         if (_seenMessageIds.length > _seenIdLimit) {
-          // Evict oldest. LinkedHashSet keeps insertion order.
           final oldest = _seenMessageIds.first;
           _seenMessageIds.remove(oldest);
         }
 
-        // On HELLO we lock the peer id to this connection.
         if (msg.type == WireMessageType.hello) {
-          // HELLO arrived → cancel the inbound timeout.
           _helloTimers.remove(conn)?.cancel();
           if (conn.peerId == null) {
             conn.peerId = msg.senderId;
-            // Close any stale prior connection to the same peer so we
-            // don't leak sockets when a peer reconnects.
+            // Close stale prior connection so reconnects don't leak sockets.
             final prior = _peers[msg.senderId];
             if (prior != null && prior != conn) {
               try {
                 prior.channel.sink.close();
-              } catch (_) {}
+              } catch (e) { Log.w('waiter-net', 'cleanup/socket op failed', error: e); }
             }
             _peers[msg.senderId] = conn;
           }
           _sendAck(channel, msg);
-          // Inbound peers reply with HELLO so the remote locks *our*
-          // id too. Outbound peers already sent HELLO in connectToPeer
-          // and their remote's HELLO is a reply — no further reply.
+          // Inbound replies with HELLO so remote locks our id; outbound already sent its HELLO.
           if (inbound) _sendHandshake(channel);
         }
 
@@ -264,9 +227,7 @@ class WaiterNetworkService {
       onDone: () => _dropConnection(conn),
       cancelOnError: true,
     );
-    // Note: we do NOT pre-send HELLO for inbound. Sending before we know
-    // the remote's id racy — the remote's HELLO may arrive mid-send and
-    // a second HELLO would duplicate. Reply only after receiving HELLO.
+    // Don't pre-send HELLO on inbound — racy with remote's HELLO; reply only after receiving.
   }
 
   /// Wire-encode + sign a message in one place so every outbound
@@ -292,7 +253,7 @@ class WaiterNetworkService {
     );
     try {
       ch.sink.add(_encodeForWire(hello));
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-net', 'cleanup/socket op failed', error: e); }
   }
 
   void _sendAck(WebSocketChannel ch, WireMessage original) {
@@ -306,29 +267,25 @@ class WaiterNetworkService {
     );
     try {
       ch.sink.add(_encodeForWire(ack));
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-net', 'cleanup/socket op failed', error: e); }
   }
 
   void _dropConnection(_PeerConnection conn) {
     _helloTimers.remove(conn)?.cancel();
     try {
       conn.channel.sink.close();
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-net', 'cleanup/socket op failed', error: e); }
     final id = conn.peerId;
     if (id != null && _peers[id] == conn) {
       _peers.remove(id);
-      // For outbound connections we know the remote address — schedule a
-      // reconnect so a transient glitch (Wi-Fi hiccup) doesn't stop the
-      // waiters talking to each other for the rest of the shift.
+      // Outbound: schedule reconnect — transient Wi-Fi glitches shouldn't strand the mesh.
       if (!conn.inbound) {
         _scheduleReconnect(id);
       }
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Sending
-  // ---------------------------------------------------------------------------
+  // --- Sending ---
 
   /// Forcibly close any open socket to [peerId]. Called when the roster
   /// sweep decides a peer is stale — keeping a half-dead socket open
@@ -336,6 +293,9 @@ class WaiterNetworkService {
   /// and reconnect logic never engages. Closing ensures the next HELLO
   /// from that peer lands on a fresh connection.
   void closeConnectionTo(String peerId) {
+    // Drop remembered address and cancel retry FIRST so _dropConnection can't re-arm the loop.
+    _lastKnownAddresses.remove(peerId);
+    _reconnectTimers.remove(peerId)?.cancel();
     final conn = _peers[peerId];
     if (conn == null) return;
     _dropConnection(conn);
@@ -347,7 +307,7 @@ class WaiterNetworkService {
     for (final conn in _peers.values.toList(growable: false)) {
       try {
         conn.channel.sink.add(encoded);
-      } catch (_) {}
+      } catch (e) { Log.w('waiter-net', 'cleanup/socket op failed', error: e); }
     }
   }
 
@@ -357,15 +317,13 @@ class WaiterNetworkService {
     if (conn == null) return;
     try {
       conn.channel.sink.add(_encodeForWire(msg));
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-net', 'cleanup/socket op failed', error: e); }
   }
 
   /// Connected peer ids, for UI / debugging.
   Iterable<String> get connectedPeerIds => _peers.keys;
 
-  // ---------------------------------------------------------------------------
-  // Disposal
-  // ---------------------------------------------------------------------------
+  // --- Disposal ---
 
   Future<void> dispose() async {
     _disposed = true;
@@ -385,7 +343,7 @@ class WaiterNetworkService {
     _peers.clear();
     try {
       await _server?.close(force: true);
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-net', 'cleanup/socket op failed', error: e); }
     _server = null;
     await _incoming.close();
   }
@@ -409,6 +367,5 @@ class _PeerConnection {
   });
 }
 
-// Re-export jsonEncode usage to keep the file self-contained if ever reused.
 // ignore: unused_element
 String _encodeMap(Map<String, dynamic> m) => jsonEncode(m);

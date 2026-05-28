@@ -1,8 +1,14 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 import 'package:flutter/foundation.dart';
-import 'base_client.dart';
-import 'api_constants.dart';
-import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
+import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+
+import 'api_constants.dart';
+import 'base_client.dart';
 
 /// Invoice Service for Hermosa POS
 ///
@@ -36,13 +42,11 @@ class InvoiceService {
     int page = 1,
     int perPage = 20,
   }) async {
-    // OFFLINE MODE: Return from local database
     if (_connectivity.isOffline) {
       return _getInvoicesOffline();
     }
 
     try {
-      // Build query parameters
       final queryParams = <String, String>{
         'page': page.toString(),
         'per_page': perPage.toString(),
@@ -77,7 +81,6 @@ class InvoiceService {
         throw Exception('Invalid invoices response format');
       }
 
-      // Save to SQLite for offline use
       if (response['data'] is List && page == 1) {
         await _offlineDb.saveServerInvoices(
           (response['data'] as List).cast<Map<String, dynamic>>(),
@@ -337,7 +340,6 @@ class InvoiceService {
     Function(Map<String, dynamic>)? onPaymentSuccess,
   }) async {
     try {
-      // Step 1: Calculate invoice first
       final calculation = await calculateInvoice(items: items);
       if (!calculation['success']) {
         return calculation;
@@ -345,7 +347,6 @@ class InvoiceService {
 
       final totals = calculation['data'];
 
-      // Step 2: Create invoice
       final invoiceResult = await createInvoice(
         customerId: customerId,
         items: items,
@@ -357,12 +358,10 @@ class InvoiceService {
         return invoiceResult;
       }
 
-      // Notify callback
       if (onInvoiceCreated != null) {
         onInvoiceCreated(invoiceResult['data']);
       }
 
-      // Step 3: Return complete data for Display App integration
       return {
         'success': true,
         'invoice': invoiceResult['data'],
@@ -429,9 +428,7 @@ class Invoice {
       total: json['total']?.toDouble(),
       status: json['status'],
       type: json['type'],
-      // Use tryParse so a backend-side malformed timestamp (rare but
-      // observed on legacy records) doesn't crash the entire invoice
-      // list parse — a null timestamp is preferable to a hard fail.
+      // tryParse: legacy records can have malformed timestamps; null is preferable to a list-parse crash.
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'].toString())
           : null,

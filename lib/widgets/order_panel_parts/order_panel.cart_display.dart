@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../order_panel.dart';
 
 extension OrderPanelCartDisplay on _OrderPanelState {
@@ -195,8 +195,7 @@ extension OrderPanelCartDisplay on _OrderPanelState {
 
     if (!widget.cdsEnabled && !widget.kdsEnabled) {
       _showDisplayStatusSnack(
-        _tr('CDS و KDS متوقفان من الإعدادات',
-            'CDS and KDS are disabled from settings'),
+        translationService.t('cds_kds_disabled'),
         Colors.orange,
       );
       return;
@@ -205,8 +204,10 @@ extension OrderPanelCartDisplay on _OrderPanelState {
     if (_displayService.isConnected) {
       final ip = _displayService.connectedIp ?? '';
       _showDisplayStatusSnack(
-        _tr('متصل بشاشة العرض${ip.isNotEmpty ? ' ($ip)' : ''}',
-            'Connected to display${ip.isNotEmpty ? ' ($ip)' : ''}'),
+        ip.isNotEmpty
+            ? translationService.t('connected_to_display_with_ip',
+                args: {'ip': ip})
+            : translationService.t('connected_to_display'),
         const Color(0xFF22C55E),
       );
       return;
@@ -214,7 +215,7 @@ extension OrderPanelCartDisplay on _OrderPanelState {
 
     if (_displayService.isConnecting || _displayService.isReconnecting) {
       _showDisplayStatusSnack(
-        _tr('جاري الاتصال بشاشة العرض...', 'Connecting to display...'),
+        translationService.t('connecting_to_display_label'),
         Colors.blue,
       );
       return;
@@ -223,8 +224,7 @@ extension OrderPanelCartDisplay on _OrderPanelState {
     final savedIp = _displayService.connectedIp?.trim() ?? '';
     if (savedIp.isEmpty) {
       _showDisplayStatusSnack(
-        _tr('لم يتم إعداد شاشة العرض. قم بالإعداد من الإعدادات',
-            'No display configured. Configure it from Settings'),
+        translationService.t('no_display_configured_msg'),
         Colors.orange,
       );
       return;
@@ -236,7 +236,7 @@ extension OrderPanelCartDisplay on _OrderPanelState {
     }
 
     _showDisplayStatusSnack(
-      _tr('جاري إعادة الاتصال بـ $savedIp', 'Reconnecting to $savedIp'),
+      translationService.t('reconnecting_to_n', args: {'ip': savedIp}),
       Colors.blue,
     );
 
@@ -250,8 +250,7 @@ extension OrderPanelCartDisplay on _OrderPanelState {
       } catch (_) {
         if (!mounted) return;
         _showDisplayStatusSnack(
-          _tr('تعذر الاتصال بشاشة العرض',
-              'Failed to connect to display'),
+          translationService.t('display_connect_failed'),
           Colors.red,
         );
       }

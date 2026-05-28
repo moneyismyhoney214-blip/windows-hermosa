@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+
+import 'package:flutter/material.dart';
 
 import 'display_language_service.dart';
 import 'nearpay/nearpay_service.dart';
@@ -76,7 +77,7 @@ class _NearPayPaymentScreenState extends State<NearPayPaymentScreen> {
 
       if (result.success) {
         final transactionData = {
-          'transactionId': result.transactionId!,
+          'transactionId': result.transactionId,
           'amount': widget.amount,
           'referenceId': widget.customerReference,
           'sessionId': widget.sessionId,

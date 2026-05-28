@@ -1,12 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
+import '../locator.dart';
 import '../models.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/product_service.dart';
-import '../services/language_service.dart';
-import '../locator.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
 
 class MealDetailsDialog extends StatefulWidget {
   final Product product;

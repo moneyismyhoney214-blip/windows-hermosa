@@ -53,9 +53,14 @@ class WaiterMessageStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Mark [messageId] as accepted by [waiterId]/[waiterName]. First
-  /// acceptance wins — subsequent calls are ignored so a late ACCEPTED
-  /// message from a racing device doesn't overwrite the real claimant.
+  /// Mark [messageId] as accepted by [waiterId]/[waiterName].
+  ///
+  /// Conflict resolution mirrors the pickup store: the claim with the
+  /// **earlier** [at] wins, ties broken by waiter id alphabetically — so
+  /// every device converges on the same accepter even when two waiters tap
+  /// "accept" within the same few hundred ms. Without this, A's device kept
+  /// A, B's kept B, and passive devices latched onto whichever ACCEPTED
+  /// arrived first → permanent disagreement on "تم الاستلام بواسطة X".
   void markAccepted({
     required String messageId,
     required String waiterId,
@@ -65,11 +70,20 @@ class WaiterMessageStore extends ChangeNotifier {
     final i = _items.indexWhere((m) => m.id == messageId);
     if (i < 0) return;
     final existing = _items[i];
-    if (existing.isAccepted) return;
+    final incomingAt = at ?? DateTime.now();
+    final prevId = existing.acceptedByWaiterId;
+    final prevAt = existing.acceptedAt;
+    if (prevId != null && prevAt != null) {
+      if (prevId == waiterId) return; // same claimant — idempotent
+      final cmp = prevAt.compareTo(incomingAt);
+      if (cmp < 0) return; // stored claim is earlier — it wins
+      if (cmp == 0 && prevId.compareTo(waiterId) <= 0) return; // tie → lower id
+      // else: the incoming claim is earlier (or ties with a lower id) — override.
+    }
     _items[i] = existing.copyWith(
       acceptedByWaiterId: waiterId,
       acceptedByWaiterName: waiterName,
-      acceptedAt: at ?? DateTime.now(),
+      acceptedAt: incomingAt,
     );
     notifyListeners();
   }

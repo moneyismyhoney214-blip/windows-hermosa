@@ -4,14 +4,17 @@ import 'package:flutter/foundation.dart';
 
 import '../locator.dart';
 import '../models.dart';
+import '../waiter_module/models/waiter_table_event.dart';
 import '../waiter_module/services/waiter_config_store.dart';
 import '../waiter_module/services/waiter_controller.dart';
 import 'category_printer_route_registry.dart';
 import 'display_app_service.dart';
 import 'kitchen_printer_route_registry.dart';
+import 'logger_service.dart';
 import 'printer_role_registry.dart';
 import 'waitlist_mesh_bridge.dart';
 import 'waitlist_service.dart';
+import 'whatsapp_service.dart';
 
 typedef DevicesProvider = List<DeviceConfig> Function();
 
@@ -33,6 +36,7 @@ class CashierMeshBootstrap {
   StreamSubscription<String>? _helloSub;
   StreamSubscription<String>? _syncReqSub;
   VoidCallback? _displayListener;
+  VoidCallback? _whatsAppListener;
 
   Timer? _printerDebounce;
   Timer? _kdsDebounce;
@@ -74,22 +78,19 @@ class CashierMeshBootstrap {
       return;
     }
 
-    // Attach listeners once even across repeated start calls (e.g. branch
-    // switch restarts the controller but we don't want duplicate subs).
+    // Attach listeners once; repeated starts (branch switch) must not duplicate subs.
     await _attachListeners();
 
     _started = true;
 
-    // Wire the waitlist service to the mesh. Safe to call on every
-    // start — attach() is a no-op if the same controller is already
-    // bound, and it tears down old subs before re-wiring.
+    // attach() is idempotent — tears down old subs before re-wiring.
     unawaited(waitlistService.initialize());
     waitlistMeshBridge.attach(controller);
 
-    // Push a first snapshot so a cashier that came up AFTER waiters have
-    // been running doesn't leave them stuck on stale config.
+    // Push first snapshot so cashiers booting after waiters don't leave them on stale config.
     unawaited(broadcastKitchenPrintersConfig());
     unawaited(broadcastKdsEndpoint());
+    _broadcastWhatsAppConfig();
   }
 
   Future<void> stop() async {
@@ -105,24 +106,32 @@ class CashierMeshBootstrap {
     if (listener != null) {
       try {
         getIt<DisplayAppService>().removeListener(listener);
-      } catch (_) {}
+      } catch (e) {
+        Log.w('cashier-mesh', 'display listener detach failed', error: e);
+      }
       _displayListener = null;
+    }
+    final waListener = _whatsAppListener;
+    if (waListener != null) {
+      try {
+        whatsAppService.removeListener(waListener);
+      } catch (e) {
+        Log.w('cashier-mesh', 'WhatsApp listener detach failed', error: e);
+      }
+      _whatsAppListener = null;
     }
     waitlistMeshBridge.detach();
     try {
       await controller.stop();
-    } catch (_) {}
+    } catch (e) {
+      Log.w('cashier-mesh', 'mesh controller stop failed', error: e);
+    }
     _started = false;
   }
 
   Future<void> _attachListeners() async {
-    if (_helloSub == null) {
-      _helloSub = controller.onPeerHello.listen(_handlePeerHello);
-    }
-    if (_syncReqSub == null) {
-      _syncReqSub =
-          controller.onConfigSyncRequest.listen(_handleSyncRequest);
-    }
+    _helloSub ??= controller.onPeerHello.listen(_handlePeerHello);
+    _syncReqSub ??= controller.onConfigSyncRequest.listen(_handleSyncRequest);
     if (_displayListener == null) {
       final display = getIt<DisplayAppService>();
       String? lastIp = display.connectedIp;
@@ -139,11 +148,15 @@ class CashierMeshBootstrap {
       display.addListener(onChange);
       _displayListener = onChange;
     }
+    if (_whatsAppListener == null) {
+      // Re-push WAWP creds on change — critical for BranchService's first post-login seed.
+      void onWaChange() => _broadcastWhatsAppConfig();
+      whatsAppService.addListener(onWaChange);
+      _whatsAppListener = onWaChange;
+    }
   }
 
-  // ---------------------------------------------------------------------------
-  // Public broadcast entry points (called from printers_tab_view + MainScreen)
-  // ---------------------------------------------------------------------------
+  // --- Public broadcast entry points (printers_tab_view + MainScreen) ---
 
   /// Compose + broadcast the latest printer snapshot. Safe to call from
   /// any printer mutation callsite; internally debounced (250 ms) so a
@@ -155,6 +168,52 @@ class CashierMeshBootstrap {
   /// Compose + broadcast the cashier's current KDS endpoint.
   Future<void> broadcastKdsEndpoint() async {
     _scheduleKdsBroadcast();
+  }
+
+  /// Push a table-state change ORIGINATING on this cashier device into the
+  /// waiter mesh so every waiter screen mirrors it in real time. The cashier
+  /// is normally a passive viewer of table state, but when it creates a
+  /// pay-later booking, settles an invoice, cancels a booking, etc. itself,
+  /// the waiter module otherwise keeps showing the table as free until its
+  /// next manual refresh.
+  ///
+  /// [reserved] true → the table now has an open (pay-later) order
+  /// ([TableLifecycleKind.paymentPending]); false → the table is now free
+  /// ([TableLifecycleKind.released]).
+  void broadcastCashierTableState({
+    required String tableId,
+    required String tableNumber,
+    required bool reserved,
+    String? bookingId,
+    double? total,
+    int? itemCount,
+  }) {
+    if (!_started) return;
+    final tid = tableId.trim();
+    if (tid.isEmpty) return;
+    final self = controller.session.self;
+    if (self == null) return;
+    final bid =
+        (bookingId != null && bookingId.trim().isNotEmpty) ? bookingId.trim() : null;
+    try {
+      controller.broadcastTableEvent(TableLifecycleEvent(
+        kind: reserved
+            ? TableLifecycleKind.paymentPending
+            : TableLifecycleKind.released,
+        tableId: tid,
+        tableNumber: tableNumber.trim(),
+        // Cashier isn't a waiter — keep owner blank so waiter cards don't claim a phantom owner.
+        waiterId: '',
+        waiterName: '',
+        total: reserved ? total : null,
+        itemCount: reserved ? itemCount : null,
+        orderId: reserved ? bid : null,
+      ));
+      debugPrint(
+          '📤 TABLE_${reserved ? 'PAYMENT_PENDING' : 'RELEASED'} table=$tid booking=${bid ?? '-'} (cashier-originated)');
+    } catch (e) {
+      debugPrint('⚠️ broadcastCashierTableState failed: $e');
+    }
   }
 
   void _schedulePrinterBroadcast() {
@@ -196,9 +255,7 @@ class CashierMeshBootstrap {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Per-peer push for catch-up
-  // ---------------------------------------------------------------------------
+  // --- Per-peer push for catch-up ---
 
   Future<void> _handlePeerHello(String peerId) async {
     await _pushSnapshotsTo(peerId);
@@ -219,14 +276,38 @@ class CashierMeshBootstrap {
       if (kds != null) {
         controller.pushKdsEndpointTo(peerId, kds);
       }
+      final wa = _snapshotWhatsApp();
+      if (wa != null) {
+        controller.pushWhatsAppConfigTo(peerId, wa);
+      }
     } catch (e) {
       debugPrint('⚠️ _pushSnapshotsTo($peerId) failed: $e');
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Snapshot composition
-  // ---------------------------------------------------------------------------
+  /// Broadcast the WAWP credentials to every connected waiter. No debounce
+  /// needed — these only change when BranchService seeds them after login
+  /// (once) or the merchant edits branch settings (rare).
+  void _broadcastWhatsAppConfig() {
+    if (!_started) return;
+    final payload = _snapshotWhatsApp();
+    if (payload == null) return;
+    controller.broadcastWhatsAppConfig(payload);
+    debugPrint('📤 CONFIG_WHATSAPP (instance="${payload['instance_id']}")');
+  }
+
+  /// `{instance_id, access_token}` from the live WAWP config, or null when
+  /// the branch has no credentials configured (nothing to share).
+  Map<String, dynamic>? _snapshotWhatsApp() {
+    final cfg = whatsAppService.config;
+    if (!cfg.isApiReady) return null;
+    return <String, dynamic>{
+      'instance_id': cfg.instanceId,
+      'access_token': cfg.accessToken,
+    };
+  }
+
+  // --- Snapshot composition ---
 
   int _nextVersion() {
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -255,9 +336,7 @@ class CashierMeshBootstrap {
     for (final d in devices) {
       if (!_isPhysicalPrinter(d)) continue;
       final role = roleRegistry.resolveRole(d);
-      // Only sync kitchen-side roles. Cashier receipts stay on the
-      // cashier device; general-role printers can't be assumed to be
-      // reachable from the waiter LAN.
+      // Only sync kitchen-side roles; general-role printers may not be reachable from waiter LAN.
       if (role != PrinterRole.kitchen &&
           role != PrinterRole.kds &&
           role != PrinterRole.bar) {
@@ -296,9 +375,7 @@ class CashierMeshBootstrap {
     }
     final host = display.connectedIp?.trim() ?? '';
     final port = display.connectedPort;
-    // Empty host → "no endpoint" — still broadcast so waiters can clear
-    // stale state. `enabled:false` lets the receiver know not to
-    // reconnect.
+    // Empty host = "no endpoint"; still broadcast (enabled:false) so waiters clear stale state.
     return <String, dynamic>{
       'version': _nextVersion(),
       'host': host,

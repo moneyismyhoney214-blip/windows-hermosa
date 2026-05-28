@@ -1,14 +1,12 @@
-import 'base_client.dart';
+import '../logger_service.dart';
 import 'api_constants.dart';
+import 'base_client.dart';
 
 /// Service for salon-specific employee and appointment APIs
 class SalonEmployeeService {
   final BaseClient _client = BaseClient();
 
-  // PERF: in-memory cache for `getAvailableTimes`. The same
-  // (employee, service, date) triple is often queried multiple times in a
-  // single booking session (user flips the date picker back and forth), so
-  // we memoize with a short TTL to eliminate redundant round-trips.
+  // Memoize getAvailableTimes (employee, service, date) — date picker flips repeat the same query.
   static const Duration _availableTimesTtl = Duration(minutes: 2);
   final Map<String, _CachedEntry<List<Map<String, dynamic>>>>
       _availableTimesCache = {};
@@ -23,7 +21,6 @@ class SalonEmployeeService {
     final response =
         await _client.get(ApiConstants.salonEmployeeOptionsEndpoint);
     if (response is Map<String, dynamic>) return response;
-    // If response is a bare list, wrap it
     return {'data': response};
   }
 
@@ -131,10 +128,7 @@ class SalonEmployeeService {
     return [];
   }
 
-  // PERF: per-employee service-id cache. Populated by `buildServiceEmployeeMap`
-  // so reopening the service-selection dialog reuses prior results instead of
-  // re-hammering `/seller/services/employees/{id}/branches/{branchId}/edit`
-  // (which is aggressively rate-limited and returns 422 "Too Many Attempts").
+  // Per-employee service-id cache; `/seller/services/employees/.../edit` is heavily throttled (422).
   static const Duration _employeeServicesTtl = Duration(minutes: 5);
   final Map<int, _CachedEntry<List<int>>> _employeeServicesCache = {};
 
@@ -157,11 +151,7 @@ class SalonEmployeeService {
       if (empId > 0) validEmployees.add(MapEntry(empId, emp));
     }
 
-    // The Laravel throttle on `/seller/services/employees/{id}/.../edit`
-    // is aggressive — even 3 parallel requests trip it ("Too Many
-    // Attempts.") on the salon branch. Drop to 2 workers and pace each
-    // worker's loop with a small jittered delay so the bucket has time
-    // to drain between shots.
+    // Laravel throttle trips at >2 parallel requests; cap workers + pace loop so bucket drains.
     const maxConcurrent = 2;
     const interRequestDelay = Duration(milliseconds: 150);
     final results = List<List<int>>.filled(validEmployees.length, const []);
@@ -183,13 +173,11 @@ class SalonEmployeeService {
           final ids = await getEmployeeServiceIds(empId);
           _employeeServicesCache[empId] = _CachedEntry(ids);
           results[i] = ids;
-        } catch (_) {
+        } catch (e) {
+          Log.d('salon', 'fetch services for employee=$empId failed (non-fatal): $e');
           results[i] = const [];
         }
-        // Pace next iteration so the per-worker burst stays below the
-        // backend's throttle bucket. BaseClient already retries with
-        // backoff on 422 Too Many Attempts, but avoiding the trip in the
-        // first place is much faster than waiting out a backoff.
+        // Pace iterations under the throttle bucket — cheaper than waiting out a 422 backoff.
         await Future.delayed(interRequestDelay);
       }
     }
@@ -208,7 +196,7 @@ class SalonEmployeeService {
     return map;
   }
 
-  // ── Deposits (عرابين) ────────────────────────────────────────────
+  // --- Deposits ---
 
   /// Get paginated list of deposits.
   /// API: GET /seller/branches/{branchId}/deposits?page={page}&per_page={perPage}
@@ -262,7 +250,7 @@ class SalonEmployeeService {
   /// Get deposits for a specific customer (for invoice integration).
   /// API: GET /seller/filters/branches/{branchId}/allDeposits?customer_id={id}
   Future<List<Map<String, dynamic>>> getCustomerDeposits(
-      int customerId) async {
+      String customerId) async {
     final endpoint =
         '${ApiConstants.allDepositsFilterEndpoint}?customer_id=$customerId';
     final response = await _client.get(endpoint);
@@ -276,8 +264,6 @@ class SalonEmployeeService {
     }
     return [];
   }
-
-  // ── End Deposits ──────────────────────────────────────────────────
 
   /// Get employee service income report
   Future<Map<String, dynamic>> getEmployeeServiceIncomeReport({

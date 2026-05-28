@@ -3,6 +3,16 @@ import 'package:flutter/foundation.dart' show debugPrint, Listenable;
 import '../../services/display_app_service.dart';
 import '../models/waiter.dart';
 
+/// How long to wait for the KDS to acknowledge a `NEW_ORDER` before treating
+/// it as undelivered. "WebSocket connected" ≠ "order processed" — a frozen
+/// KDS app can leave the socket up while dropping everything. Matches the
+/// cashier's `_waitForKdsAck` window.
+const Duration _kAckWait = Duration(seconds: 2);
+
+/// An ORDER_ACK older than this is treated as stale (belongs to a previous
+/// connection). Mirrors the cashier's freshness check.
+const Duration _kAckFreshness = Duration(seconds: 8);
+
 /// Thin wrapper over [DisplayAppService] that lets the waiter module send
 /// orders to the KDS using the *exact same* message format the cashier uses.
 ///
@@ -51,6 +61,31 @@ class WaiterKitchenBridge {
       debugPrint('⚠️ Waiter → KDS NEW_ORDER failed: $e');
       rethrow;
     }
+  }
+
+  /// Poll [DisplayAppService] for an `ORDER_ACK` matching [orderId]. Returns
+  /// `true` if a fresh ack lands before [timeout]. Callers should fall back to
+  /// the offline outbox on `false` — the order may have been dropped by a
+  /// frozen/laggy KDS even though the socket was up. Mirrors the cashier's
+  /// `_waitForKdsAck` (main_screen.payment.dart).
+  Future<bool> awaitOrderAck(
+    String orderId, {
+    Duration timeout = _kAckWait,
+  }) async {
+    final target = orderId.trim();
+    if (target.isEmpty) return false;
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final ackId = _display.lastOrderAckId?.trim();
+      final ackAt = _display.lastOrderAckAt;
+      if (ackId == target &&
+          ackAt != null &&
+          DateTime.now().difference(ackAt) <= _kAckFreshness) {
+        return true;
+      }
+      await Future.delayed(const Duration(milliseconds: 120));
+    }
+    return false;
   }
 
   /// Push a live cart preview (used while the waiter is still editing).

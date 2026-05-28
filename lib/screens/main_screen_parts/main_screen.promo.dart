@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenPromo on _MainScreenState {
@@ -16,16 +16,16 @@ extension MainScreenPromo on _MainScreenState {
         setState(() => _cachedPromoCodes = promos);
       }
     } catch (e) {
-      print('⚠️ Failed to load promo codes: $e');
+      Log.w('promo', 'failed to load promo codes', error: e);
     }
   }
 
   Future<void> _showPromocodesSheet() async {
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       final promoService = PromoCodeService();
@@ -37,12 +37,7 @@ extension MainScreenPromo on _MainScreenState {
 
       if (!mounted) return;
       if (promocodes.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(translationService.t('promo_none_available')),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        UiFeedback.warning(context, translationService.t('promo_none_available'));
         return;
       }
 
@@ -56,42 +51,25 @@ extension MainScreenPromo on _MainScreenState {
 
       if (selected != null && mounted) {
         _applyPromoCode(selected);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              translationService.t(
+        UiFeedback.success(context, translationService.t(
                 'promo_applied',
                 args: {'code': selected.code},
-              ),
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
+              ));
       }
     } catch (e) {
       if (mounted && Navigator.canPop(context)) {
         Navigator.pop(context);
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              translationService.t(
+        UiFeedback.error(context, translationService.t(
                 'promo_fetch_error',
                 args: {'error': e},
-              ),
-            ),
-            backgroundColor: Colors.red,
-          ),
-        );
+              ));
       }
     }
   }
 }
 
-// ---------------------------------------------------------------------------
-// Promo Codes Dialog with search
-// ---------------------------------------------------------------------------
 class _PromoCodesDialog extends StatefulWidget {
   final List<PromoCode> promocodes;
   final String? activePromoId;
@@ -142,13 +120,13 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
       return;
     }
 
-    // بحث محلي أولاً بالاسم
+    // Local name search first.
     final localResults = widget.promocodes
         .where((p) => p.code.toLowerCase().contains(query))
         .toList();
     setState(() => _filtered = localResults);
 
-    // بحث بالكود من الـ API بعد تأخير
+    // Debounced API search by exact code.
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () async {
       if (!mounted) return;
@@ -158,7 +136,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
         final apiResult = await promoService.getPromoCodeByCode(query);
         if (!mounted) return;
         if (apiResult != null) {
-          // أضف النتيجة من الـ API لو مش موجودة محلياً
           final exists = localResults.any((p) => p.id == apiResult.id);
           if (!exists) {
             setState(() {
@@ -166,7 +143,9 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
             });
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        Log.d('MainScreenPromo', 'promo-code API search failed (non-fatal): $e');
+      }
       if (mounted) setState(() => _isSearching = false);
     });
   }
@@ -184,7 +163,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header
             Container(
               padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
               decoration: const BoxDecoration(
@@ -198,7 +176,7 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      _tr('الكوبونات والعروض', 'Coupons & Offers'),
+                      translationService.t('coupons_and_offers'),
                       style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
@@ -215,14 +193,13 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
               ),
             ),
 
-            // Search bar
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: TextField(
                 controller: _searchController,
                 autofocus: true,
                 decoration: InputDecoration(
-                  hintText: _tr('ابحث عن كوبون...', 'Search coupon...'),
+                  hintText: translationService.t('search_coupon_dots'),
                   hintStyle:
                       const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   prefixIcon: const Icon(LucideIcons.search,
@@ -246,7 +223,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
               ),
             ),
 
-            // Loading indicator
             if (_isSearching)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 4),
@@ -256,7 +232,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                 ),
               ),
 
-            // List
             Flexible(
               child: _filtered.isEmpty
                   ? Center(
@@ -269,7 +244,7 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                                 size: 40, color: Color(0xFFCBD5E1)),
                             const SizedBox(height: 12),
                             Text(
-                              _tr('لا توجد كوبونات', 'No coupons found'),
+                              translationService.t('no_coupons_found'),
                               style: const TextStyle(
                                   color: Color(0xFF94A3B8), fontSize: 14),
                             ),
@@ -297,7 +272,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
     final isCurrentlyApplied = widget.activePromoId == promo.id;
     final isActive = promo.isActive;
 
-    // Discount text
     final discountText = promo.type == DiscountType.percentage
         ? '${promo.discount.toStringAsFixed(0)}%'
         : '${promo.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
@@ -324,7 +298,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
         ),
         child: Row(
           children: [
-            // Discount badge
             Container(
               width: 56,
               height: 56,
@@ -349,7 +322,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
             ),
             const SizedBox(width: 12),
 
-            // Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -377,7 +349,7 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
-                            _tr('مطبّق', 'Applied'),
+                            translationService.t('applied_label'),
                             style: const TextStyle(
                               fontSize: 10,
                               color: Colors.white,
@@ -394,7 +366,7 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
-                            _tr('منتهي', 'Expired'),
+                            translationService.t('expired_label'),
                             style: const TextStyle(
                               fontSize: 10,
                               color: Color(0xFFEF4444),
@@ -406,43 +378,37 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
                   ),
                   const SizedBox(height: 4),
 
-                  // Details row
                   Wrap(
                     spacing: 12,
                     runSpacing: 4,
                     children: [
-                      // Discount type
                       _infoChip(
                         icon: LucideIcons.percent,
                         text: promo.type == DiscountType.percentage
-                            ? _tr('خصم نسبة', 'Percentage')
-                            : _tr('خصم ثابت', 'Fixed'),
+                            ? translationService.t('discount_percentage_label')
+                            : translationService.t('discount_fixed'),
                       ),
-                      // Max discount
                       if (promo.maxDiscount != null)
                         _infoChip(
                           icon: LucideIcons.arrowUpCircle,
                           text:
-                              '${_tr('حد أقصى', 'Max')}: ${promo.maxDiscountDisplay ?? '${promo.maxDiscount!.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'}',
+                              '${translationService.t('max_label')}: ${promo.maxDiscountDisplay ?? '${promo.maxDiscount!.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'}',
                         ),
-                      // Min pay
                       if (promo.minPay != null)
                         _infoChip(
                           icon: LucideIcons.wallet,
                           text:
-                              '${_tr('حد أدنى', 'Min')}: ${promo.minPayDisplay ?? '${promo.minPay!.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'}',
+                              '${translationService.t('min_label_ui')}: ${promo.minPayDisplay ?? '${promo.minPay!.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'}',
                         ),
-                      // Max uses
                       if (promo.maxUse != null)
                         _infoChip(
                           icon: LucideIcons.repeat,
                           text:
-                              '${_tr('عدد الاستخدام', 'Uses')}: ${promo.maxUse}',
+                              '${translationService.t('uses_count')}: ${promo.maxUse}',
                         ),
                     ],
                   ),
 
-                  // Validity dates
                   if (promo.durationFrom != null ||
                       promo.durationTo != null) ...[
                     const SizedBox(height: 4),
@@ -468,7 +434,6 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
               ),
             ),
 
-            // Apply arrow
             if (isActive && !isCurrentlyApplied)
               const Padding(
                 padding: EdgeInsets.only(left: 8),
@@ -500,7 +465,8 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
       try {
         final dt = DateTime.parse(raw);
         return DateFormat('yyyy/MM/dd').format(dt);
-      } catch (_) {
+      } catch (e) {
+        Log.d('catch', 'non-fatal: $e');
         return raw.length > 10 ? raw.substring(0, 10) : raw;
       }
     }
@@ -508,9 +474,9 @@ class _PromoCodesDialogState extends State<_PromoCodesDialog> {
     if (from != null && to != null) {
       return '${formatDate(from)} - ${formatDate(to)}';
     } else if (from != null) {
-      return '${_tr('من', 'From')}: ${formatDate(from)}';
+      return '${translationService.t('from_label')}: ${formatDate(from)}';
     } else if (to != null) {
-      return '${_tr('حتى', 'Until')}: ${formatDate(to)}';
+      return '${translationService.t('until_label')}: ${formatDate(to)}';
     }
     return '';
   }

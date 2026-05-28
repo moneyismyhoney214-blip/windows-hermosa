@@ -1,13 +1,16 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../services/language_service.dart';
+
+import '../locator.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/salon_employee_service.dart';
-import '../locator.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
 
 /// Dialog for selecting employee, date, and time for EACH service inside a
 /// salon package before adding it to the booking cart.
@@ -57,34 +60,30 @@ class SalonPackageSelectionDialog extends StatefulWidget {
 
 class _SalonPackageSelectionDialogState
     extends State<SalonPackageSelectionDialog> {
-  // ───────── brand palette ─────────
   static const _brand = Color(0xFFF58220);
   static const _brandLight = Color(0xFFFFF7ED);
 
-  // ───────── parsed package fields ─────────
   late final int _packageId;
   late final String _packageName;
   late final double _packagePrice;
   late final String _minutesFormat;
   late final List<Map<String, dynamic>> _services;
 
-  // ───────── per-service state ─────────
-  // Indexed by position in _services list.
+  // Per-service state — indexed by position in _services list.
   late List<Map<String, dynamic>?> _selectedEmployees;
   late List<DateTime> _selectedDates;
   late List<TimeOfDay> _selectedTimes;
   late List<List<Map<String, dynamic>>> _availableTimes; // per-service
   late List<String?> _selectedTimeSlots; // per-service
   late List<bool> _isLoadingTimes; // per-service
+  // Redeemable sessions per service (`card[*][session_numbers]`).
+  late List<int> _sessionNumbers; // per-service
 
   bool get _useArabicUi {
     final code = translationService.currentLanguageCode.trim().toLowerCase();
     return code.startsWith('ar') || code.startsWith('ur');
   }
 
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
-
-  // ───────── lifecycle ─────────
   @override
   void initState() {
     super.initState();
@@ -94,7 +93,6 @@ class _SalonPackageSelectionDialogState
     _packagePrice = _parseDouble(p['price']);
     _minutesFormat = (p['minutes_format'] ?? '').toString();
 
-    // Parse services list
     final rawServices = p['services'];
     _services = <Map<String, dynamic>>[];
     if (rawServices is List) {
@@ -105,7 +103,6 @@ class _SalonPackageSelectionDialogState
       }
     }
 
-    // Initialize per-service state
     final now = DateTime.now();
     final roundedTime = _roundToNext5(TimeOfDay.now());
     _selectedEmployees = List.filled(_services.length, null);
@@ -115,8 +112,8 @@ class _SalonPackageSelectionDialogState
     _availableTimes = List.generate(_services.length, (_) => []);
     _selectedTimeSlots = List.filled(_services.length, null);
     _isLoadingTimes = List.filled(_services.length, false);
+    _sessionNumbers = List.filled(_services.length, 1);
 
-    // Pre-select first available employee for each service
     for (var i = 0; i < _services.length; i++) {
       final serviceId = _parseInt(_services[i]['id']);
       final serviceEmployees = widget.serviceEmployeeMap[serviceId];
@@ -131,7 +128,6 @@ class _SalonPackageSelectionDialogState
     }
   }
 
-  // ───────── helpers ─────────
   static int _parseInt(dynamic v) {
     if (v is int) return v;
     if (v is double) return v.toInt();
@@ -172,7 +168,6 @@ class _SalonPackageSelectionDialogState
     return widget.employees;
   }
 
-  // ───────── actions ─────────
   Future<void> _fetchAvailableTimes(int index) async {
     final emp = _selectedEmployees[index];
     if (emp == null) return;
@@ -244,7 +239,7 @@ class _SalonPackageSelectionDialogState
     );
     if (picked != null) {
       setState(() => _selectedDates[index] = picked);
-      _fetchAvailableTimes(index);
+      unawaited(_fetchAvailableTimes(index));
     }
   }
 
@@ -276,17 +271,11 @@ class _SalonPackageSelectionDialogState
   }
 
   void _onConfirm() {
-    // Validate that all services have an employee selected
     for (var i = 0; i < _services.length; i++) {
       if (_selectedEmployees[i] == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_tr(
-              'يرجى اختيار الموظف لجميع الخدمات',
-              'Please select an employee for all services',
-            )),
-            backgroundColor: Colors.red.shade600,
-          ),
+        UiFeedback.error(
+          context,
+          translationService.t('please_select_employee_all'),
         );
         return;
       }
@@ -312,7 +301,7 @@ class _SalonPackageSelectionDialogState
         'employee_id': _parseInt(_selectedEmployees[i]!['id']),
         'date': dateStr,
         'time': timeStr,
-        'session_numbers': 1,
+        'session_numbers': _sessionNumbers[i],
         'quantity': 1,
         'price': _packagePrice,
         'unitPrice': _packagePrice,
@@ -324,9 +313,6 @@ class _SalonPackageSelectionDialogState
     Navigator.pop(context, results);
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  BUILD
-  // ══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
@@ -356,7 +342,6 @@ class _SalonPackageSelectionDialogState
     );
   }
 
-  // ─────────────────────── HEADER ───────────────────────
   Widget _header() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -404,7 +389,7 @@ class _SalonPackageSelectionDialogState
                     const SizedBox(width: 8),
                     _infoBadge(
                       icon: LucideIcons.layers,
-                      label: '${_services.length} ${_tr('خدمات', 'services')}',
+                      label: '${_services.length} ${translationService.t('services_lc_word')}',
                     ),
                   ],
                 ),
@@ -451,7 +436,6 @@ class _SalonPackageSelectionDialogState
     );
   }
 
-  // ─────────────────────── BODY ───────────────────────
   Widget _body() {
     if (_services.isEmpty) {
       return Center(
@@ -461,7 +445,7 @@ class _SalonPackageSelectionDialogState
             Icon(LucideIcons.packageOpen, size: 48, color: context.appTextSubtle),
             const SizedBox(height: 12),
             Text(
-              _tr('لا توجد خدمات في هذه الباقة', 'No services in this package'),
+              translationService.t('no_services_in_package'),
               style: TextStyle(fontSize: 14, color: context.appTextMuted),
             ),
           ],
@@ -502,7 +486,6 @@ class _SalonPackageSelectionDialogState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Service header
           Row(
             children: [
               Container(
@@ -542,7 +525,7 @@ class _SalonPackageSelectionDialogState
                               size: 13, color: context.appTextMuted),
                           const SizedBox(width: 4),
                           Text(
-                            '$minutes ${_tr('دقيقة', 'min')}',
+                            '$minutes ${translationService.t('min_word_lc')}',
                             style: TextStyle(
                                 fontSize: 12, color: context.appTextMuted),
                           ),
@@ -569,9 +552,8 @@ class _SalonPackageSelectionDialogState
           Divider(height: 1, color: context.appDivider),
           const SizedBox(height: 12),
 
-          // Employee dropdown
           Text(
-            _tr('الموظف', 'Employee'),
+            translationService.t('employee'),
             style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -591,7 +573,7 @@ class _SalonPackageSelectionDialogState
                 isExpanded: true,
                 dropdownColor: context.appSurface,
                 hint: Text(
-                  _tr('اختر الموظف', 'Select employee'),
+                  translationService.t('select_employee_label'),
                   style: TextStyle(color: context.appTextSubtle, fontSize: 14),
                 ),
                 icon: Icon(LucideIcons.chevronDown, size: 18, color: context.appTextMuted),
@@ -613,9 +595,8 @@ class _SalonPackageSelectionDialogState
           ),
           const SizedBox(height: 12),
 
-          // Date picker
           Text(
-            _tr('التاريخ', 'Date'),
+            translationService.t('date'),
             style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -629,9 +610,8 @@ class _SalonPackageSelectionDialogState
           ),
           const SizedBox(height: 12),
 
-          // Time: available slots dropdown or manual picker
           Text(
-            _tr('الوقت المتاح', 'Available Time'),
+            translationService.t('available_time_label'),
             style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -639,6 +619,73 @@ class _SalonPackageSelectionDialogState
           ),
           const SizedBox(height: 6),
           _buildTimeSelector(index),
+          const SizedBox(height: 12),
+
+          Text(
+            translationService.t('sessions_label'),
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: context.appTextMuted),
+          ),
+          const SizedBox(height: 6),
+          _sessionsStepper(index),
+        ],
+      ),
+    );
+  }
+
+  Widget _sessionsStepper(int index) {
+    Widget btn(IconData icon, VoidCallback? onTap) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: onTap == null
+                ? context.appSurfaceAlt.withValues(alpha: 0.5)
+                : _brandLight,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: context.appBorder),
+          ),
+          child: Icon(icon,
+              size: 18,
+              color: onTap == null ? context.appTextSubtle : _brand),
+        ),
+      );
+    }
+
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: context.appSurfaceAlt,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: context.appBorder),
+      ),
+      child: Row(
+        children: [
+          const Icon(LucideIcons.repeat, size: 18, color: _brand),
+          const Spacer(),
+          btn(LucideIcons.minus,
+              _sessionNumbers[index] > 0
+                  ? () => setState(() => _sessionNumbers[index]--)
+                  : null),
+          Container(
+            width: 40,
+            alignment: Alignment.center,
+            child: Text(
+              '${_sessionNumbers[index]}',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: context.appText),
+            ),
+          ),
+          btn(LucideIcons.plus,
+              () => setState(() => _sessionNumbers[index]++)),
         ],
       ),
     );
@@ -675,7 +722,7 @@ class _SalonPackageSelectionDialogState
             isExpanded: true,
             dropdownColor: context.appSurface,
             icon: const Icon(LucideIcons.clock, size: 18, color: _brand),
-            hint: Text(_tr('اختر الوقت', 'Select time'),
+            hint: Text(translationService.t('select_time'),
               style: TextStyle(color: context.appTextSubtle, fontSize: 14)),
             items: _availableTimes[index].map((t) {
               final val = t['value']?.toString() ?? '';
@@ -693,7 +740,6 @@ class _SalonPackageSelectionDialogState
       );
     }
 
-    // Fallback: manual time picker
     final timeText =
         '${_selectedTimes[index].hour.toString().padLeft(2, '0')}:${_selectedTimes[index].minute.toString().padLeft(2, '0')}';
     return _pickerTile(
@@ -736,7 +782,6 @@ class _SalonPackageSelectionDialogState
     );
   }
 
-  // ─────────────────────── FOOTER ───────────────────────
   Widget _footer() {
     return Container(
       width: double.infinity,
@@ -745,14 +790,13 @@ class _SalonPackageSelectionDialogState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Total summary
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  _tr('سعر الباقة', 'Package Price'),
+                  translationService.t('package_price'),
                   style: TextStyle(
                       fontSize: 14, fontWeight: FontWeight.w600, color: context.appText),
                 ),
@@ -766,7 +810,6 @@ class _SalonPackageSelectionDialogState
               ],
             ),
           ),
-          // Add button
           SizedBox(
             width: double.infinity,
             height: 48,
@@ -780,7 +823,7 @@ class _SalonPackageSelectionDialogState
                 elevation: 0,
               ),
               child: Text(
-                _tr('إضافة للحجز', 'Add to Booking'),
+                translationService.t('add_to_cart_btn'),
                 style:
                     const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
               ),

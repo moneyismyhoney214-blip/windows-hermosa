@@ -2,18 +2,19 @@ library order_service;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
-import 'base_client.dart';
-import 'api_constants.dart';
-import 'salon_employee_service.dart';
+import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/models/booking_invoice.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
+import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
-import 'package:hermosa_pos/services/offline/connectivity_service.dart';
-import 'package:hermosa_pos/locator.dart';
 import 'package:uuid/uuid.dart';
+
+import 'api_constants.dart';
+import 'base_client.dart';
+import 'salon_employee_service.dart';
 
 part 'order_service_parts/order_service.utilities.dart';
 part 'order_service_parts/order_service.refund_logic.dart';
@@ -171,7 +172,8 @@ class OrderService {
           // Continue trying alternative sources when available.
           continue;
         }
-      } catch (_) {
+      } catch (e) {
+        Log.d('order', 'alternative-source attempt failed (non-fatal): $e');
         // Continue trying alternative sources when available.
       }
     }

@@ -1,25 +1,36 @@
+// `use_build_context_synchronously` is suppressed at file level — the
+// dialog state-machines call showDialog after small awaited helpers; a
+// dedicated pass is queued behind printer-settings refactor. Print
+// calls have been migrated to Log so this file no longer needs an
+// avoid_print suppression.
+// ignore_for_file: use_build_context_synchronously
+
 import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../locator.dart';
 import '../../models.dart';
-import '../../services/app_themes.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/api/device_service.dart';
 import '../../services/api/filter_service.dart';
+import '../../services/app_themes.dart';
 import '../../services/cashier_mesh_bootstrap.dart';
 import '../../services/category_printer_route_registry.dart';
 import '../../services/language_service.dart';
+import '../../services/logger_service.dart';
 import '../../services/print_orchestrator_service.dart';
 import '../../services/printer_role_registry.dart';
 import '../../services/printer_service.dart';
-import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart';
-import 'package:permission_handler/permission_handler.dart';
+
+part 'printers_tab_view_parts/printers_tab_view.builders.dart';
+part 'printers_tab_view_parts/printers_tab_view.dialogs.dart';
 
 /// Fire a kitchen-printer snapshot to every waiter on the LAN. Internally
 /// debounced (250 ms) so a burst of printer edits produces a single
@@ -29,7 +40,9 @@ void _notifyPrinterConfigChanged() {
     final bootstrap = getIt<CashierMeshBootstrap>();
     if (!bootstrap.isStarted) return;
     unawaited(bootstrap.broadcastKitchenPrintersConfig());
-  } catch (_) {}
+  } catch (e) {
+    Log.d('PrintersTabView', 'broadcast kitchen-printer config failed (non-fatal): $e');
+  }
 }
 
 class PrintersTabView extends StatefulWidget {
@@ -228,7 +241,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
         });
       }
     } catch (e) {
-      print('⚠️ Failed loading categories for printer routing: $e');
+      Log.w('printer-tab', 'failed loading categories for routing', error: e);
     } finally {
       if (mounted && _busyId == 'load_categories') {
         setState(() => _busyId = null);
@@ -241,7 +254,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     try {
       await _categoryRouteRegistry.initialize();
     } catch (e) {
-      print('⚠️ Failed syncing category routes from backend: $e');
+      Log.w('printer-tab', 'failed syncing category routes', error: e);
     }
   }
 
@@ -303,6 +316,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(
             _t(
               'paper_size_updated',
@@ -319,6 +333,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(_t('printer_check_failed', args: {'error': e})),
           backgroundColor: Colors.red,
         ),
@@ -334,6 +349,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     _printOrchestrator.updatePrinterStatus(device.id, false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        duration: const Duration(seconds: 3),
         content: Text('${device.name} - تم قطع الاتصال'),
         backgroundColor: Colors.orange,
       ),
@@ -353,6 +369,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       if (!mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
+          duration: Duration(seconds: 3),
           content: Text('يرجى منح صلاحيات البلوتوث للبحث عن الطابعات'),
           backgroundColor: Colors.red,
         ),
@@ -378,6 +395,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       _printOrchestrator.updatePrinterStatus(device.id, ok);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(
             ok ? _t('printer_connected') : _t('printer_connection_failed'),
           ),
@@ -388,6 +406,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(_t('printer_check_failed', args: {'error': e})),
           backgroundColor: Colors.red,
         ),
@@ -406,6 +425,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       _printOrchestrator.updatePrinterStatus(device.id, true);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(_t('printer_test_sent')),
           backgroundColor: Colors.green,
         ),
@@ -416,6 +436,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       _printOrchestrator.updatePrinterStatus(device.id, false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(_t('printer_print_failed', args: {'error': e})),
           backgroundColor: Colors.red,
         ),
@@ -429,13 +450,15 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     DeviceConfig device,
     PrinterRole role,
   ) async {
-    print('🔧 _updatePrinterRole called: "${device.name}" id=${device.id} → ${role.storageValue}');
+    Log.d('printer-tab',
+        'updatePrinterRole ${device.name} (${device.id}) → ${role.storageValue}');
     await _roleRegistry.setRole(device.id, role);
     _notifyPrinterConfigChanged();
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        duration: const Duration(seconds: 3),
         content: Text('${device.name} → ${_roleLabel(role)}'),
         backgroundColor: Colors.green,
       ),
@@ -450,6 +473,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     if (categories.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(_t('no_categories_available')),
           backgroundColor: Colors.orange,
         ),
@@ -513,14 +537,14 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                     final confirm = await showDialog<bool>(
                       context: context,
                       builder: (ctx) => AlertDialog(
-                        title: const Text('مسح كل الأقسام؟'),
-                        content: const Text('سيتم إزالة جميع الأقسام من هذه الطابعة. هل أنت متأكد؟'),
+                        title: Text(_t('clear_all_categories_title')),
+                        content: Text(_t('clear_all_categories_body')),
                         actions: [
-                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(_t('cancel'))),
                           TextButton(
                             onPressed: () => Navigator.pop(ctx, true),
                             style: TextButton.styleFrom(foregroundColor: Colors.red),
-                            child: const Text('مسح الكل'),
+                            child: Text(_t('clear_all')),
                           ),
                         ],
                       ),
@@ -566,6 +590,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
           _categoryRouteRegistry.assignedCategoryCountForPrinter(printer.id);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(
             _t(
               'links_saved_for_categories',
@@ -581,6 +606,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
       setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 3),
           content: Text(_t('link_save_server_failed', args: {'error': e})),
           backgroundColor: Colors.red,
         ),
@@ -619,7 +645,7 @@ class _PrintersTabViewState extends State<PrintersTabView> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('نتائج الفحص الشامل'),
+        title: Text(_t('bulk_scan_results_title')),
         content: SizedBox(
           width: 320,
           child: ListView(
@@ -631,10 +657,10 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                     title: Text(entry.key.name),
                     subtitle: Text(_connectionLabel(entry.key)),
                     trailing: entry.value
-                        ? const Text('✓ متصل',
-                            style: TextStyle(color: Color(0xFF16A34A)))
-                        : const Text('✗ فشل الاتصال',
-                            style: TextStyle(color: Color(0xFFDC2626))),
+                        ? Text('✓ ${_t('connected')}',
+                            style: const TextStyle(color: Color(0xFF16A34A)))
+                        : Text('✗ ${_t('connection_failed')}',
+                            style: const TextStyle(color: Color(0xFFDC2626))),
                   ),
                 )
                 .toList(),
@@ -643,13 +669,14 @@ class _PrintersTabViewState extends State<PrintersTabView> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('إغلاق'),
+            child: Text(_t('close')),
           ),
         ],
       ),
     );
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        duration: const Duration(seconds: 3),
         content: Text(
           _t(
             'bulk_scan_finished',
@@ -750,9 +777,9 @@ class _PrintersTabViewState extends State<PrintersTabView> {
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                         isDense: true,
                       ),
-                      items: const [
-                        DropdownMenuItem(value: 'cashier', child: Text('كاشير')),
-                        DropdownMenuItem(value: 'kitchen', child: Text('مطبخ')),
+                      items: [
+                        DropdownMenuItem(value: 'cashier', child: Text(_t('dropdown_role_cashier'))),
+                        DropdownMenuItem(value: 'kitchen', child: Text(_t('dropdown_role_kitchen'))),
                       ],
                       onChanged: (v) => setDialogState(() => selectedRole = v ?? selectedRole),
                     ),
@@ -831,361 +858,6 @@ class _PrintersTabViewState extends State<PrintersTabView> {
         onAdd: widget.onAddDevice,
         existingDevices: printers,
         scanHelper: _scanForBluetoothDevices,
-      ),
-    );
-  }
-
-  Widget _buildHeaderSection(List<DeviceConfig> printers) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 900;
-
-          final titleBlock = Row(
-            children: [
-              Container(
-                width: compact ? 36 : 42,
-                height: compact ? 36 : 42,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E8),
-                  borderRadius: BorderRadius.circular(compact ? 8 : 10),
-                ),
-                child: Icon(
-                  LucideIcons.printer,
-                  color: const Color(0xFFF58220),
-                  size: compact ? 18 : 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  _t('printers_management'),
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: compact ? 16 : 18,
-                    color: context.appText,
-                  ),
-                ),
-              ),
-            ],
-          );
-
-          final actions = Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _busyId == 'scan_all'
-                    ? null
-                    : () => unawaited(_runBulkHealthCheck(printers)),
-                icon: _busyId == 'scan_all'
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(LucideIcons.refreshCw, size: compact ? 14 : 15),
-                label: Text(_t('full_scan')),
-                style: OutlinedButton.styleFrom(
-                  padding: compact
-                      ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
-                      : null,
-                  foregroundColor: const Color(0xFFF58220),
-                  side: const BorderSide(color: Color(0xFFF58220)),
-                ),
-              ),
-              ElevatedButton.icon(
-                onPressed: _showAddPrinterDialog,
-                icon: Icon(LucideIcons.plus, size: compact ? 14 : 16),
-                label: Text(_t('add_printer')),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFF58220),
-                  foregroundColor: Colors.white,
-                  padding: compact
-                      ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
-                      : null,
-                ),
-              ),
-            ],
-          );
-
-          if (compact && constraints.maxWidth < 520) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                titleBlock,
-                const SizedBox(height: 12),
-                actions,
-              ],
-            );
-          }
-
-          return Row(
-            children: [
-              Expanded(child: titleBlock),
-              const SizedBox(width: 12),
-              actions,
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-
-  String _connectionLabel(DeviceConfig device) {
-    if (device.connectionType == PrinterConnectionType.bluetooth) {
-      final name = device.bluetoothName?.trim().isNotEmpty == true
-          ? device.bluetoothName!.trim()
-          : 'Bluetooth';
-      final address = device.bluetoothAddress ?? '-';
-      return '$name • $address';
-    }
-    return '${device.ip}:${device.port}';
-  }
-
-  Future<void> _confirmDeleteDevice(DeviceConfig device) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Text(_t('delete_printer_title')),
-        content: Text('${_t('delete_printer_confirm')} "${device.name}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(_t('cancel')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: Text(_t('delete')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await widget.onRemoveDevice(device.id);
-    }
-  }
-
-  Widget _buildPrinterCard(DeviceConfig device, {required bool compact}) {
-    final role = _roleRegistry.resolveRole(device);
-    final isOnline = _effectiveOnline(device);
-    final paperWidth = _normalizePaperWidthMm(device.paperWidthMm);
-    final testBusy = _busyId == 'test_${device.id}';
-    final printBusy = _busyId == 'print_${device.id}';
-    final isCashierRole = role == PrinterRole.cashierReceipt || role == PrinterRole.general;
-    final roleLabel = _roleLabel(role);
-    final roleColor = isCashierRole ? const Color(0xFF2563EB) : const Color(0xFFF58220);
-    final isKitchenRole = !isCashierRole;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: context.appCardBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // ═══ Row 1: Name + Status + Settings ═══
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-            child: Row(
-              children: [
-                // Status dot
-                Container(
-                  width: 8, height: 8,
-                  decoration: BoxDecoration(
-                    color: isOnline ? const Color(0xFF16A34A) : const Color(0xFFD1D5DB),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Printer name
-                Expanded(
-                  child: Text(device.name,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                // Settings gear
-                PopupMenuButton<String>(
-                  tooltip: 'إعدادات',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  style: IconButton.styleFrom(padding: const EdgeInsets.all(4)),
-                  icon: const Icon(LucideIcons.settings2, size: 15, color: Color(0xFF9CA3AF)),
-                  onSelected: (action) {
-                    switch (action) {
-                      case 'role_cashier': unawaited(_updatePrinterRole(device, PrinterRole.cashierReceipt)); return;
-                      case 'role_kitchen': unawaited(_updatePrinterRole(device, PrinterRole.kitchen)); return;
-                      case 'paper58': unawaited(_updatePrinterPaperWidth(device, 58)); return;
-                      case 'paper80': unawaited(_updatePrinterPaperWidth(device, 80)); return;
-                      case 'paper88': unawaited(_updatePrinterPaperWidth(device, 88)); return;
-                    }
-                  },
-                  itemBuilder: (_) {
-                    return [
-                      PopupMenuItem(value: 'role_cashier', child: Text('كاشير${isCashierRole ? ' ✓' : ''}')),
-                      PopupMenuItem(
-                        value: 'role_kitchen',
-                        child: Text(
-                            '${ApiConstants.branchModule == 'salons' ? 'أدوار' : 'مطبخ'}${isKitchenRole ? ' ✓' : ''}'),
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem(value: 'paper58', child: Text('58mm${paperWidth == 58 ? ' ✓' : ''}')),
-                      PopupMenuItem(value: 'paper80', child: Text('80mm${paperWidth == 80 ? ' ✓' : ''}')),
-                      PopupMenuItem(value: 'paper88', child: Text('88mm${paperWidth == 88 ? ' ✓' : ''}')),
-                    ];
-                  },
-                ),
-              ],
-            ),
-          ),
-
-          // ═══ Row 2: Badges (role + paper + connection) ═══
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-            child: Row(
-              children: [
-                // Role badge
-                _badge(roleLabel, roleColor),
-                const SizedBox(width: 6),
-                // Paper badge
-                _badge('${paperWidth}mm', const Color(0xFF6B7280)),
-                const SizedBox(width: 6),
-                // Connection type badge
-                _badge(
-                  device.connectionType == PrinterConnectionType.bluetooth ? 'BT' : 'WiFi',
-                  device.connectionType == PrinterConnectionType.bluetooth
-                      ? const Color(0xFF7C3AED) : const Color(0xFF0EA5E9),
-                ),
-              ],
-            ),
-          ),
-
-          // ═══ Row 3: IP/Address ═══
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-            child: Row(
-              children: [
-                Text(_connectionLabel(device),
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF), fontFamily: 'monospace')),
-              ],
-            ),
-          ),
-
-          // ═══ Divider ═══
-          Divider(height: 0, thickness: 1, color: context.appBorder),
-
-          // ═══ Actions Row ═══
-          SizedBox(
-            height: 38,
-            child: Row(
-              children: [
-                // Connect / Disconnect
-                Expanded(
-                  child: InkWell(
-                    onTap: testBusy ? null : () {
-                      if (isOnline) { _disconnectPrinter(device); } else { _testConnection(device); }
-                    },
-                    child: Center(
-                      child: testBusy
-                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                          : Text(isOnline ? 'قطع' : 'اتصال',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                                color: isOnline ? const Color(0xFF16A34A) : const Color(0xFFF58220))),
-                    ),
-                  ),
-                ),
-                _vDivider(),
-                // Test print
-                Expanded(
-                  child: InkWell(
-                    onTap: printBusy ? null : () => _testPrint(device),
-                    child: Center(
-                      child: printBusy
-                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('تجربة', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-                    ),
-                  ),
-                ),
-                // Sections (kitchen only)
-                if (isKitchenRole) ...[
-                  _vDivider(),
-                  Expanded(
-                    child: InkWell(
-                      onTap: () => _showCategoryAssignmentsDialog(device),
-                      child: const Center(
-                        child: Text('أقسام', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-                      ),
-                    ),
-                  ),
-                ],
-                _vDivider(),
-                // Edit
-                Expanded(
-                  child: InkWell(
-                    onTap: () => _showEditPrinterDialog(device),
-                    child: Center(
-                      child: Text(translationService.t('edit'),
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF2563EB))),
-                    ),
-                  ),
-                ),
-                _vDivider(),
-                // Delete
-                Expanded(
-                  child: InkWell(
-                    onTap: () => _confirmDeleteDevice(device),
-                    child: const Center(
-                      child: Text('حذف', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFEF4444))),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _badge(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
-    );
-  }
-
-  Widget _vDivider() {
-    return Container(width: 1, height: 20, color: context.appBorder);
-  }
-
-  // Keep old reference for code that reads first icon button
-
-  Widget _buildStatChip(String label, String value, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        '$label: $value',
-        style: TextStyle(
-          color: color.withValues(alpha: 0.95),
-          fontWeight: FontWeight.w700,
-          fontSize: 12,
-        ),
       ),
     );
   }
@@ -1347,480 +1019,6 @@ class _PrintersTabViewState extends State<PrintersTabView> {
           ),
         );
       },
-    );
-  }
-}
-
-class _AddPrinterDialog extends StatefulWidget {
-  final Future<void> Function(DeviceConfig) onAdd;
-  final List<DeviceConfig> existingDevices;
-  final Future<BluetoothDevice?> Function() scanHelper;
-
-  const _AddPrinterDialog({
-    required this.onAdd,
-    required this.existingDevices,
-    required this.scanHelper,
-  });
-
-  @override
-  State<_AddPrinterDialog> createState() => _AddPrinterDialogState();
-}
-
-class _AddPrinterDialogState extends State<_AddPrinterDialog> {
-  final _formKey = GlobalKey<FormState>();
-  String _name = '';
-  String _ip = '';
-  String _port = '9100';
-  String _model = 'default';
-  int _copies = 1;
-  int _paperWidthMm = 58;
-  bool _saving = false;
-  PrinterConnectionType _connectionType = PrinterConnectionType.wifi;
-  String _bluetoothAddress = '';
-  // null = auto-detect by name (default), otherwise explicit
-  PrinterRole? _role;
-
-  static final TextInputFormatter _macFormatter = _MacAddressFormatter();
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _addressController = TextEditingController();
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _addressController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _scanForBluetoothDevices() async {
-    final selected = await widget.scanHelper();
-    if (selected != null && mounted) {
-      setState(() {
-        _nameController.text = selected.name ?? 'Bluetooth Printer';
-        _addressController.text = selected.address;
-        _name = _nameController.text;
-        _bluetoothAddress = _addressController.text;
-      });
-    }
-  }
-
-  String _t(String key, {Map<String, dynamic>? args}) {
-    return translationService.t(key, args: args);
-  }
-
-  String? _findDuplicate() {
-    if (_connectionType == PrinterConnectionType.wifi) {
-      final ip = _ip.trim().toLowerCase();
-      final port = _port.trim().isEmpty ? '9100' : _port.trim();
-      for (final d in widget.existingDevices) {
-        if (d.connectionType != PrinterConnectionType.wifi) continue;
-        if (d.ip.trim().toLowerCase() == ip && d.port.trim() == port) {
-          return d.name;
-        }
-      }
-    } else {
-      final mac = _bluetoothAddress.trim().toUpperCase();
-      if (mac.isEmpty) return null;
-      for (final d in widget.existingDevices) {
-        if (d.connectionType != PrinterConnectionType.bluetooth) continue;
-        if ((d.bluetoothAddress?.trim().toUpperCase() ?? '') == mac) {
-          return d.name;
-        }
-      }
-    }
-    return null;
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    _formKey.currentState!.save();
-    if (_connectionType == PrinterConnectionType.bluetooth &&
-        _bluetoothAddress.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى إدخال عنوان MAC لطابعة البلوتوث'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    // Duplicate detection
-    final duplicate = _findDuplicate();
-    if (duplicate != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'هذه الطابعة مضافة مسبقاً باسم "$duplicate". لا يمكن إضافة نفس الطابعة مرتين.',
-          ),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-      return;
-    }
-
-    final resolvedBluetoothAddress = _bluetoothAddress.trim();
-    final resolvedBluetoothName = _name;
-    final newId = DateTime.now().millisecondsSinceEpoch.toString();
-    setState(() => _saving = true);
-    try {
-      await widget.onAdd(
-        DeviceConfig(
-          id: newId,
-          name: _name,
-          ip: _connectionType == PrinterConnectionType.bluetooth ? '' : _ip,
-          port: _port,
-          type: 'printer',
-          model: _model,
-          connectionType: _connectionType,
-          bluetoothAddress: resolvedBluetoothAddress.isEmpty
-              ? null
-              : resolvedBluetoothAddress,
-          bluetoothName:
-              resolvedBluetoothName.isEmpty ? null : resolvedBluetoothName,
-          copies: _copies <= 0 ? 1 : _copies,
-          paperWidthMm: normalizePaperWidthMm(_paperWidthMm),
-        ),
-      );
-      // Save the chosen role immediately so it's applied from the start
-      if (_role != null) {
-        final registry = getIt<PrinterRoleRegistry>();
-        await registry.initialize();
-        await registry.setRole(newId, _role!);
-        // Role wasn't set when `onAdd` fired the first broadcast; fire
-        // again so waiters see the final role, not the inferred one.
-        _notifyPrinterConfigChanged();
-      }
-      if (mounted) Navigator.pop(context);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(_t('add_printer_title')),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('WiFi'),
-                        selected: _connectionType == PrinterConnectionType.wifi,
-                        onSelected: (value) {
-                          if (!value) return;
-                          setState(() {
-                            _connectionType = PrinterConnectionType.wifi;
-                          });
-                        },
-                        selectedColor: const Color(0xFFF58220),
-                        backgroundColor: Colors.transparent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          side: const BorderSide(
-                              color: Color(0xFFF58220), width: 1.5),
-                        ),
-                        showCheckmark: false,
-                        labelStyle: TextStyle(
-                          color: _connectionType == PrinterConnectionType.wifi
-                              ? Colors.white
-                              : const Color(0xFFF58220),
-                          fontWeight: FontWeight.w600,
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                      ),
-                      // BT printer support is Android-only — see
-                      // BluetoothPrintBridge.kt. Hide the chip on iOS so
-                      // the user can't add a printer that would never
-                      // print.
-                      if (Platform.isAndroid)
-                        ChoiceChip(
-                          label: const Text('بلوتوث'),
-                          selected:
-                              _connectionType == PrinterConnectionType.bluetooth,
-                          onSelected: (value) {
-                            if (!value) return;
-                            setState(() {
-                              _connectionType = PrinterConnectionType.bluetooth;
-                            });
-                          },
-                          selectedColor: const Color(0xFFF58220),
-                          backgroundColor: Colors.transparent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                            side: const BorderSide(
-                                color: Color(0xFFF58220), width: 1.5),
-                          ),
-                          showCheckmark: false,
-                          labelStyle: TextStyle(
-                            color: _connectionType ==
-                                    PrinterConnectionType.bluetooth
-                                ? Colors.white
-                                : const Color(0xFFF58220),
-                            fontWeight: FontWeight.w600,
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // ── Printer Role ──
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    'Printer Role',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[600],
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _RoleCard(
-                        label: ApiConstants.branchModule == 'salons'
-                            ? 'طابعة الأدوار'
-                            : 'Kitchen / KDS',
-                        subtitle: ApiConstants.branchModule == 'salons'
-                            ? 'تطبع تذاكر الأدوار للموظفات'
-                            : 'Prints kitchen tickets',
-                        icon: ApiConstants.branchModule == 'salons'
-                            ? LucideIcons.scissors
-                            : LucideIcons.utensils,
-                        selected: _role == PrinterRole.kds,
-                        onTap: () => setState(
-                          () => _role =
-                              _role == PrinterRole.kds ? null : PrinterRole.kds,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _RoleCard(
-                        label: 'Cashier',
-                        subtitle: 'Prints customer invoices',
-                        icon: LucideIcons.receipt,
-                        selected: _role == PrinterRole.cashierReceipt,
-                        onTap: () => setState(
-                          () => _role = _role == PrinterRole.cashierReceipt
-                              ? null
-                              : PrinterRole.cashierReceipt,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_role == null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      'No role selected — will be auto-detected from name',
-                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _nameController,
-                  decoration: InputDecoration(labelText: _t('printer_name')),
-                  validator: (v) =>
-                      (v == null || v.isEmpty) ? _t('required') : null,
-                  onSaved: (v) => _name = v ?? '',
-                  onChanged: (v) => _name = v,
-                ),
-                if (_connectionType == PrinterConnectionType.wifi)
-                  TextFormField(
-                    decoration: InputDecoration(labelText: _t('ip_label')),
-                    validator: (v) =>
-                        (v == null || v.isEmpty) ? _t('required') : null,
-                    onSaved: (v) => _ip = v ?? '',
-                  ),
-                if (_connectionType == PrinterConnectionType.bluetooth) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _addressController,
-                          decoration: const InputDecoration(
-                            labelText: 'عنوان MAC للبلوتوث',
-                            hintText: '00:00:00:00:00:00',
-                          ),
-                          style: const TextStyle(fontFamily: 'monospace'),
-                          inputFormatters: [_macFormatter],
-                          validator: (v) =>
-                              (v == null || v.trim().isEmpty) ? _t('required') : null,
-                          onSaved: (v) => _bluetoothAddress = v ?? '',
-                          onChanged: (v) => _bluetoothAddress = v,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        onPressed: _scanForBluetoothDevices,
-                        icon: const Icon(LucideIcons.search, size: 20),
-                        style: IconButton.styleFrom(
-                          backgroundColor: const Color(0xFFF58220),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        tooltip: 'بحث عن طابعات قريبة',
-                      ),
-                    ],
-                  ),
-                ],
-                TextFormField(
-                  initialValue: _port,
-                  decoration: InputDecoration(labelText: _t('port_label')),
-                  validator: (v) =>
-                      (v == null || v.isEmpty) ? _t('required') : null,
-                  onSaved: (v) => _port = v ?? '9100',
-                ),
-                DropdownButtonFormField<int>(
-                  initialValue: _paperWidthMm,
-                  decoration:
-                      InputDecoration(labelText: _t('paper_size_label')),
-                  items: const [
-                    DropdownMenuItem(value: 58, child: Text('58 mm')),
-                    DropdownMenuItem(value: 80, child: Text('80 mm')),
-                    DropdownMenuItem(value: 88, child: Text('88 mm')),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _paperWidthMm = normalizePaperWidthMm(value);
-                    });
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context),
-          child: Text(_t('cancel')),
-        ),
-        ElevatedButton(
-          onPressed: _saving ? null : _submit,
-          child: _saving
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Text(_t('save')),
-        ),
-      ],
-    );
-  }
-}
-
-class _RoleCard extends StatelessWidget {
-  final String label;
-  final String subtitle;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _RoleCard({
-    required this.label,
-    required this.subtitle,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFFFFF7ED) : const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: selected ? const Color(0xFFF58220) : const Color(0xFFE2E8F0),
-            width: selected ? 1.5 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color:
-                  selected ? const Color(0xFFF58220) : const Color(0xFF94A3B8),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: selected
-                          ? const Color(0xFFF58220)
-                          : const Color(0xFF1E293B),
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF64748B),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MacAddressFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final raw =
-        newValue.text.toUpperCase().replaceAll(RegExp(r'[^0-9A-F]'), '');
-    final buffer = StringBuffer();
-    for (var i = 0; i < raw.length; i++) {
-      if (i > 0 && i % 2 == 0) buffer.write(':');
-      buffer.write(raw[i]);
-    }
-    final formatted = buffer.toString();
-    return TextEditingValue(
-      text: formatted,
-      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }

@@ -1,12 +1,67 @@
 import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
-import 'package:screenshot/screenshot.dart';
-import 'package:printing/printing.dart';
-import 'package:image/image.dart' as img;
 import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/services/printer_service.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
+import 'package:image/image.dart' as img;
+import 'package:printing/printing.dart';
+import 'package:screenshot/screenshot.dart';
+
 import '../models.dart';
+
+/// Arguments bundle passed to the [_thermalizeOnIsolate] worker. Plain
+/// data only — closures and native handles aren't transferable across
+/// isolates.
+class _ThermalizeArgs {
+  final Uint8List imageBytes;
+  final int paperWidthMm;
+  final int targetWidth;
+  final int threshold;
+  const _ThermalizeArgs({
+    required this.imageBytes,
+    required this.paperWidthMm,
+    required this.targetWidth,
+    required this.threshold,
+  });
+}
+
+/// Heavy image-processing entry-point that runs on a background isolate
+/// via [compute]. Decodes the input PNG, resizes to the target raster
+/// width, applies thermal-printer-friendly contrast/grayscale, then
+/// binarizes per pixel. The per-pixel loop alone used to drop frames on
+/// 2019-era iPads — moving it off the UI thread keeps the cashier
+/// responsive while receipts are being printed.
+Uint8List _thermalizeOnIsolate(_ThermalizeArgs a) {
+  final source = img.decodeImage(a.imageBytes);
+  if (source == null) {
+    throw Exception('فشل معالجة صورة الفاتورة');
+  }
+  final resized = img.copyResize(
+    source,
+    width: a.targetWidth,
+    interpolation: img.Interpolation.average,
+  );
+  final grayscale = img.grayscale(resized);
+  final enhanced = img.adjustColor(
+    grayscale,
+    contrast: 3.0,
+    brightness: 0.95,
+    gamma: 0.5,
+  );
+  // Binarize in-place — copying first would double the peak memory.
+  for (var y = 0; y < enhanced.height; y++) {
+    for (var x = 0; x < enhanced.width; x++) {
+      final pixel = enhanced.getPixel(x, y);
+      final luminance =
+          (pixel.r * 0.299 + pixel.g * 0.587 + pixel.b * 0.114).round();
+      final value = luminance < a.threshold ? 0 : 255;
+      enhanced.setPixelRgb(x, y, value, value, value);
+    }
+  }
+  return Uint8List.fromList(img.encodePng(enhanced));
+}
 
 class ZatcaPrinterService {
   final ScreenshotController _screenshotController = ScreenshotController();
@@ -78,64 +133,22 @@ class ZatcaPrinterService {
 
   Future<void> _printImageBytes(
       DeviceConfig device, Uint8List imageBytes) async {
-    // 2. Decode and process image
-    final img.Image? originalImage = img.decodeImage(imageBytes);
-    if (originalImage == null) throw Exception('فشل معالجة صورة الفاتورة');
-
-    // 3. Prepare technical normalized image for thermal printing
+    // 2. Process image on a background isolate so the per-pixel
+    // binarize loop doesn't stall the UI thread during checkout. The
+    // worker decodes the PNG, resizes, grayscales, contrast-boosts and
+    // binarizes — then returns finished PNG bytes ready to ship.
     final normalizedPaperWidthMm = normalizePaperWidthMm(device.paperWidthMm);
-    final thermalImage = _prepareThermalImage(
-      originalImage,
-      paperWidthMm: normalizedPaperWidthMm,
+    final processedBytes = await compute(
+      _thermalizeOnIsolate,
+      _ThermalizeArgs(
+        imageBytes: imageBytes,
+        paperWidthMm: normalizedPaperWidthMm,
+        targetWidth: thermalRasterWidthForPaper(normalizedPaperWidthMm),
+        threshold: thermalThresholdForPaper(normalizedPaperWidthMm),
+      ),
     );
-
-    // 4. Encode back to Uint8List PNG for the new PrinterService
-    final Uint8List processedBytes = Uint8List.fromList(img.encodePng(thermalImage));
 
     final printerService = getIt<PrinterService>();
     await printerService.printRawImage(device, processedBytes);
-  }
-
-  img.Image _prepareThermalImage(
-    img.Image source, {
-    required int paperWidthMm,
-  }) {
-    final normalizedPaperWidthMm = normalizePaperWidthMm(paperWidthMm);
-    final targetWidth = thermalRasterWidthForPaper(normalizedPaperWidthMm);
-    final resized = img.copyResize(
-      source,
-      width: targetWidth,
-      interpolation: img.Interpolation.average,
-    );
-    final grayscale = img.grayscale(resized);
-    // Heavy contrast + low gamma → pushes all text/lines to pure black
-    final enhanced = img.adjustColor(
-      grayscale,
-      contrast: 3.0,
-      brightness: 0.95,
-      gamma: 0.5,
-    );
-
-    return _binarizeForThermal(
-      enhanced,
-      threshold: thermalThresholdForPaper(normalizedPaperWidthMm),
-    );
-  }
-
-  img.Image _binarizeForThermal(
-    img.Image source, {
-    required int threshold,
-  }) {
-    final output = source.clone();
-    for (var y = 0; y < output.height; y++) {
-      for (var x = 0; x < output.width; x++) {
-        final pixel = output.getPixel(x, y);
-        final luminance =
-            (pixel.r * 0.299 + pixel.g * 0.587 + pixel.b * 0.114).round();
-        final value = luminance < threshold ? 0 : 255;
-        output.setPixelRgb(x, y, value, value, value);
-      }
-    }
-    return output;
   }
 }

@@ -1,4 +1,8 @@
-// ignore_for_file: unused_element, unused_element_parameter, dead_code
+// ignore_for_file: unused_element, unused_element_parameter, dead_code, avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 part of '../invoice_print_widget.dart';
 
 extension InvoicePrintWidgetKitchenView on InvoicePrintWidget {

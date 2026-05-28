@@ -1,16 +1,22 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import '../services/api/api_constants.dart';
-import '../services/api/salon_employee_service.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
 import '../dialogs/create_deposit_dialog.dart';
 import '../locator.dart';
 import '../models/receipt_data.dart';
+import '../services/api/api_constants.dart';
+import '../services/api/salon_employee_service.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
 
 class DepositsScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -118,7 +124,6 @@ class _DepositsScreenState extends State<DepositsScreen> {
             .toList();
       }
 
-      // Resolve pagination
       final meta = response['meta'];
       final lastPage = (meta is Map ? meta['last_page'] : null) as int? ??
           response['last_page'] as int? ??
@@ -155,8 +160,8 @@ class _DepositsScreenState extends State<DepositsScreen> {
 
   String _statusLabel(dynamic status) {
     final s = int.tryParse(status?.toString() ?? '') ?? 0;
-    if (s == 2) return _tr('تم الاستخدام', 'Used');
-    return _tr('قيد الانتظار', 'Pending');
+    if (s == 2) return translationService.t('used_label');
+    return translationService.t('pending');
   }
 
   String _safeStr(dynamic value) {
@@ -189,15 +194,12 @@ class _DepositsScreenState extends State<DepositsScreen> {
     final normalized = _normalizeSearchToken(query);
     if (normalized.isEmpty) return true;
 
-    // Search by invoice number
     final invoiceNumber = _safeStr(deposit['invoice_number']);
     if (_normalizeSearchToken(invoiceNumber).contains(normalized)) return true;
 
-    // Search by ID
     final id = _safeStr(deposit['id']);
     if (_normalizeSearchToken(id).contains(normalized)) return true;
 
-    // Search by customer name
     final customerName = _safeStr(
         deposit['customer']?['name'] ?? deposit['customer_name'] ?? '');
     if (customerName.toLowerCase().contains(query.toLowerCase())) return true;
@@ -214,7 +216,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
       ),
     );
     if (result == true) {
-      _loadDeposits(reset: true);
+      unawaited(_loadDeposits(reset: true));
     }
   }
 
@@ -222,17 +224,20 @@ class _DepositsScreenState extends State<DepositsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.appBg,
-      body: Column(
-        children: [
-          _buildHeader(),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? _buildErrorView()
-                    : _buildDepositsList(),
-          ),
-        ],
+      // Full-screen route — owns its safe-area (no parent AppBar).
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? _buildErrorView()
+                      : _buildDepositsList(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -247,10 +252,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
       onChanged: (value) => setState(() => _searchQuery = value.trim()),
       onSubmitted: (_) => _loadDeposits(reset: true),
       decoration: InputDecoration(
-        hintText: _tr(
-          'بحث برقم العربون أو اسم العميل',
-          'Search by deposit number or customer name',
-        ),
+        hintText: translationService.t('search_deposit_or_customer'),
         isDense: true,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -284,7 +286,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
                   ),
                   Expanded(
                     child: Text(
-                      _tr('العرابين', 'Deposits'),
+                      translationService.t('deposits_label'),
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -309,7 +311,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
                   ElevatedButton.icon(
                     onPressed: _openCreateDepositDialog,
                     icon: const Icon(LucideIcons.plus, size: 16),
-                    label: Text(_tr('إنشاء عربون', 'Create Deposit')),
+                    label: Text(translationService.t('create_deposit_btn')),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFF58220),
                       foregroundColor: Colors.white,
@@ -331,7 +333,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
                 onPressed: widget.onBack,
                 icon: const Icon(LucideIcons.chevronRight, size: 28),
                 label: Text(
-                  _tr('رجوع', 'Back'),
+                  translationService.t('back'),
                   style: const TextStyle(
                       fontSize: 18, fontWeight: FontWeight.bold),
                 ),
@@ -343,7 +345,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
               ),
               const Spacer(),
               Text(
-                _tr('العرابين', 'Deposits'),
+                translationService.t('deposits_label'),
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w900,
@@ -361,7 +363,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
               ElevatedButton.icon(
                 onPressed: _openCreateDepositDialog,
                 icon: const Icon(LucideIcons.plus, size: 16),
-                label: Text(_tr('إنشاء عربون', 'Create Deposit')),
+                label: Text(translationService.t('create_deposit_btn')),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFF58220),
                   foregroundColor: Colors.white,
@@ -403,7 +405,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
           Icon(LucideIcons.alertCircle, size: 40, color: Colors.red.shade400),
           const SizedBox(height: 8),
           Text(
-            _tr('تعذر تحميل العرابين', 'Unable to load deposits'),
+            translationService.t('deposits_load_failed'),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           if (_error != null) ...[
@@ -418,7 +420,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
           ElevatedButton.icon(
             onPressed: () => _loadDeposits(reset: true),
             icon: const Icon(Icons.refresh),
-            label: Text(_tr('إعادة المحاولة', 'Retry')),
+            label: Text(translationService.t('retry')),
           ),
         ],
       ),
@@ -441,7 +443,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
             Icon(LucideIcons.wallet, size: 40, color: Colors.grey.shade400),
             const SizedBox(height: 8),
             Text(
-              _tr('لا توجد عرابين', 'No deposits found'),
+              translationService.t('no_deposits_found'),
               style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
             ),
           ],
@@ -486,10 +488,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
     final statusColor = _statusColor(status);
     final statusText = _statusLabel(status);
 
-    // Backend sometimes returns the invoice_number already prefixed
-    // (e.g. `#DP-239`). Prepend `#DP-` only when it's a bare numeric ID
-    // so we don't end up with `#DP-#DP-239` rendered as the duplicated
-    // `DP-#DP-239#` label seen in the deposits list.
+    // Backend may already return `#DP-239`; only prefix bare numeric IDs to avoid `#DP-#DP-239`.
     final displayNumber = invoiceNumber.isNotEmpty
         ? (invoiceNumber.startsWith('#') || invoiceNumber.startsWith('DP-')
             ? invoiceNumber.startsWith('#')
@@ -516,7 +515,6 @@ class _DepositsScreenState extends State<DepositsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top row: invoice number + status badge
           Row(
             children: [
               Expanded(
@@ -548,14 +546,12 @@ class _DepositsScreenState extends State<DepositsScreen> {
           ),
           const SizedBox(height: 8),
 
-          // Date
           if (createdAt.isNotEmpty)
             Text(
               _formatDate(createdAt),
               style: TextStyle(color: Colors.grey.shade600),
             ),
 
-          // Customer name
           if (customerName.isNotEmpty) ...[
             const SizedBox(height: 6),
             Row(
@@ -576,12 +572,11 @@ class _DepositsScreenState extends State<DepositsScreen> {
 
           const Divider(height: 24),
 
-          // Total amount - LARGE, BOLD, ORANGE
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                _tr('الإجمالي', 'Total'),
+                translationService.t('total'),
                 style: TextStyle(
                   color: Colors.grey.shade500,
                   fontSize: 12,
@@ -599,7 +594,6 @@ class _DepositsScreenState extends State<DepositsScreen> {
             ],
           ),
 
-          // Booking date/time
           if (bookingDate.isNotEmpty) ...[
             const SizedBox(height: 10),
             Row(
@@ -631,7 +625,6 @@ class _DepositsScreenState extends State<DepositsScreen> {
             ),
           ],
 
-          // Notes
           if (notes.isNotEmpty) ...[
             const SizedBox(height: 8),
             Row(
@@ -655,7 +648,6 @@ class _DepositsScreenState extends State<DepositsScreen> {
             ),
           ],
 
-          // Action buttons
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -664,7 +656,7 @@ class _DepositsScreenState extends State<DepositsScreen> {
               TextButton.icon(
                 onPressed: () => _showDepositDetails(deposit),
                 icon: const Icon(LucideIcons.fileText, size: 16),
-                label: Text(_tr('عرض التفاصيل', 'View Details')),
+                label: Text(translationService.t('view_details_btn')),
                 style: TextButton.styleFrom(
                   foregroundColor: const Color(0xFF2563EB),
                 ),
@@ -692,11 +684,11 @@ class _DepositsScreenState extends State<DepositsScreen> {
     final depositId = deposit['id'];
     if (depositId == null) return;
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       final details =
@@ -709,30 +701,21 @@ class _DepositsScreenState extends State<DepositsScreen> {
           : details;
 
       if (!mounted) return;
-      showDialog(
+      unawaited(showDialog(
         context: context,
         builder: (context) => _DepositDetailsDialog(
           deposit: data,
           tr: _tr,
           amountFormatter: _amountFormatter,
         ),
-      );
+      ));
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context); // dismiss loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr(
-            'تعذر جلب تفاصيل العربون',
-            'Failed to load deposit details',
-          )),
-        ),
-      );
+      UiFeedback.info(context, translationService.t('deposit_details_load_failed'));
     }
   }
 }
-
-// ── Deposit Details Dialog ──────────────────────────────────────────────
 
 class _DepositDetailsDialog extends StatelessWidget {
   final Map<String, dynamic> deposit;
@@ -778,14 +761,12 @@ class _DepositDetailsDialog extends StatelessWidget {
     final notes = _safeStr(deposit['notes']);
     final createdAt = _safeStr(deposit['created_at']);
 
-    // Extract services
     final services = deposit['services'] is List
         ? (deposit['services'] as List)
         : deposit['meals'] is List
             ? (deposit['meals'] as List)
             : [];
 
-    // Extract payments
     final pays = deposit['pays'] is List
         ? (deposit['pays'] as List)
         : [];
@@ -804,7 +785,6 @@ class _DepositDetailsDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header
             Container(
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
@@ -838,24 +818,20 @@ class _DepositDetailsDialog extends StatelessWidget {
               ),
             ),
 
-            // Body
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Customer
                     if (customerName.isNotEmpty)
                       _buildInfoRow(context,
                           LucideIcons.user, tr('العميل', 'Customer'), customerName),
 
-                    // Created at
                     if (createdAt.isNotEmpty)
                       _buildInfoRow(context,
                           LucideIcons.calendar, tr('التاريخ', 'Date'), createdAt),
 
-                    // Booking date/time
                     if (bookingDate.isNotEmpty)
                       _buildInfoRow(
                         context,
@@ -866,7 +842,6 @@ class _DepositDetailsDialog extends StatelessWidget {
                             : bookingDate,
                       ),
 
-                    // Services
                     if (services.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -906,7 +881,6 @@ class _DepositDetailsDialog extends StatelessWidget {
 
                     const Divider(height: 24),
 
-                    // Price breakdown
                     _buildAmountRow(context, tr('السعر قبل الضريبة', 'Subtotal'),
                         '${amountFormatter.format(price)} ${ApiConstants.currency}'),
                     if (tax > 0)
@@ -921,7 +895,6 @@ class _DepositDetailsDialog extends StatelessWidget {
                       color: const Color(0xFFF58220),
                     ),
 
-                    // Payments
                     if (pays.isNotEmpty) ...[
                       const Divider(height: 24),
                       Text(
@@ -964,7 +937,6 @@ class _DepositDetailsDialog extends StatelessWidget {
                       }),
                     ],
 
-                    // Notes
                     if (notes.isNotEmpty) ...[
                       const Divider(height: 24),
                       _buildInfoRow(context,
@@ -975,7 +947,6 @@ class _DepositDetailsDialog extends StatelessWidget {
               ),
             ),
 
-            // Footer
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(

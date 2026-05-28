@@ -1,7 +1,7 @@
-import 'package:intl/intl.dart';
-import 'package:hermosa_pos/utils/paper_width_utils.dart';
-import 'package:hermosa_pos/services/printer_language_settings_service.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/printer_language_settings_service.dart';
+import 'package:hermosa_pos/utils/paper_width_utils.dart';
+import 'package:intl/intl.dart';
 
 class DailyClosingReportLine {
   final String label;

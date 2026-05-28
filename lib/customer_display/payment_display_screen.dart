@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
-import 'display_provider.dart';
+
 import '../services/api/api_constants.dart';
+import '../services/logger_service.dart';
+import 'display_provider.dart';
 
 /// Payment Display Screen for CDS
 /// This is shown on the Customer Display when payment is initiated
@@ -35,10 +39,9 @@ class _PaymentDisplayScreenState extends State<PaymentDisplayScreen> {
       try {
         final controller = VideoPlayerController.asset(assetPath);
         await controller.initialize();
-        controller
-          ..setLooping(false)
-          ..setVolume(0)
-          ..play();
+        unawaited(controller.setLooping(false));
+        unawaited(controller.setVolume(0));
+        unawaited(controller.play());
         controller.addListener(() async {
           if (_hasPinnedLastFrame) return;
           if (!controller.value.isInitialized) return;
@@ -61,7 +64,9 @@ class _PaymentDisplayScreenState extends State<PaymentDisplayScreen> {
           _successAnimationReady = true;
         });
         return;
-      } catch (_) {}
+      } catch (e) {
+        Log.d('PaymentDisplayScreen', 'success-animation video init failed (non-fatal): $e');
+      }
     }
     if (!mounted) return;
     setState(() => _successAnimationReady = false);
@@ -242,8 +247,8 @@ class _PaymentDisplayScreenState extends State<PaymentDisplayScreen> {
     return Container(
       width: 12,
       height: 12,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF58220),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF58220),
         shape: BoxShape.circle,
       ),
     );

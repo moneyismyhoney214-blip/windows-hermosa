@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
-import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
-import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
+import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
+import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
 
 /// Service for the Offline POS sync API endpoints.
 ///
@@ -22,9 +22,7 @@ class SyncApiService {
   bool _isSyncing = false;
   bool get isSyncing => _isSyncing;
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  MANIFEST
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Manifest ---
 
   /// Fetch the sync manifest from the server.
   /// Returns the list of available resources and their metadata.
@@ -44,15 +42,12 @@ class SyncApiService {
       }
     } catch (e) {
       debugPrint('Failed to fetch sync manifest: $e');
-      // Fall back to cached manifest
       return _posDb.getManifest();
     }
     return null;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  RESOURCE DOWNLOAD
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Resource download ---
 
   /// Download a resource (e.g. "employees", "customers") using cursor-based
   /// pagination. Data is inserted directly into the local SQLite database.
@@ -70,7 +65,6 @@ class SyncApiService {
 
     debugPrint('Starting sync for $resource (cursor: ${cursor ?? "none"})');
 
-    // Page through until we get an empty response or no next cursor
     bool hasMore = true;
     while (hasMore) {
       try {
@@ -94,7 +88,6 @@ class SyncApiService {
               .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
               .toList();
         } else if (data is Map && data['data'] is List) {
-          // Nested data envelope
           rows = (data['data'] as List)
               .whereType<Map>()
               .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
@@ -109,18 +102,15 @@ class SyncApiService {
           break;
         }
 
-        // Upsert into local database
         final inserted = await _posDb.upsertRows(targetTable, rows);
         totalSynced += inserted;
 
-        // Extract next cursor
         final nextCursor = _extractNextCursor(response);
         if (nextCursor != null && nextCursor.isNotEmpty && nextCursor != cursor) {
           cursor = nextCursor;
           await _posDb.updateSyncCursor(resource, cursor, addCount: inserted);
         } else {
           hasMore = false;
-          // Save final cursor state
           if (cursor != null) {
             await _posDb.updateSyncCursor(resource, cursor, addCount: inserted);
           }
@@ -140,7 +130,6 @@ class SyncApiService {
 
   /// Extract the next cursor from a sync response.
   String? _extractNextCursor(Map response) {
-    // Try standard cursor patterns
     for (final key in [
       'next_cursor',
       'cursor',
@@ -151,14 +140,12 @@ class SyncApiService {
       if (value != null) return value.toString();
     }
 
-    // Try pagination meta
     final meta = response['meta'];
     if (meta is Map) {
       final next = meta['next_cursor'] ?? meta['cursor'];
       if (next != null) return next.toString();
     }
 
-    // Try links.next
     final links = response['links'];
     if (links is Map && links['next'] is String) {
       final nextUrl = links['next'] as String;
@@ -184,9 +171,7 @@ class SyncApiService {
     return current;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  POS SALE UPLOAD
-  // ═══════════════════════════════════════════════════════════════════
+  // --- POS sale upload ---
 
   /// Upload a single POS sale to the server via POST /sync/pos.
   Future<Map<String, dynamic>> uploadPosSale(
@@ -239,9 +224,7 @@ class SyncApiService {
     return (synced: synced, failed: failed);
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  FULL SYNC (download all resources + upload sales)
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Full sync (download resources + upload sales) ---
 
   /// Run a full sync cycle:
   /// 1. Fetch manifest
@@ -268,10 +251,8 @@ class SyncApiService {
     final errors = <String>[];
 
     try {
-      // 1. Fetch manifest
       await fetchManifest();
 
-      // 2. Download resources
       for (final resource in ['employees', 'customers']) {
         try {
           final count = await syncResource(resource);
@@ -282,7 +263,6 @@ class SyncApiService {
         }
       }
 
-      // 3. Upload pending sales
       final uploadResult = await uploadPendingSales();
       salesSynced = uploadResult.synced;
       salesFailed = uploadResult.failed;

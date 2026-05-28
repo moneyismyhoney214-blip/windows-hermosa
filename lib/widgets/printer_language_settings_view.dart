@@ -86,7 +86,7 @@ class _PrinterLanguageSettingsViewState
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  _tr('لغة الطباعة', 'Printer Language'),
+                  translationService.t('printer_language_label'),
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -98,10 +98,7 @@ class _PrinterLanguageSettingsViewState
           ),
           const SizedBox(height: 6),
           Text(
-            _tr(
-              'تتحكم هذه الإعدادات في اللغة الظاهرة على فواتير الكاشير وتذاكر المطبخ.',
-              'Controls the language shown on cashier receipts and kitchen tickets.',
-            ),
+            translationService.t('printer_lang_help'),
             style: TextStyle(
               fontSize: 13,
               color: isDark ? Colors.white70 : Colors.black54,
@@ -109,7 +106,7 @@ class _PrinterLanguageSettingsViewState
           ),
           const SizedBox(height: 16),
           _buildDropdown(
-            label: _tr('اللغة الأساسية', 'Primary Language'),
+            label: translationService.t('primary_language'),
             value: _svc.primary,
             onChanged: (code) {
               if (code != null) _svc.setPrimary(code);
@@ -120,13 +117,10 @@ class _PrinterLanguageSettingsViewState
           if (_svc.allowSecondary) ...[
             const SizedBox(height: 12),
             _buildDropdown(
-              label: _tr('اللغة الثانوية', 'Secondary Language'),
+              label: translationService.t('secondary_language'),
               value: _svc.secondary,
               disabledCode: _svc.primary,
-              disabledHint: _tr(
-                'لا يمكن أن تطابق اللغة الأساسية',
-                'Cannot match the primary language',
-              ),
+              disabledHint: translationService.t('cannot_match_primary_lang'),
               onChanged: (code) {
                 if (code != null) _svc.setSecondary(code);
               },
@@ -242,10 +236,7 @@ class _PrinterLanguageSettingsViewState
         children: [
           Expanded(
             child: Text(
-              _tr(
-                'طباعة لغة ثانوية على الإيصال',
-                'Print a secondary language on the receipt',
-              ),
+              translationService.t('print_secondary_lang_on_receipt'),
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,

@@ -5,6 +5,7 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../logger_service.dart';
 import 'api_constants.dart';
 
 /// One country row from `portal.hermosaapp.com/countries/cities`.
@@ -62,6 +63,56 @@ class CountryCodeService {
     areaCode: '+966',
   );
 
+  /// Curated Arab-League / Gulf list always merged into the picker.
+  ///
+  /// The backend's `/countries/cities` endpoint only returns the handful
+  /// of countries Hermosa actually sells to (Saudi, Bahrain, UAE, Oman,
+  /// Qatar, Kuwait + Spain) — it has no Egypt, Jordan, Iraq, … So we ship
+  /// the full Arab-League dialing-code list here and union it with the
+  /// backend response (de-duplicated by dialing code; the backend's row
+  /// wins so its `value` keeps matching `branch.country_id`).
+  ///
+  /// `value`s are synthetic — `100000 + dialing code` — so they're clearly
+  /// not real backend country ids, stay positive (survive the prefs-cache
+  /// `value > 0` filter), and never collide with the backend's 1‑based ids.
+  static const List<CountryOption> _builtInArabCountries = [
+    CountryOption(value: 100020, label: 'مصر', areaCode: '+20'),
+    CountryOption(value: 100966, label: 'السعودية', areaCode: '+966'),
+    CountryOption(value: 100971, label: 'الإمارات العربية المتحدة', areaCode: '+971'),
+    CountryOption(value: 100965, label: 'الكويت', areaCode: '+965'),
+    CountryOption(value: 100974, label: 'قطر', areaCode: '+974'),
+    CountryOption(value: 100973, label: 'البحرين', areaCode: '+973'),
+    CountryOption(value: 100968, label: 'عُمان', areaCode: '+968'),
+    CountryOption(value: 100962, label: 'الأردن', areaCode: '+962'),
+    CountryOption(value: 100961, label: 'لبنان', areaCode: '+961'),
+    CountryOption(value: 100964, label: 'العراق', areaCode: '+964'),
+    CountryOption(value: 100963, label: 'سوريا', areaCode: '+963'),
+    CountryOption(value: 100970, label: 'فلسطين', areaCode: '+970'),
+    CountryOption(value: 100967, label: 'اليمن', areaCode: '+967'),
+    CountryOption(value: 100249, label: 'السودان', areaCode: '+249'),
+    CountryOption(value: 100218, label: 'ليبيا', areaCode: '+218'),
+    CountryOption(value: 100216, label: 'تونس', areaCode: '+216'),
+    CountryOption(value: 100213, label: 'الجزائر', areaCode: '+213'),
+    CountryOption(value: 100212, label: 'المغرب', areaCode: '+212'),
+    CountryOption(value: 100222, label: 'موريتانيا', areaCode: '+222'),
+    CountryOption(value: 100252, label: 'الصومال', areaCode: '+252'),
+    CountryOption(value: 100253, label: 'جيبوتي', areaCode: '+253'),
+    CountryOption(value: 100269, label: 'جزر القمر', areaCode: '+269'),
+  ];
+
+  /// Union [primary] (e.g. the backend list) with [_builtInArabCountries],
+  /// keeping the first occurrence of each dialing code and sorting by label.
+  static List<CountryOption> _mergeWithBuiltIns(List<CountryOption> primary) {
+    final seen = <String>{};
+    final merged = <CountryOption>[];
+    for (final c in [...primary, ..._builtInArabCountries]) {
+      if (c.digits.isEmpty) continue;
+      if (seen.add(c.digits)) merged.add(c);
+    }
+    merged.sort((a, b) => a.label.compareTo(b.label));
+    return merged;
+  }
+
   List<CountryOption> _options = const [];
   Future<List<CountryOption>>? _inflight;
 
@@ -98,7 +149,9 @@ class CountryCodeService {
     if (!forceRefresh) {
       final cached = await _readPrefs();
       if (cached.isNotEmpty) {
-        _options = cached;
+        // Re-merge in case the built-in list grew since this cache was
+        // written — merging is idempotent (de-dups by dialing code).
+        _options = _mergeWithBuiltIns(cached);
       }
     }
 
@@ -115,11 +168,11 @@ class CountryCodeService {
             .whereType<Map<String, dynamic>>()
             .map(CountryOption.fromJson)
             .where((c) => c.value > 0 && c.areaCode.length > 1)
-            .toList()
-          ..sort((a, b) => a.label.compareTo(b.label));
+            .toList();
         if (parsed.isNotEmpty) {
-          _options = parsed;
-          await _writePrefs(parsed);
+          final merged = _mergeWithBuiltIns(parsed);
+          _options = merged;
+          await _writePrefs(merged);
         }
       }
     } catch (e, st) {
@@ -131,7 +184,8 @@ class CountryCodeService {
     }
 
     if (_options.isEmpty) {
-      _options = const [_saudiFallback];
+      // Offline first launch — at least show the full Arab/Gulf list.
+      _options = _mergeWithBuiltIns(const []);
     }
     return _options;
   }
@@ -148,7 +202,8 @@ class CountryCodeService {
           .map(CountryOption.fromJson)
           .where((c) => c.value > 0)
           .toList();
-    } catch (_) {
+    } catch (e) {
+      Log.d('country', 'fetch failed, returning empty list (non-fatal): $e');
       return const [];
     }
   }

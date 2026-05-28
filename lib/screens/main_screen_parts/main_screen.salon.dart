@@ -1,4 +1,8 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, avoid_dynamic_calls, library_private_types_in_public_api
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 part of '../main_screen.dart';
 
 extension MainScreenSalon on _MainScreenState {
@@ -23,7 +27,7 @@ extension MainScreenSalon on _MainScreenState {
         data = response;
       }
 
-      // API returns: { data: { collection: { data: [...items...], current_page: 1, last_page: 58, total: 286, per_page: 5 } } }
+      // Shape: { data: { collection: { data: [...], current_page, last_page, total, per_page } } }
       if (data is Map<String, dynamic>) {
         if (data.containsKey('collection') && data['collection'] is Map) {
           final collection = data['collection'] as Map;
@@ -51,7 +55,6 @@ extension MainScreenSalon on _MainScreenState {
           _salonLastPage = lastPage;
 
           if (_salonServiceType == 'packageServices') {
-            // Package services mode
             if (page == 1) {
               _salonPackages = items;
             } else {
@@ -69,7 +72,6 @@ extension MainScreenSalon on _MainScreenState {
                     ))
                 .toList();
           } else {
-            // Regular services mode
             if (page == 1) {
               _salonServices = items;
             } else {
@@ -134,14 +136,7 @@ extension MainScreenSalon on _MainScreenState {
 
       String url = '';
 
-      // 1. Try the cached receipt info first (populated at startup).
-      // The cache has TWO logo sources:
-      //   * `branch_logo_url` (top-level) — sourced from `/seller/branches`
-      //     which is the only endpoint that reliably returns the logo on
-      //     accounts where `/seller/get_branches/{id}` 500s.
-      //   * `branch.logo` (nested) — sourced from `/seller/get_branches/{id}`
-      //     which works for healthy accounts.
-      // Prefer the top-level URL since it never 500s.
+      // Prefer cached top-level `branch_logo_url` (from /seller/branches) — /seller/get_branches/{id} 500s on some accounts.
       final cached = branchService.cachedBranchReceiptInfo;
       if (cached != null) {
         final topLevel = cached['branch_logo_url']?.toString().trim() ?? '';
@@ -152,7 +147,6 @@ extension MainScreenSalon on _MainScreenState {
         }
       }
 
-      // 2. Fall back to a direct API call.
       if (url.isEmpty) {
         url = await branchService.getBranchLogoUrl(branchId);
       }
@@ -208,7 +202,6 @@ extension MainScreenSalon on _MainScreenState {
         if (mounted) {
           setState(() => _salonEmployees = employees);
         }
-        // Build service→employees mapping in background
         salonService.buildServiceEmployeeMap(employees).then((map) {
           if (mounted) {
             setState(() => _serviceEmployeeMap = map);
@@ -225,7 +218,7 @@ extension MainScreenSalon on _MainScreenState {
     if (value is num) return value.toDouble();
     if (value is String) {
       var cleaned = value.replaceAll(RegExp(r'[^\d.\-]'), '');
-      // Handle multiple dots (e.g. "700.01 ر.س" → "700.01." after strip)
+      // Keep only first dot — Arabic "ر.س" leaves trailing dots after strip.
       final dotIndex = cleaned.indexOf('.');
       if (dotIndex >= 0) {
         cleaned = cleaned.substring(0, dotIndex + 1) +
@@ -265,7 +258,7 @@ extension MainScreenSalon on _MainScreenState {
   /// (`/seller/branches/{id}/deposits`) and match by client name — this covers
   /// cases where the filter endpoint misses legitimate pending deposits that
   /// the cashier can plainly see on the deposits screen.
-  Future<void> _loadCustomerDeposits(int? customerId) async {
+  Future<void> _loadCustomerDeposits(String? customerId) async {
     if (!_isSalonMode) return;
     if (customerId == null) {
       if (!mounted) return;
@@ -323,7 +316,7 @@ extension MainScreenSalon on _MainScreenState {
   /// customer's name, and convert them into the filter-endpoint shape the
   /// picker expects (`{label, value, price}`).
   Future<List<Map<String, dynamic>>> _findDepositsByCustomerName(
-      int customerId) async {
+      String customerId) async {
     final customerName = _selectedCustomer?.name.trim().toLowerCase();
     if (customerName == null || customerName.isEmpty) return const [];
 
@@ -357,10 +350,7 @@ extension MainScreenSalon on _MainScreenState {
         final numeric = RegExp(r'[0-9]+(\.[0-9]+)?').firstMatch(rawTotal);
         final totalWithTax =
             numeric != null ? double.tryParse(numeric.group(0)!) ?? 0.0 : 0.0;
-        // Deposits list returns tax-inclusive `total`; reverse the active
-        // branch's VAT so the field matches the filter endpoint's `price`
-        // (pre-tax principal). When the branch has tax disabled the
-        // multiplier collapses to 1.0 — the principal equals the total.
+        // Reverse VAT so `total` matches the filter endpoint's pre-tax `price` (1.0 when tax is disabled).
         final taxMultiplier = 1.0 + ApiConstants.effectiveTaxRate;
         final price = totalWithTax > 0 ? totalWithTax / taxMultiplier : 0.0;
 

@@ -33,7 +33,7 @@ class SecureCredentialManager {
               'Accept': 'application/json',
             },
           )
-          .timeout(Duration(seconds: 10));
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

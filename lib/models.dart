@@ -1,13 +1,12 @@
-// Forced update for build_runner
+// ignore_for_file: avoid_dynamic_calls
+// JSON wire-boundary layer — dynamic accesses accepted pending typed-model refactor.
 import 'package:flutter/material.dart';
-import 'package:json_annotation/json_annotation.dart';
-
 import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:json_annotation/json_annotation.dart';
 
 part 'models.g.dart';
 
 String _normalizeNumberString(String input) {
-  // Handle Arabic/Persian digits and decimal separators from localized APIs.
   const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
   const persianDigits = '۰۱۲۳۴۵۶۷۸۹';
 
@@ -19,7 +18,7 @@ String _normalizeNumberString(String input) {
 
   normalized = normalized.replaceAll('٫', '.').replaceAll('٬', ',');
 
-  // Extract first numeric token to avoid dots from currency symbols like "ر.س".
+  // Extract first numeric token to skip currency-symbol dots like "ر.س".
   final match = RegExp(r'-?\d+(?:[.,]\d+)?').firstMatch(normalized);
   if (match == null) return '';
 
@@ -68,7 +67,7 @@ bool _parseApiBool(dynamic value, {bool defaultValue = false}) {
     return defaultValue;
   }
   if (value is Map) {
-    // Some accounts return wrapped values like {value:1} or {status:true}
+    // Some accounts wrap as {value:1} or {status:true}.
     final map = value.cast<dynamic, dynamic>();
     final candidate =
         map['value'] ?? map['status'] ?? map['is_active'] ?? map['active'];
@@ -260,9 +259,7 @@ class Extra {
     );
   }
 
-  // Written by hand so the generated `models.g.dart` (which still only knows
-  // about id/name/price) doesn't silently drop the translation maps during
-  // offline serialization or sync snapshots.
+  // Hand-written so models.g.dart's id/name/price-only codec doesn't drop translation maps.
   Map<String, dynamic> toJson() => <String, dynamic>{
         'id': id,
         'name': name,
@@ -279,7 +276,7 @@ class Extra {
 /// `null` when nothing usable was found so callers can keep the default.
 Map<String, String>? _readLocalizedMap(dynamic payload) {
   if (payload is! Map) return null;
-  // If the payload has a nested `name` map (e.g. {name: {ar, en}}), unwrap it.
+  // Unwrap nested `name` or `translations` map if present.
   final source = payload['name'] is Map
       ? payload['name'] as Map
       : payload['translations'] is Map
@@ -392,7 +389,6 @@ class Product {
       normalized['nameEn'],
     ]) ?? '';
 
-    // Extract localized names for all supported languages
     final localizedNames = <String, String>{};
     for (final code in const ['ar', 'en', 'hi', 'ur', 'tr', 'es']) {
       final resolved = _readLocalizedText([
@@ -406,9 +402,7 @@ class Product {
         localizedNames[code] = resolved;
       }
     }
-    // Harvest from any translation map the API supplies — catalog endpoints
-    // tend to use `names`, sales meals use `meal_name_translations`, a few
-    // older surfaces expose `translations` or `name_locales`.
+    // Harvest from any of the API's translation-map shapes.
     for (final key in const [
       'names',
       'meal_name_translations',
@@ -426,8 +420,7 @@ class Product {
         }
       }
     }
-    // If `name` itself is a multilingual map (some catalog endpoints return
-    // this), extract every language key directly.
+    // Some catalog endpoints return `name` as a multilingual map directly.
     final rawName = json['name'];
     if (rawName is Map) {
       for (final entry in rawName.entries) {
@@ -437,23 +430,20 @@ class Product {
         localizedNames.putIfAbsent(code, () => value);
       }
     }
-    // Ensure ar and en are always populated from dedicated fields
     if (!localizedNames.containsKey('ar') && (normalized['nameAr'] as String).isNotEmpty) {
       localizedNames['ar'] = normalized['nameAr'] as String;
     }
     if (!localizedNames.containsKey('en') && (normalized['nameEn'] as String).isNotEmpty) {
       localizedNames['en'] = normalized['nameEn'] as String;
     }
-    // Promote `en` / `ar` from localizedNames back onto the dedicated fields
-    // when the separate `name_xx` columns were missing but a translations map
-    // provided the value.
+    // Promote en/ar back to dedicated fields when name_xx columns were missing.
     if ((normalized['nameEn'] as String).isEmpty &&
         (localizedNames['en'] ?? '').isNotEmpty) {
-      normalized['nameEn'] = localizedNames['en']!;
+      normalized['nameEn'] = localizedNames['en'];
     }
     if ((normalized['nameAr'] as String).isEmpty &&
         (localizedNames['ar'] ?? '').isNotEmpty) {
-      normalized['nameAr'] = localizedNames['ar']!;
+      normalized['nameAr'] = localizedNames['ar'];
     }
 
     final normalizedCategory = _readLocalizedText([
@@ -473,8 +463,7 @@ class Product {
     ]);
     normalized['category_name'] = normalizedCategory ?? '';
 
-    // Resolve category_id from multiple possible API field names.
-    // Priority: category_id > cat_id > nested category/category_data.id
+    // Resolve category_id: category_id > cat_id > nested category/category_data.id.
     final rawCatId = normalized['category_id'] ??
         normalized['cat_id'] ??
         (normalized['category_data'] is Map
@@ -490,18 +479,15 @@ class Product {
       normalized['category_id'] = rawCatId.toString();
     }
 
-    // Handle id being int or string in API
     if (normalized['id'] is int) {
       normalized['id'] = normalized['id'].toString();
     }
 
-    // Handle price mapping and parsing
-    // API returns 'price' as "6.00 SAR", model expects 'unit_price' as double
+    // API 'price' is "6.00 SAR" string; model needs 'unit_price' as double.
     normalized['unit_price'] = _parseApiPrice(
       normalized['unit_price'] ?? normalized['price'],
     );
 
-    // Handle image path normalization - Meals use portal.hermosaapp.com
     if (normalized['image'] != null && normalized['image'] is String) {
       String imagePath = normalized['image'];
       if (imagePath.isNotEmpty && !imagePath.startsWith('http')) {
@@ -512,14 +498,11 @@ class Product {
       }
     }
 
-    // Handle extras/addons - API might use different field names
     List<dynamic>? extrasData;
 
-    // Handle boolean values that may arrive as map/string/number
     normalized['is_active'] =
         _parseApiBool(normalized['is_active'], defaultValue: true);
 
-    // Try different possible field names for add-ons
     if (normalized['extras'] != null && normalized['extras'] is List) {
       extrasData = normalized['extras'] as List;
     } else if (normalized['add_ons'] != null && normalized['add_ons'] is List) {
@@ -548,17 +531,14 @@ class Product {
       extrasData = normalized['meal_options'] as List;
     }
 
-    // Normalize extras data to match Extra model
     if (extrasData != null && extrasData.isNotEmpty) {
       normalized['extras'] = extrasData.map((item) {
         if (item is Map) {
           final normalizedItem = item is Map<String, dynamic>
               ? item
               : item.map((k, v) => MapEntry(k.toString(), v));
-          // Handle different field names within each extra/addon
           final extraMap = <String, dynamic>{};
 
-          // ID mapping
           if (normalizedItem['id'] != null) {
             extraMap['id'] = normalizedItem['id'].toString();
           } else if (normalizedItem['option'] is Map &&
@@ -576,7 +556,6 @@ class Product {
             extraMap['id'] = DateTime.now().millisecondsSinceEpoch.toString();
           }
 
-          // Name mapping
           if (normalizedItem['name'] != null) {
             extraMap['name'] = normalizedItem['name'];
           } else if (normalizedItem['option'] is Map &&
@@ -598,7 +577,6 @@ class Product {
             extraMap['name'] = 'Extra';
           }
 
-          // Price mapping
           if (normalizedItem['price'] != null) {
             extraMap['price'] = _parseApiPrice(normalizedItem['price']);
           } else if (normalizedItem['operation_price'] != null) {
@@ -682,29 +660,22 @@ class CartItem {
 
   double get totalPrice {
     if (isFree) return 0.0;
-    // Backend computes line total as unit_price × quantity (decimals allowed,
-    // e.g. 0.25 kg). Match that exactly — see /seller/calculate response.
+    // Match backend: line total = unit_price × quantity (decimals allowed for kg etc).
     final priceQty = quantity > 0 ? quantity : 0.0;
     final basePrice =
         (product.price + selectedExtras.fold(0.0, (sum, e) => sum + e.price)) *
             priceQty;
 
     if (discountType == DiscountType.percentage) {
-      // Percentage discount must always stay in [0, 100].
       final validPercentage = discount.clamp(0.0, 100.0);
       return basePrice * (1 - (validPercentage / 100));
     }
-    // Amount discount must stay in [0, basePrice].
     final validDiscount = discount.clamp(0.0, basePrice);
     return basePrice - validDiscount;
   }
 }
 
-// IconData is not directly serializable. We'll handle it manually or skip it from JSON for now,
-// assuming the API returns an icon name/key instead of raw IconData.
-// For simplicity in this step, we'll make icon strictly runtime or map a string info.
-// We will exclude 'icon' from JSON generation or use a custom converter if needed.
-// Here we'll ignore it for JSON to avoid build errors, assuming UI maps ID to Icon.
+// IconData isn't directly serializable — UI maps ID to Icon at runtime.
 
 @JsonSerializable()
 class CategoryModel {
@@ -730,10 +701,9 @@ class CategoryModel {
   });
 
   factory CategoryModel.fromJson(Map<String, dynamic> json) {
-    // Create a mutable copy
     final mutableJson = Map<String, dynamic>.from(json);
 
-    // Handle id mapping (prefer 'id', fallback to 'value', 'category_id', 'cat_id')
+    // id mapping: id > value > category_id > cat_id.
     if (mutableJson['id'] == null) {
       if (mutableJson['value'] != null) {
         mutableJson['id'] = mutableJson['value'].toString();
@@ -746,7 +716,7 @@ class CategoryModel {
       mutableJson['id'] = mutableJson['id'].toString();
     }
 
-    // Handle name mapping (prefer 'name', fallback to 'label', 'category_name', 'title')
+    // name mapping: name > label > category_name > title.
     if (mutableJson['name'] == null) {
       if (mutableJson['label'] != null) {
         mutableJson['name'] = mutableJson['label'];
@@ -766,12 +736,10 @@ class CategoryModel {
         ]) ??
         'Unknown';
 
-    // Normalize parent_id
     if (mutableJson['parent_id'] is int) {
       mutableJson['parent_id'] = mutableJson['parent_id'].toString();
     }
 
-    // Ensure imageUrl (mapped to 'icon') is set from various possible fields
     if (mutableJson['icon'] == null) {
       if (mutableJson['image'] != null) {
         mutableJson['icon'] = mutableJson['image'];
@@ -782,7 +750,6 @@ class CategoryModel {
       }
     }
 
-    // Handle icon/image path normalization
     if (mutableJson['icon'] != null && mutableJson['icon'] is String) {
       String iconPath = mutableJson['icon'];
       if (iconPath.isNotEmpty && !iconPath.startsWith('http')) {
@@ -898,10 +865,46 @@ class TableItem {
     this.positionY,
   });
 
+  /// A shallow copy with selected fields overridden. Used where a screen
+  /// wants a display-only overlay (e.g. the waiter grid mirroring registry
+  /// ownership onto the card) without mutating the shared list element.
+  TableItem copyWith({
+    String? id,
+    String? number,
+    String? floorId,
+    int? seats,
+    TableStatus? status,
+    int? occupiedMinutes,
+    String? waiterName,
+    bool? isPaid,
+    String? qrImage,
+    bool? isActive,
+    String? categoryId,
+    String? categoryName,
+    double? positionX,
+    double? positionY,
+  }) {
+    return TableItem(
+      id: id ?? this.id,
+      number: number ?? this.number,
+      floorId: floorId ?? this.floorId,
+      seats: seats ?? this.seats,
+      status: status ?? this.status,
+      occupiedMinutes: occupiedMinutes ?? this.occupiedMinutes,
+      waiterName: waiterName ?? this.waiterName,
+      isPaid: isPaid ?? this.isPaid,
+      qrImage: qrImage ?? this.qrImage,
+      isActive: isActive ?? this.isActive,
+      categoryId: categoryId ?? this.categoryId,
+      categoryName: categoryName ?? this.categoryName,
+      positionX: positionX ?? this.positionX,
+      positionY: positionY ?? this.positionY,
+    );
+  }
+
   factory TableItem.fromJson(Map<String, dynamic> json) {
     final normalized = Map<String, dynamic>.from(json);
 
-    // Handle id being int or string
     final rawId = normalized['id'] ??
         normalized['table_id'] ??
         normalized['tableId'] ??
@@ -913,8 +916,7 @@ class TableItem {
       normalized['id'] = normalized['id'].toString();
     }
 
-    // Handle name/number being int or string
-    // API sometimes uses 'name', sometimes 'number'
+    // API sometimes uses 'name', sometimes 'number'.
     final rawName = normalized['name'] ??
         normalized['table_name'] ??
         normalized['tableName'] ??
@@ -928,7 +930,6 @@ class TableItem {
       normalized['name'] = normalized['name'].toString();
     }
 
-    // Handle seats mapping from common backend keys
     final rawSeats =
         normalized['seats'] ?? normalized['chairs'] ?? normalized['capacity'];
     final parsedSeats = rawSeats is num
@@ -937,7 +938,7 @@ class TableItem {
     normalized['seats'] =
         (parsedSeats != null && parsedSeats > 0) ? parsedSeats : 4;
 
-    // Map floor_id (1->f1, 2->f2)
+    // Map floor_id 1→f1, 2→f2.
     if (normalized['floor_id'] != null) {
       final fId = normalized['floor_id'].toString();
       if (fId == '1') {
@@ -945,13 +946,10 @@ class TableItem {
       } else if (fId == '2') {
         normalized['floor_id'] = 'f2';
       } else {
-        // Keep original if it's already a string or unknown, usually safely parsed as string by json_serializable
-        // But since we annotated with name='floor_id', we should ensure it's what we want
         normalized['floor_id'] = fId;
       }
     }
 
-    // Handle status mapping
     if (normalized['status'] != null) {
       final s = normalized['status'].toString().trim().toLowerCase();
       final occupiedLike = <String>{
@@ -984,7 +982,6 @@ class TableItem {
       normalized['status'] = TableStatus.occupied;
     }
 
-    // Handle boolean values that may arrive as map/string/number
     normalized['is_active'] =
         _parseApiBool(normalized['is_active'], defaultValue: true);
     normalized['isPaid'] =
@@ -1032,7 +1029,6 @@ class PromoCode {
   @JsonKey(name: 'discount_type')
   final DiscountType type;
 
-  // Extra display fields from API
   final double? maxDiscount;
   final String? maxDiscountDisplay;
   final double? minPay;

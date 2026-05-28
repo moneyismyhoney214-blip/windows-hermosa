@@ -111,7 +111,6 @@ extension OrderServiceInvoiceHelpers on OrderService {
     final hasOrderId = isValid(normalized['order_id']);
     final hasBookingId = isValid(normalized['booking_id']);
 
-    // Ensure both IDs are present if one exists and the other is missing/zero.
     if (hasOrderId && !hasBookingId) {
       normalized['booking_id'] = normalized['order_id'];
     } else if (hasBookingId && !hasOrderId) {
@@ -137,15 +136,12 @@ extension OrderServiceInvoiceHelpers on OrderService {
     final normalized = _withOrderIdentifierCompat(enriched);
     final bookingId = normalized['booking_id'] ?? normalized['order_id'];
 
-    // Preserve locally-set discounts: the caller (main_screen) sets discount
-    // per item from the cashier's cart. The backend booking_details response
-    // may NOT echo those discounts back, so we must keep them.
+    // Preserve cashier-set per-item discounts — booking_details response may not echo them back.
     final originalSalesMeals = invoiceData['sales_meals'];
     final hasOriginalSalesMeals =
         originalSalesMeals is List && originalSalesMeals.isNotEmpty;
 
-    // Build a lookup: meal_id → list of {discount, discount_type} from the
-    // original payload so we can re-inject them after the backend fetch.
+    // meal_id → {discount, discount_type} lookup for re-injecting after backend fetch.
     final originalDiscountsByMealId = <String, List<Map<String, dynamic>>>{};
     if (hasOriginalSalesMeals) {
       for (final m in originalSalesMeals) {
@@ -162,7 +158,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
       }
     }
 
-    void _mergeOriginalDiscounts(List<Map<String, dynamic>> salesMeals) {
+    void mergeOriginalDiscounts(List<Map<String, dynamic>> salesMeals) {
       if (originalDiscountsByMealId.isEmpty) return;
       final usedQueues = <String, List<Map<String, dynamic>>>{};
       for (final queue in originalDiscountsByMealId.entries) {
@@ -171,7 +167,6 @@ extension OrderServiceInvoiceHelpers on OrderService {
       for (final meal in salesMeals) {
         final mealId = (meal['meal_id'] ?? '').toString();
         final existingDiscount = meal['discount']?.toString() ?? '';
-        // Only inject if the backend didn't already provide a non-zero discount.
         final numericDiscount = double.tryParse(existingDiscount) ?? 0;
         if (existingDiscount.isEmpty || numericDiscount <= 0) {
           final queue = usedQueues[mealId];
@@ -195,7 +190,6 @@ extension OrderServiceInvoiceHelpers on OrderService {
         final itemsPayload = _mapItemsToInvoicePayload(rawItems);
         final salesMealsPayload = _mapItemsToSalesMeals(itemsPayload);
 
-        // Detect if items are salon services
         final hasSalonItems = itemsPayload.any((item) =>
             item.containsKey('service_id') || item.containsKey('employee_id'));
 
@@ -205,7 +199,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
           if (!hasSalonItems) enriched['meals'] = itemsPayload;
         }
         if (salesMealsPayload.isNotEmpty) {
-          _mergeOriginalDiscounts(salesMealsPayload);
+          mergeOriginalDiscounts(salesMealsPayload);
           if (hasSalonItems) {
             enriched['sales_services'] = salesMealsPayload;
           } else {
@@ -216,7 +210,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
         }
         return enriched;
       } catch (e) {
-        print('⚠️ Could not fetch booking details for invoice: $e');
+        Log.w('invoice', 'could not fetch booking details for invoice', error: e);
       }
     }
 
@@ -240,7 +234,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
         if (source != null && source.isNotEmpty) {
           final salesPayload = _mapItemsToSalesMeals(source);
           if (salesPayload.isNotEmpty) {
-            _mergeOriginalDiscounts(salesPayload);
+            mergeOriginalDiscounts(salesPayload);
             final hasSalonItems = salesPayload.any((item) =>
                 item.containsKey('service_id') || item.containsKey('employee_id'));
             if (hasSalonItems) {
@@ -319,7 +313,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
   ) {
     final items = <Map<String, dynamic>>[];
     for (final raw in rawItems) {
-      dynamic pick(dynamic value) => value == null ? null : value;
+      dynamic pick(dynamic value) => value;
       final mealMap = _asMap(raw['meal']) ?? _asMap(raw['service']) ?? const {};
       final mealId = pick(raw['meal_id'] ?? raw['service_id'] ?? mealMap['id']);
       final productId = pick(raw['product_id'] ?? raw['productId']);
@@ -376,7 +370,6 @@ extension OrderServiceInvoiceHelpers on OrderService {
       if (mealId == null && productId == null && fallbackId == null) {
         continue;
       }
-      // Detect if this is a salon service item
       final isSalonItem = raw.containsKey('service_id') ||
           raw.containsKey('booking_services') ||
           raw.containsKey('employee_id') ||
@@ -389,9 +382,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
           if (resolvedItemName != null) 'service_name': resolvedItemName,
           if (resolvedItemName != null) 'item_name': resolvedItemName,
           if (employeeId != null) 'employee_id': employeeId,
-          // Backend requires these keys to be present on every salon item
-          // (PHP `Undefined array key` 422 otherwise). Send null/0 defaults
-          // for standalone services.
+          // Required on every salon item — missing key throws 422 (PHP undefined array key).
           'package_service_id': packageServiceId,
           if (serviceDate != null) 'date': serviceDate,
           if (serviceTime != null) 'time': serviceTime,
@@ -400,9 +391,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
           'unit_price': unitPrice,
           'modified_unit_price': raw['modified_unit_price'],
           'discount': raw['discount'] ?? 0,
-          // Backend validation rejects discount_type when there's no discount
-          // (الحقل لاغٍ). Only send it alongside a non-zero discount, and use
-          // the same `%` token the working salon checkout path sends.
+          // Only send discount_type when discount > 0 (backend rejects it as null otherwise).
           if (_parseFlexibleDouble(raw['discount']) > 0)
             'discount_type': raw['discount_type'] ?? '%',
           'session_numbers': raw['session_numbers'],
@@ -449,7 +438,6 @@ extension OrderServiceInvoiceHelpers on OrderService {
         total = unitPrice * quantity;
       }
 
-      // Detect salon service item
       final isSalonItem = item.containsKey('service_id') || item.containsKey('employee_id');
 
       if (isSalonItem) {
@@ -458,7 +446,7 @@ extension OrderServiceInvoiceHelpers on OrderService {
           if (item['booking_service_id'] != null)
             'booking_service_id': item['booking_service_id'],
           if (item['employee_id'] != null) 'employee_id': item['employee_id'],
-          // See _mapItemsToInvoicePayload — backend requires the key always.
+          // Required key (see _mapItemsToInvoicePayload).
           'package_service_id': item['package_service_id'],
           if (name != null) 'service_name': name,
           'quantity': quantity,

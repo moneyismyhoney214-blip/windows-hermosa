@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../locator.dart';
+import '../models/customer.dart';
 import '../models/waitlist_entry.dart';
 import '../services/api/country_code_service.dart';
+import '../services/api/customer_service.dart';
 import '../services/app_themes.dart';
 import '../services/language_service.dart';
 import '../services/whatsapp_service.dart';
+import '../utils/ui_feedback.dart';
 import '../widgets/country_code_picker.dart';
+import 'customer_selection_dialog.dart';
 
 /// Dialog for adding a new waitlist party or editing an existing one.
 ///
@@ -38,9 +43,14 @@ class _WaitlistEntryDialogState extends State<WaitlistEntryDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _name;
   late final TextEditingController _phone;
-  late final TextEditingController _notes;
   int _partySize = 2;
   CountryOption _country = countryCodeService.defaultForBranch();
+
+  /// Backend customer id linked to this party. Carried over in edit mode,
+  /// set when the host picks an existing customer, or filled in by the
+  /// `createCustomer` call on save when the host typed a fresh name+phone.
+  String? _customerId;
+  bool _saving = false;
 
   bool get _isEdit => widget.existing != null;
 
@@ -50,57 +60,104 @@ class _WaitlistEntryDialogState extends State<WaitlistEntryDialog> {
     final e = widget.existing;
     _name = TextEditingController(text: e?.customerName ?? '');
     _phone = TextEditingController(text: e?.phoneNumber ?? '');
-    _notes = TextEditingController(text: e?.notes ?? '');
     _partySize = e?.partySize ?? 2;
+    _customerId = e?.customerId;
 
-    // For edit mode, try to detect which country the stored number
-    // already carries so the picker shows the right flag/code.
-    final storedDigits = e?.phoneNumber.replaceAll(RegExp(r'\D'), '') ?? '';
-    if (storedDigits.isNotEmpty) {
-      for (final option in countryCodeService.options) {
-        if (storedDigits.startsWith(option.digits)) {
-          _country = option;
-          break;
-        }
+    // Edit mode: detect country from stored number so the picker matches.
+    _syncCountryFromPhone(e?.phoneNumber ?? '');
+  }
+
+  void _syncCountryFromPhone(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    // Require 11+ digits — bare local mobiles (e.g. EG 10-digit) would otherwise mis-detect as "+1" AG.
+    if (digits.length < 11) return;
+    for (final option in countryCodeService.options) {
+      if (digits.startsWith(option.digits)) {
+        _country = option;
+        break;
       }
     }
+  }
+
+  /// Open the same customer picker the restaurant module uses — search +
+  /// "add new". Picking one fills the name + phone and links the party to
+  /// that customer id (so no fresh record gets created on save).
+  Future<void> _pickExistingCustomer() async {
+    final picked = await showDialog<Customer>(
+      context: context,
+      builder: (_) => const CustomerSelectionDialog(),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _name.text = picked.name;
+      final mobile = picked.mobile?.trim() ?? '';
+      if (mobile.isNotEmpty) {
+        _phone.text = mobile;
+        _syncCountryFromPhone(mobile);
+      }
+      _customerId = picked.id;
+    });
   }
 
   @override
   void dispose() {
     _name.dispose();
     _phone.dispose();
-    _notes.dispose();
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_saving) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    // Normalize the phone the same way the messaging layer will, so
-    // the value we persist is the value we'd actually dial. Country
-    // code override comes from the picker the host just used.
+    final name = _name.text.trim();
+    // Normalize phone like the messaging layer would so persisted value matches what we'd dial.
     final normalizedPhone = whatsAppService.normalizePhone(
       _phone.text.trim(),
       countryCodeOverride: _country.areaCode,
     );
 
+    // Create a real customer record for brand-new name+phone so booking carries `customer_id` instead of walking in anonymously.
+    if (_customerId == null) {
+      setState(() => _saving = true);
+      try {
+        final created = await getIt<CustomerService>().createCustomer({
+          'name': name,
+          'mobile': normalizedPhone,
+        });
+        _customerId = created.id;
+      } catch (e) {
+        if (mounted) {
+          UiFeedback.warning(
+            context,
+            translationService.t(
+              'waitlist_customer_create_failed',
+              args: {'error': e.toString()},
+            ),
+          );
+        }
+        // Non-fatal — entry just won't be linked to a customer record.
+      } finally {
+        if (mounted) setState(() => _saving = false);
+      }
+    }
+
+    if (!mounted) return;
     if (_isEdit) {
       final updated = widget.existing!.copyWith(
-        customerName: _name.text.trim(),
+        customerName: name,
         phoneNumber: normalizedPhone,
         partySize: _partySize,
-        notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
-        clearNotes: _notes.text.trim().isEmpty,
+        customerId: _customerId,
       );
       Navigator.of(context).pop(updated);
     } else {
       Navigator.of(context).pop(
         WaitlistEntry(
-          customerName: _name.text.trim(),
+          customerName: name,
           phoneNumber: normalizedPhone,
           partySize: _partySize,
-          notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
+          customerId: _customerId,
         ),
       );
     }
@@ -129,6 +186,21 @@ class _WaitlistEntryDialogState extends State<WaitlistEntryDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: TextButton.icon(
+                          onPressed: _saving ? null : _pickExistingCustomer,
+                          icon: const Icon(LucideIcons.search, size: 16),
+                          label: Text(
+                            translationService.t('waitlist_pick_existing_customer'),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: context.appPrimary,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
                       _label(translationService.t('waitlist_field_name')),
                       TextFormField(
                         controller: _name,
@@ -203,19 +275,6 @@ class _WaitlistEntryDialogState extends State<WaitlistEntryDialog> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 14),
-                      _label(translationService.t('waitlist_field_notes')),
-                      TextFormField(
-                        controller: _notes,
-                        maxLines: 2,
-                        style: TextStyle(color: context.appText),
-                        decoration: _decoration(
-                          hint: translationService.t(
-                            'waitlist_field_notes_hint',
-                          ),
-                          icon: LucideIcons.stickyNote,
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -274,7 +333,8 @@ class _WaitlistEntryDialogState extends State<WaitlistEntryDialog> {
         children: [
           Expanded(
             child: TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed:
+                  _saving ? null : () => Navigator.of(context).pop(),
               child: Text(translationService.t('cancel')),
             ),
           ),
@@ -282,11 +342,20 @@ class _WaitlistEntryDialogState extends State<WaitlistEntryDialog> {
           Expanded(
             flex: 2,
             child: FilledButton.icon(
-              onPressed: _save,
-              icon: Icon(
-                _isEdit ? LucideIcons.check : LucideIcons.plus,
-                size: 18,
-              ),
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      _isEdit ? LucideIcons.check : LucideIcons.plus,
+                      size: 18,
+                    ),
               label: Text(
                 translationService.t(
                   _isEdit ? 'save' : 'waitlist_add_submit',

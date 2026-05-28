@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../services/app_themes.dart';
+import '../../services/language_service.dart';
 
 /// The restaurant-bell icon used to request another waiter. Simple dedicated
 /// widget so the icon and tap-target are consistent across every screen.
@@ -26,7 +27,7 @@ class WaiterCallBellButton extends StatelessWidget {
         ? context.appPrimary.withValues(alpha: 0.14)
         : context.appSurfaceAlt;
     return Tooltip(
-      message: tooltip ?? 'Call waiter',
+      message: tooltip ?? translationService.t('waiter_call_peer'),
       child: Material(
         color: bg,
         shape: const CircleBorder(),

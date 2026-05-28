@@ -1,13 +1,12 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenProducts on _MainScreenState {
   Future<void> _switchCategory(String categoryId) async {
     if (categoryId == _selectedCategory) return;
 
-    // In menu list mode, filter locally - no API call needed
     if (_isMenuListActive) {
-      // setState مرة واحدة بس بدل اتنين عشان نقلل الـ rebuilds
+      // Filter locally — no API call. Single setState to minimise rebuilds.
       setState(() {
         _selectedCategory = categoryId;
         _currentPage = 1;
@@ -21,7 +20,6 @@ extension MainScreenProducts on _MainScreenState {
       return;
     }
 
-    // Salon mode: reload services with category filter
     if (_isSalonMode) {
       setState(() {
         _selectedCategory = categoryId;
@@ -35,14 +33,15 @@ extension MainScreenProducts on _MainScreenState {
 
     final productService = getIt<ProductService>();
 
-    // عرض الكاش فوراً بدون loading - مع تحديث الكاتيجوري في نفس الـ setState
+    // Paint cache immediately while the fresh fetch runs in the background.
     List<Product> cached = [];
     try {
       cached = await productService.getCachedProducts(categoryId);
-    } catch (_) {}
+    } catch (e) {
+      Log.d('MainScreenProducts', 'cached products load for category switch failed (non-fatal): $e');
+    }
 
     if (!mounted) return;
-    // setState مرة واحدة: تحديث الكاتيجوري + المنتجات المخزنة مع بعض
     setState(() {
       _selectedCategory = categoryId;
       _currentPage = 1;
@@ -52,7 +51,6 @@ extension MainScreenProducts on _MainScreenState {
       }
     });
 
-    // جلب البيانات الجديدة من الـ API في الخلفية
     try {
       final products = await productService.getProducts(
         categoryId: categoryId,
@@ -64,7 +62,9 @@ extension MainScreenProducts on _MainScreenState {
           _isLastPage = products.length < 100;
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.d('MainScreenProducts', 'refresh products from API failed (non-fatal): $e');
+    }
   }
 
   Future<void> _loadData({String? categoryId}) async {
@@ -89,25 +89,22 @@ extension MainScreenProducts on _MainScreenState {
         }
       });
 
-      // ── Salon mode: load services instead of meals ──────────────────
       if (_isSalonMode) {
         final branchService = getIt<BranchService>();
         final orderService = getIt<OrderService>();
 
-        // Load pay methods, booking settings, salon services & employees in parallel
         final fPayMethods = branchService.getEnabledPayMethods();
         final fBooking = orderService.getBookingSettings();
         _loadTaxConfiguration(branchService: branchService).ignore();
         _loadCachedDevicesThenRefresh().ignore();
         _loadPromoCodes().ignore();
         branchService.fetchAndCacheBranchReceiptInfo().then((_) => _prewarmReceiptCache()).ignore();
-        _loadSalonServices(categoryId: categoryId);
-        _loadSalonEmployees();
+        unawaited(_loadSalonServices(categoryId: categoryId));
+        unawaited(_loadSalonEmployees());
         if (_salonBranchLogoUrl == null) {
-          _loadSalonBranchLogo();
+          unawaited(_loadSalonBranchLogo());
         }
 
-        // Load service categories for the category bar
         final fServiceCategories = BaseClient()
             .get(ApiConstants.serviceCategoriesEndpoint)
             .catchError((_) => <String, dynamic>{});
@@ -115,7 +112,9 @@ extension MainScreenProducts on _MainScreenState {
         Map<String, bool> salonPayMethods = {};
         try {
           salonPayMethods = await fPayMethods;
-        } catch (_) {}
+        } catch (e) {
+          Log.d('MainScreenProducts', 'salon pay-methods load failed (non-fatal): $e');
+        }
 
         BookingSettings salonBookingSettings = BookingSettings(
           typeOptions: [],
@@ -123,9 +122,10 @@ extension MainScreenProducts on _MainScreenState {
         );
         try {
           salonBookingSettings = await fBooking;
-        } catch (_) {}
+        } catch (e) {
+          Log.d('MainScreenProducts', 'salon booking-settings load failed (non-fatal): $e');
+        }
 
-        // Parse service categories
         List<CategoryModel> serviceCategories = [];
         try {
           final catResponse = await fServiceCategories;
@@ -134,9 +134,10 @@ extension MainScreenProducts on _MainScreenState {
                 .map((e) => CategoryModel.fromJson(e as Map<String, dynamic>))
                 .toList();
           }
-        } catch (_) {}
+        } catch (e) {
+          Log.d('MainScreenProducts', 'service-categories parse failed (non-fatal): $e');
+        }
 
-        // Ensure 'All' category exists
         if (!serviceCategories.any((c) => c.id == 'all')) {
           serviceCategories.insert(
             0,
@@ -149,7 +150,6 @@ extension MainScreenProducts on _MainScreenState {
         }
 
         if (mounted) {
-          // Build order type options for salon (keep 'services' as default)
           final List<Map<String, dynamic>> salonTypeOptions = [];
           for (final option in salonBookingSettings.typeOptions) {
             salonTypeOptions.add({
@@ -180,7 +180,7 @@ extension MainScreenProducts on _MainScreenState {
       final branchService = getIt<BranchService>();
       final orderService = getIt<OrderService>();
 
-      // Load each resource independently so one failure doesn't kill everything
+      // Load each resource independently — one failure must not block the others.
       List<CategoryModel> categories = [];
       List<CategoryModel> categoriesWithMeals = [];
       List<Product> products = [];
@@ -209,14 +209,14 @@ extension MainScreenProducts on _MainScreenState {
         tableOptions: [],
       );
 
-      // ── Phase 1: Serve cached data instantly (no network wait) ──────────
+      // Phase 1: paint cached data instantly.
       try {
         final cachedCats = await productService.getCachedMealCategories();
         final cachedProds =
             await productService.getCachedProducts(_selectedCategory);
         final cachedPay = await branchService.getCachedPayMethods();
         if (mounted && (cachedCats.isNotEmpty || cachedProds.isNotEmpty)) {
-          var displayCats = List<CategoryModel>.from(cachedCats);
+          final displayCats = List<CategoryModel>.from(cachedCats);
           if (displayCats.isNotEmpty &&
               !displayCats.any((c) => c.id == 'all')) {
             displayCats.insert(
@@ -242,10 +242,11 @@ extension MainScreenProducts on _MainScreenState {
             _isLoading = false;
           });
         }
-      } catch (_) {}
+      } catch (e) {
+        Log.d('MainScreenProducts', 'cached products/categories/pay-methods load failed (non-fatal): $e');
+      }
 
-      // ── Phase 2: Fetch all fresh data in parallel ─────────────────────
-      // Start every request at the same time — none blocks another
+      // Phase 2: fire all fresh requests in parallel.
       final fCategories = productService
           .getMealCategories()
           .catchError((_) => <CategoryModel>[]);
@@ -257,14 +258,12 @@ extension MainScreenProducts on _MainScreenState {
       final fPayMethods = branchService.getEnabledPayMethods();
       final fBooking = orderService.getBookingSettings();
 
-      // Tax + devices + promo codes + receipt cache: load in background
       _loadTaxConfiguration(branchService: branchService).ignore();
       _loadCachedDevicesThenRefresh().ignore();
       _loadPromoCodes().ignore();
       _fetchAvailableMenuLists().ignore();
       branchService.fetchAndCacheBranchReceiptInfo().then((_) => _prewarmReceiptCache()).ignore();
 
-      // Wait for all main data in parallel
       await Future.wait([
         fCategories,
         fCategoriesWithMeals,
@@ -279,20 +278,19 @@ extension MainScreenProducts on _MainScreenState {
       try {
         payMethods = await fPayMethods;
         payMethodsNotice = branchService.lastPayMethodsNotice;
-      } catch (_) {}
+      } catch (e) {
+        Log.d('MainScreenProducts', 'restaurant pay-methods refresh failed (non-fatal): $e');
+      }
 
       try {
         bookingSettings = await fBooking;
-        print('📋 Type Options from API:');
-        if (bookingSettings.typeOptions.isNotEmpty) {
-          for (var i = 0; i < bookingSettings.typeOptions.length; i++) {
-            final type = bookingSettings.typeOptions[i];
-            print('  ${i + 1}. value="${type.value}", label="${type.label}"');
-          }
+        if (bookingSettings.typeOptions.isEmpty) {
+          Log.w('products', 'booking-settings returned zero type options');
         } else {
-          print('  ⚠️  No type options returned from API');
+          Log.d('products',
+              'booking-settings: ${bookingSettings.typeOptions.length} type options loaded');
         }
-      } catch (_) {}
+      } catch (_) {/* booking settings are best-effort */}
 
       _isLastPage = products.length < 100;
 
@@ -416,16 +414,15 @@ extension MainScreenProducts on _MainScreenState {
         ]);
       }
 
-      print(
-          '✅ Order Type Options Loaded: ${typeOptions.map((e) => e['value']).toList()}');
-      print('✅ Current Branch ID: ${ApiConstants.branchId}');
+      Log.d('products',
+          'order type options loaded: ${typeOptions.map((e) => e['value']).toList()} '
+          '(branch=${ApiConstants.branchId})');
 
       categories = _mergeUniqueCategories([
         ...categories,
         ...categoriesWithMeals,
       ]);
 
-      // Ensure 'All' category exists
       if (!categories.any((c) => c.id == 'all')) {
         categories.insert(
           0,
@@ -446,7 +443,6 @@ extension MainScreenProducts on _MainScreenState {
           _enabledPayMethods = payMethods;
           _orderTypeOptions = typeOptions;
 
-          // Keep current selection only if it's still valid and non-empty.
           if (_orderTypeOptions.isNotEmpty) {
             final selectedNormalized = _selectedOrderType.trim().toLowerCase();
             final hasValidCurrentSelection = selectedNormalized.isNotEmpty &&
@@ -461,7 +457,6 @@ extension MainScreenProducts on _MainScreenState {
               _selectedOrderType = _preferredNonTableOrderType();
             }
           } else {
-            // Fallback if no options from backend
             if (_selectedOrderType.isEmpty ||
                 _selectedOrderType.toLowerCase() == 'null') {
               _selectedOrderType = 'services';
@@ -474,6 +469,7 @@ extension MainScreenProducts on _MainScreenState {
         if (notice.isNotEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
+              duration: const Duration(seconds: 3),
               content: Text(notice),
               backgroundColor: const Color(0xFF0F766E),
               action: SnackBarAction(
@@ -486,9 +482,8 @@ extension MainScreenProducts on _MainScreenState {
         }
       }
     } catch (e) {
-      // Check if it's a 401 Unauthorized error
       if (e is UnauthorizedException) {
-        print('User not authenticated (401), redirecting to login...');
+        Log.w('products', 'load aborted on 401 — global onUnauthorized will route to login');
         return;
       }
       if (mounted) {
@@ -511,7 +506,8 @@ extension MainScreenProducts on _MainScreenState {
       } else if (item is Map<String, dynamic>) {
         try {
           category = CategoryModel.fromJson(item);
-        } catch (_) {
+        } catch (e) {
+          Log.d('catch', 'non-fatal: $e');
           category = null;
         }
       } else if (item is Map) {
@@ -519,7 +515,8 @@ extension MainScreenProducts on _MainScreenState {
           category = CategoryModel.fromJson(
             item.map((key, value) => MapEntry(key.toString(), value)),
           );
-        } catch (_) {
+        } catch (e) {
+          Log.d('catch', 'non-fatal: $e');
           category = null;
         }
       }
@@ -549,7 +546,6 @@ extension MainScreenProducts on _MainScreenState {
   Future<void> _loadMoreProducts() async {
     if (_isLoadingMore || _isLastPage) return;
 
-    // Salon mode: delegate to salon-specific pagination
     if (_isSalonMode) {
       return _loadMoreSalonServices();
     }
@@ -579,9 +575,7 @@ extension MainScreenProducts on _MainScreenState {
         setState(() {
           _isLoadingMore = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(translationService.t('error_loading_products', args: {'error': e.toString()}))),
-        );
+        UiFeedback.info(context, translationService.t('error_loading_products', args: {'error': e.toString()}));
       }
     }
   }
@@ -608,16 +602,12 @@ extension MainScreenProducts on _MainScreenState {
     final words =
         normalized.split(_whitespaceRegex).where((w) => w.isNotEmpty).toList();
 
-    // Score: higher = better match
+    // Score: 4=exact, 3=prefix, 2=all-words, 1=any-word.
     int score(Product p) {
       final name = _normalizeArabic(p.name);
-      // Exact match
       if (name == normalized) return 4;
-      // Starts with the full query
       if (name.startsWith(normalized)) return 3;
-      // All words appear in the name
       if (words.every((w) => name.contains(w))) return 2;
-      // Any word appears in the name
       if (words.any((w) => name.contains(w))) return 1;
       return 0;
     }

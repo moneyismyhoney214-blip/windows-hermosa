@@ -4,7 +4,13 @@ part 'customer.g.dart';
 
 @JsonSerializable()
 class Customer {
-  final int id;
+  // Stored as a string so the same model can represent both backend
+  // customers (numeric ids) and offline-only customers (ids like
+  // `local_<timestamp>` produced by `OfflineDatabaseService.saveLocalCustomer`).
+  // The wire format may arrive as `num` or `String`; both coerce to a
+  // string through `_idFromJson` below.
+  @JsonKey(fromJson: _idFromJson, toJson: _idToJson)
+  final String id;
   final String name;
   final String? email;
   final String? mobile;
@@ -51,4 +57,14 @@ class Customer {
 
   factory Customer.fromJson(Map<String, dynamic> json) => _$CustomerFromJson(json);
   Map<String, dynamic> toJson() => _$CustomerToJson(this);
+
+  static String _idFromJson(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value;
+    return value.toString();
+  }
+
+  // Emit numeric ids as a number so the backend's strict-int columns keep
+  // accepting our payloads; emit offline-only `local_*` ids verbatim.
+  static dynamic _idToJson(String value) => int.tryParse(value) ?? value;
 }

@@ -92,6 +92,11 @@ class CartItem {
   final double? originalTotal;
   final double? finalTotal; // السعر النهائي بعد الخصم
 
+  /// Per-item note stamped by the cashier (mirrors what the printed
+  /// receipt shows under each line). Rendered on the embedded CDS so the
+  /// customer sees the same instructions the kitchen does.
+  final String notes;
+
   CartItem({
     required this.cartId,
     required this.product,
@@ -104,16 +109,17 @@ class CartItem {
     this.originalUnitPrice,
     this.originalTotal,
     this.finalTotal,
+    this.notes = '',
   });
 
   double get totalPrice {
     if (isFree) return 0.0;
 
-    double extrasTotal = selectedExtras.fold(
+    final double extrasTotal = selectedExtras.fold(
       0.0,
       (sum, extra) => sum + extra.price,
     );
-    double baseTotal = (product.basePrice + extrasTotal) * quantity;
+    final double baseTotal = (product.basePrice + extrasTotal) * quantity;
 
     // Apply discount with strict clamping to avoid negative totals.
     if (discount > 0) {
@@ -133,7 +139,7 @@ class CartItem {
   double get originalPrice {
     if (originalTotal != null) return originalTotal!;
 
-    double extrasTotal = selectedExtras.fold(
+    final double extrasTotal = selectedExtras.fold(
       0.0,
       (sum, extra) => sum + extra.price,
     );

@@ -37,24 +37,27 @@ enum WireMessageType {
   tableUpdate,
   tablePaymentStatus,
 
-  // Kitchen routing — carry the same payload shape the cashier uses so
-  // KDS can consume without changes.
+  // Kitchen routing (matches cashier↔KDS payload shape).
   newOrder,
   updateCart,
   orderEdit,
   orderCancel,
 
-  // Cashier → waiter config sync. The cashier owns the canonical printer
-  // list and KDS endpoint; waiters receive the snapshots on HELLO and on
-  // every cashier-side mutation so no manual setup is required.
+  // Cashier → waiter config sync (printer list + KDS endpoint pushed on HELLO and mutations).
   configKitchenPrinters,
   configKdsEndpoint,
+  /// Cashier's WAWP (WhatsApp API) credentials — `{instance_id,
+  /// access_token}` from the branch settings. Pushed to waiters on HELLO
+  /// and whenever they change so the waiter app can send waitlist "table
+  /// ready" messages through the WAWP API (same path the cashier's
+  /// "Send invoice via WhatsApp" uses) instead of falling back to a
+  /// `wa.me` deep link / the host's personal WhatsApp.
+  configWhatsApp,
   /// Waiter-initiated re-pull request, for a future "refresh config"
   /// button. Unused on the happy path — every cashier pushes on HELLO.
   configSyncRequest,
 
-  // "استلام" pickup flow — Uber-style broadcast/claim for a cashier to
-  // assign a table to whichever waiter answers first.
+  // Pickup flow — broadcast/claim assignment to first waiter to answer.
   tablePickupRequest,
   tablePickupClaimed,
   tablePickupCancelled,
@@ -119,6 +122,8 @@ extension WireMessageTypeX on WireMessageType {
         return 'CONFIG_KITCHEN_PRINTERS';
       case WireMessageType.configKdsEndpoint:
         return 'CONFIG_KDS_ENDPOINT';
+      case WireMessageType.configWhatsApp:
+        return 'CONFIG_WHATSAPP';
       case WireMessageType.configSyncRequest:
         return 'CONFIG_SYNC_REQUEST';
       case WireMessageType.tablePickupRequest:
@@ -180,6 +185,8 @@ extension WireMessageTypeX on WireMessageType {
         return WireMessageType.configKitchenPrinters;
       case 'CONFIG_KDS_ENDPOINT':
         return WireMessageType.configKdsEndpoint;
+      case 'CONFIG_WHATSAPP':
+        return WireMessageType.configWhatsApp;
       case 'CONFIG_SYNC_REQUEST':
         return WireMessageType.configSyncRequest;
       case 'TABLE_PICKUP_REQUEST':
@@ -259,10 +266,7 @@ class WireMessage {
   static WireMessage? tryDecode(String raw) {
     try {
       final Map<String, dynamic> j = jsonDecode(raw) as Map<String, dynamic>;
-      // Reject messages produced by a future protocol revision — better to
-      // drop silently than to misinterpret fields (e.g. an envelope that
-      // renamed or restructured `data`). Missing `v` is treated as v1 for
-      // backward compat with earlier pre-versioned peers.
+      // Drop future-protocol messages; missing `v` defaults to v1 for back-compat.
       final rawV = j['v'];
       final v = rawV is int ? rawV : int.tryParse(rawV?.toString() ?? '1');
       if (v != null && v > kWireProtocolVersion) return null;

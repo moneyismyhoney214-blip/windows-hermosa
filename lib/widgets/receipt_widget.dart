@@ -345,31 +345,6 @@ class ReceiptWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildMetaChip(String text, Color bg, {bool isArabic = true}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: isArabic
-            ? GoogleFonts.cairo(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF334155),
-              )
-            : GoogleFonts.inter(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF334155),
-              ),
-      ),
-    );
-  }
-
   List<MapEntry<ReceiptAddon, int>> _groupAddons(List<ReceiptAddon> addons) {
     final grouped = <String, MapEntry<ReceiptAddon, int>>{};
     for (final a in addons) {

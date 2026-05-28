@@ -9,29 +9,31 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../dialogs/booking_details_dialog.dart';
 import '../dialogs/invoice_details_dialog.dart';
 import '../dialogs/invoice_refund_dialog.dart';
+import '../locator.dart';
 import '../models/booking_invoice.dart';
 import '../models/receipt_data.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/base_client.dart';
+import '../services/api/branch_service.dart';
 import '../services/api/error_handler.dart';
 import '../services/api/order_service.dart';
-import '../services/api/branch_service.dart';
+import '../services/app_themes.dart';
 import '../services/display_app_service.dart';
 import '../services/invoice_preview_helper.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/receipt_addon_extractor.dart';
 import '../services/salon_invoice_events.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
+import '../utils/ui_feedback.dart';
 import '../widgets/send_invoice_whatsapp_button.dart';
-import '../locator.dart';
 
-part 'invoices_screen_parts/invoices_screen.helpers.dart';
-part 'invoices_screen_parts/invoices_screen.data_loading.dart';
-part 'invoices_screen_parts/invoices_screen.payment_resolvers.dart';
-part 'invoices_screen_parts/invoices_screen.invoice_state.dart';
 part 'invoices_screen_parts/invoices_screen.actions.dart';
-part 'invoices_screen_parts/invoices_screen.widgets.dart';
+part 'invoices_screen_parts/invoices_screen.data_loading.dart';
+part 'invoices_screen_parts/invoices_screen.helpers.dart';
+part 'invoices_screen_parts/invoices_screen.invoice_state.dart';
+part 'invoices_screen_parts/invoices_screen.payment_resolvers.dart';
 part 'invoices_screen_parts/invoices_screen.refunded_meals_dialog.dart';
+part 'invoices_screen_parts/invoices_screen.widgets.dart';
 
 const int _perPage = 20;
 
@@ -67,10 +69,7 @@ class _InvoicesScreenState extends State<InvoicesScreen>
   final Set<int> _refundingInvoiceIds = <int>{};
   Timer? _autoRefreshTimer;
   StreamSubscription<SalonInvoiceCreatedEvent>? _invoiceCreatedSub;
-  // Salon-only: when set, the next _loadInvoices skips the cached page-1
-  // paint and goes straight to the API. Used right after an invoice is
-  // created from main_screen so the user doesn't see a stale cache view
-  // (without their just-created invoice) for the few seconds the API takes.
+  // Salon-only: next load skips cache to avoid showing a stale list after main_screen creates an invoice.
   bool _skipSalonCacheOnNextLoad = false;
   bool _isLoading = true;
   bool _isLoadingMore = false;
@@ -89,11 +88,7 @@ class _InvoicesScreenState extends State<InvoicesScreen>
     WidgetsBinding.instance.addObserver(this);
     _activeDate = _todayForApi();
     _scrollController.addListener(_onScroll);
-    // Salon-only: if main_screen created an invoice while this screen was
-    // unmounted, drain that buffered event so the first load skips the
-    // stale cache and goes straight to the API. Live events that fire
-    // while this screen is mounted are handled by the stream listener
-    // below.
+    // Drain any buffered invoice-created event so the first load skips stale cache.
     if (ApiConstants.branchModule == 'salons') {
       final pending = getIt<SalonInvoiceEvents>().recentEvents();
       if (pending.isNotEmpty) {
@@ -108,20 +103,15 @@ class _InvoicesScreenState extends State<InvoicesScreen>
 
   void _onSalonInvoiceCreated(SalonInvoiceCreatedEvent _) {
     if (!mounted) return;
-    // The fresh API call will include the just-created invoice. Skip the
-    // cache paint so the user doesn't briefly see the old list.
     _skipSalonCacheOnNextLoad = true;
-    // Don't stack a refresh on top of an in-flight load — the in-flight one
-    // is from the same trigger or close enough that the next user-visible
-    // result will already include the new invoice.
+    // Skip stacking refreshes on an in-flight load — it's already from the same trigger.
     if (_isLoading || _isLoadingMore) return;
     _loadInvoices(reset: true);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // PERF: pause the 15-s polling timer when the app is backgrounded/hidden
-    // so we stop burning battery and network on an unseen screen.
+    // PERF: pause 15-s polling while backgrounded.
     if (state == AppLifecycleState.resumed) {
       _startAutoRefresh();
     } else {
@@ -145,17 +135,20 @@ class _InvoicesScreenState extends State<InvoicesScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.appBg,
-      body: Column(
-        children: [
-          _buildHeader(),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? _buildErrorView()
-                    : _buildInvoicesList(),
-          ),
-        ],
+      // Full-screen route — owns its safe-area (no parent AppBar).
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? _buildErrorView()
+                      : _buildInvoicesList(),
+            ),
+          ],
+        ),
       ),
     );
   }

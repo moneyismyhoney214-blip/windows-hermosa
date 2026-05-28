@@ -1,12 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../models.dart';
-import '../services/api/product_service.dart';
+
 import '../locator.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
+import '../models.dart';
 import '../services/api/api_constants.dart';
+import '../services/api/product_service.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
 
 class ProductCustomizationDialog extends StatefulWidget {
   final Product product;
@@ -37,7 +38,6 @@ class _ProductCustomizationDialogState
   Map<String, List<Extra>> _groupedAddons = {};
   bool _isLoadingAddons = true;
 
-  // ───────── lifecycle ─────────
   @override
   void initState() {
     super.initState();
@@ -61,7 +61,6 @@ class _ProductCustomizationDialogState
     super.dispose();
   }
 
-  // ───────── selection helpers ─────────
   void _toggleExtra(String id) {
     setState(() {
       if (_selectedExtraQuantities.containsKey(id)) {
@@ -103,9 +102,6 @@ class _ProductCustomizationDialogState
     Navigator.pop(context);
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  BUILD
-  // ══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
@@ -144,7 +140,6 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ─────────────────────── HEADER ───────────────────────
   Widget _header() {
     return Container(
       height: 48,
@@ -177,18 +172,16 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ─────────────────────── WIDE BODY (tablet) ───────────────────────
+  // --- Wide body (tablet) ---
   Widget _wideBody(List<Extra> base, List<MapEntry<String, List<Extra>>> groups) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ─── Left 35% ───
         Expanded(
           flex: 35,
           child: _leftColumn(),
         ),
         VerticalDivider(width: 1, thickness: 1, color: context.appDivider),
-        // ─── Right 65% ───
         Expanded(
           flex: 65,
           child: _rightColumn(base, groups),
@@ -197,7 +190,7 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ─────────────────────── NARROW BODY (phone) ───────────────────────
+  // --- Narrow body (phone) ---
   Widget _narrowBody(List<Extra> base, List<MapEntry<String, List<Extra>>> groups) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
@@ -218,26 +211,21 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ─────────────────────── LEFT COLUMN ───────────────────────
   Widget _leftColumn() {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Product image ──
           _productImage(),
           const SizedBox(height: 16),
-          // ── Quantity ──
           _quantityRow(),
           const SizedBox(height: 18),
-          // ── الأسعار ──
-          Text('الأسعار', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: context.appText)),
+          Text(translationService.t('prices_section'), style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: context.appText)),
           const SizedBox(height: 8),
           _priceChipsRow(),
           const SizedBox(height: 18),
-          // ── ملاحظات ──
-          Text('ملاحظات', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: context.appText)),
+          Text(translationService.t('notes_section'), style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: context.appText)),
           const SizedBox(height: 8),
           _notesField(),
         ],
@@ -245,7 +233,6 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ─────────────────────── RIGHT COLUMN ───────────────────────
   Widget _rightColumn(List<Extra> base, List<MapEntry<String, List<Extra>>> groups) {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
@@ -256,7 +243,6 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ─────────────────────── ADDON SECTIONS ───────────────────────
   List<Widget> _addonWidgets(List<Extra> base, List<MapEntry<String, List<Extra>>> groups) {
     final w = <Widget>[];
     final hasAny = base.isNotEmpty || (!_isLoadingAddons && groups.isNotEmpty);
@@ -264,7 +250,7 @@ class _ProductCustomizationDialogState
     if (hasAny) {
       w.add(Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: Text('الإضافات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: context.appText)),
+        child: Text(translationService.t('addons_section'), style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: context.appText)),
       ));
     }
 
@@ -284,9 +270,6 @@ class _ProductCustomizationDialogState
     return w;
   }
 
-  // ═══════════════════ COMPONENTS ═══════════════════
-
-  // ── Product image (155 x 155) ──
   Widget _productImage() {
     final hasImg = widget.product.image != null && widget.product.image!.isNotEmpty;
     return Center(
@@ -315,7 +298,6 @@ class _ProductCustomizationDialogState
     return Center(child: Text(initials, style: const TextStyle(fontSize: 38, fontWeight: FontWeight.bold, color: _brand)));
   }
 
-  // ── Quantity row (44px buttons) ──
   Widget _quantityRow() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -345,7 +327,6 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ── Price chips row ──
   Widget _priceChipsRow() {
     final price = widget.product.price * (1 + widget.taxRate);
     return Wrap(
@@ -371,7 +352,6 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ── Notes field ──
   Widget _notesField() {
     return TextField(
       controller: _notesController,
@@ -390,7 +370,6 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ── Addons grid (responsive 3/2/1 columns, aspect ~0.9) ──
   Widget _addonsGrid(List<Extra> extras) {
     return LayoutBuilder(builder: (context, box) {
       final cols = box.maxWidth >= 480 ? 3 : box.maxWidth >= 300 ? 2 : 1;
@@ -409,7 +388,6 @@ class _ProductCustomizationDialogState
     });
   }
 
-  // ── Single addon card ──
   Widget _addonCard(Extra extra) {
     final selected = _selectedExtraQuantities.containsKey(extra.id);
     final qty = _selectedExtraQuantities[extra.id] ?? 1;
@@ -428,7 +406,6 @@ class _ProductCustomizationDialogState
         ),
         child: Column(
           children: [
-            // ── Image area (60%) ──
             Expanded(
               flex: 6,
               child: Container(
@@ -447,7 +424,6 @@ class _ProductCustomizationDialogState
                 ),
               ),
             ),
-            // ── Text area (40%) ──
             Expanded(
               flex: 4,
               child: Padding(
@@ -502,7 +478,6 @@ class _ProductCustomizationDialogState
     );
   }
 
-  // ─────────────────────── FOOTER ───────────────────────
   Widget _footer() {
     return Container(
       width: double.infinity,
@@ -510,10 +485,10 @@ class _ProductCustomizationDialogState
       color: _brand,
       child: InkWell(
         onTap: _onConfirm,
-        child: Center(
+        child: const Center(
           child: Text(
             'إضافة',
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white),
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white),
           ),
         ),
       ),

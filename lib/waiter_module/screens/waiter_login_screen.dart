@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../locator.dart';
-import '../../services/app_themes.dart';
 import '../../services/api/api_constants.dart';
+import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
 import '../../services/waitlist_mesh_bridge.dart';
 import '../../services/waitlist_service.dart';
+import '../../utils/ui_feedback.dart';
 import '../services/waiter_billing_service.dart';
 import '../services/waiter_controller.dart';
 import '../services/waiter_session_service.dart';
@@ -68,17 +69,15 @@ class _WaiterLoginScreenState extends State<WaiterLoginScreen> {
       waitlistMeshBridge.attach(widget.controller);
       unawaited(WaiterHaptics.success());
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
+      unawaited(Navigator.of(context).pushReplacement(
         MaterialPageRoute(
           builder: (_) => WaiterHomeScreen(controller: widget.controller),
         ),
-      );
+      ));
     } catch (e) {
       unawaited(WaiterHaptics.warn());
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      UiFeedback.info(context, e.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
     }

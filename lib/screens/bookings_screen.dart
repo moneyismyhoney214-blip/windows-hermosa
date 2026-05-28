@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import '../services/api/api_constants.dart';
-import '../services/api/base_client.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
 import '../dialogs/booking_details_dialog.dart';
 import '../dialogs/create_booking_dialog.dart';
+import '../services/api/api_constants.dart';
+import '../services/api/base_client.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
+import '../utils/ui_feedback.dart';
 
 /// Salon Bookings management screen.
 ///
@@ -45,20 +47,11 @@ class _BookingsScreenState extends State<BookingsScreen> {
   bool _isLoading = true;
   String? _error;
 
-  // Filters — mirror the HAR query string minus status. The cashier asked
-  // for the status chips (مؤكد / مكتمل / مؤرشف) to be removed since the
-  // screen is filtered client-side to `book_appointment:true` already.
-  // ?platform=&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&search=
+  // Filters mirror the HAR query string minus status (client-side `book_appointment:true` filter).
   DateTime _dateFrom = DateTime.now();
   DateTime _dateTo = DateTime.now();
   String _searchQuery = '';
   Timer? _searchDebounce;
-
-  String get _langCode =>
-      translationService.currentLanguageCode.trim().toLowerCase();
-  bool get _useArabicUi =>
-      _langCode.startsWith('ar') || _langCode.startsWith('ur');
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   @override
   void initState() {
@@ -95,9 +88,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
 
       final response = await _client.get(endpoint);
       final raw = response is Map<String, dynamic> ? response['data'] : null;
-      // Only keep real appointments — the same endpoint returns pay-later
-      // orders (`book_appointment:false`) which now live in the pending-
-      // invoices tab, so the bookings screen would otherwise duplicate them.
+      // Keep only real appointments; pay-later orders live in the pending-invoices tab.
       final list = raw is List
           ? raw
               .whereType<Map>()
@@ -142,7 +133,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
         _dateFrom = picked.start;
         _dateTo = picked.end;
       });
-      _loadBookings();
+      unawaited(_loadBookings());
     }
   }
 
@@ -150,11 +141,11 @@ class _BookingsScreenState extends State<BookingsScreen> {
     final id = booking['id']?.toString();
     if (id == null || id.isEmpty) return;
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     Map<String, dynamic>? full;
     String? err;
@@ -173,9 +164,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
     Navigator.of(context, rootNavigator: true).pop();
 
     if (err != null || full == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(err ?? _tr('فشل تحميل تفاصيل الحجز', 'Failed to load booking details'))),
-      );
+      UiFeedback.info(context, err ?? translationService.t('booking_details_load_failed'));
       return;
     }
 
@@ -199,20 +188,12 @@ class _BookingsScreenState extends State<BookingsScreen> {
     if (createdId != null && createdId.isNotEmpty) {
       _showSuccessSnack(createdId, isAppointment: isAppointment);
 
-      // Print salon turn slips for the freshly-booked services. Both
-      // "حجز موعد" and "دفع لاحقاً" should print — the slip is what tells
-      // the floor staff (مكياج / رموش / شعر) that there's a new booking
-      // they need to action. Skip print only when the host opted out
-      // (no callback wired) or the response didn't carry the booking
-      // services list.
+      // Print salon turn slips for both appointment + pay-later (alerts floor staff to the booking).
       final cb = widget.onPrintSalonTurnTicket;
       final responseData = result['data'];
       if (cb != null && responseData is Map) {
         final bookingMap = Map<String, dynamic>.from(responseData);
-        // Some POST responses wrap the booking under an extra `data` /
-        // `booking` key. Re-fetch the full detail when no
-        // `booking_services` was returned inline so the slip rendering
-        // always has the per-service rows it needs.
+        // Re-fetch detail when booking_services is absent inline (slip needs per-service rows).
         Future<void> doPrint() async {
           Map<String, dynamic> printable = bookingMap;
           if (printable['booking_services'] is! List) {
@@ -225,29 +206,28 @@ class _BookingsScreenState extends State<BookingsScreen> {
                   printable = Map<String, dynamic>.from(inner);
                 }
               }
-            } catch (_) {}
+            } catch (e) {
+              Log.d('BookingsScreen', 'fetch booking details for print failed (non-fatal): $e');
+            }
           }
           try {
             await cb(createdId, printable);
-          } catch (_) {}
+          } catch (e) {
+            Log.d('BookingsScreen', 'post-booking-create print callback failed (non-fatal): $e');
+          }
         }
 
         unawaited(doPrint());
       }
     }
-    _loadBookings();
+    unawaited(_loadBookings());
   }
 
   void _showSuccessSnack(String id, {required bool isAppointment}) {
     final msg = isAppointment
-        ? _tr('تم إنشاء الحجز #$id', 'Booking #$id created')
-        : _tr('تم إنشاء طلب الدفع لاحقاً #$id', 'Pay-later order #$id created');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: const Color(0xFF22C55E),
-      ),
-    );
+        ? translationService.t('booking_created_n', args: {'id': id})
+        : translationService.t('pay_later_order_created_n', args: {'id': id});
+    UiFeedback.success(context, msg);
   }
 
   String _bookingDisplayNumber(Map<String, dynamic> booking) {
@@ -260,9 +240,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
     return v.toString();
   }
 
-  // Salon prices arrive as `"350.00 ر.س"` — the Arabic currency suffix
-  // contains a literal dot, so we have to keep only the first dot to
-  // survive `double.tryParse`. Same helper used by deposits_screen.
+  // Strip currency suffix and keep only first dot — Arabic "ر.س" contains a literal dot that breaks double.tryParse.
   double _parseAmount(dynamic v) {
     if (v == null) return 0.0;
     if (v is num) return v.toDouble();
@@ -325,7 +303,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              _tr('الحجوزات', 'Bookings'),
+              translationService.t('bookings'),
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w900,
@@ -336,7 +314,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
           ElevatedButton.icon(
             onPressed: _openCreateBooking,
             icon: const Icon(LucideIcons.plus, size: 18),
-            label: Text(_tr('حجز جديد', 'New Booking')),
+            label: Text(translationService.t('new_booking')),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFF58220),
               foregroundColor: Colors.white,
@@ -350,7 +328,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
           IconButton(
             onPressed: _isLoading ? null : _loadBookings,
             icon: const Icon(LucideIcons.refreshCw, size: 20),
-            tooltip: _tr('تحديث', 'Refresh'),
+            tooltip: translationService.t('refresh'),
           ),
         ],
       ),
@@ -381,7 +359,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
               controller: _searchController,
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
-                hintText: _tr('بحث', 'Search'),
+                hintText: translationService.t('search'),
                 isDense: true,
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -415,7 +393,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _loadBookings,
-              child: Text(_tr('إعادة المحاولة', 'Retry')),
+              child: Text(translationService.t('retry')),
             ),
           ],
         ),
@@ -433,7 +411,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                 size: 48, color: Color(0xFF94A3B8)),
             const SizedBox(height: 12),
             Text(
-              _tr('لا توجد حجوزات', 'No bookings'),
+              translationService.t('no_bookings'),
               style: TextStyle(
                 color: context.appText.withValues(alpha: 0.7),
                 fontSize: 16,
@@ -548,10 +526,10 @@ class _BookingsScreenState extends State<BookingsScreen> {
                         ),
                         child: Text(
                           cancelled
-                              ? _tr('ملغي', 'Cancelled')
+                              ? translationService.t('cancelled')
                               : (statusLabel.isNotEmpty
                                   ? statusLabel
-                                  : _tr('مؤكد', 'Confirmed')),
+                                  : translationService.t('confirmed')),
                           style: TextStyle(
                             color: color,
                             fontSize: 11,
@@ -584,7 +562,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                         size: 14, color: Color(0xFF22C55E)),
                     const SizedBox(width: 4),
                     Text(
-                      _tr('حجز موعد', 'Appointment'),
+                      translationService.t('appointment'),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Color(0xFF22C55E),
@@ -597,7 +575,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                         size: 14, color: Color(0xFFF97316)),
                     const SizedBox(width: 4),
                     Text(
-                      _tr('دفع لاحقاً', 'Pay Later'),
+                      translationService.t('pay_later'),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Color(0xFFF97316),

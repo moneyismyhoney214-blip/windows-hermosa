@@ -1,8 +1,10 @@
+import 'package:hermosa_pos/services/offline/connectivity_service.dart';
+import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+
+import '../../models.dart';
+import '../logger_service.dart';
 import 'api_constants.dart';
 import 'base_client.dart';
-import '../../models.dart';
-import 'package:hermosa_pos/services/offline/offline_database_service.dart';
-import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 
 class PromoCodeService {
   final BaseClient _client = BaseClient();
@@ -189,7 +191,8 @@ class PromoCodeService {
         return null;
       }
       return promo;
-    } catch (_) {
+    } catch (e) {
+      Log.d('promo', 'parse failed (non-fatal): $e');
       return null;
     }
   }
@@ -253,24 +256,21 @@ class PromoCodeService {
     final responses = <dynamic>[];
     try {
       final r = await _client.get(ApiConstants.promocodesEndpoint);
-      print('🎟️ PROMO RAW [promocodes]: $r');
       responses.add(r);
     } catch (e) {
-      print('🎟️ PROMO ERR [promocodes]: $e');
+      Log.w('promo', 'promocodes endpoint failed', error: e);
     }
     try {
       final r = await _client.get(ApiConstants.allPromocodesFilterEndpoint);
-      print('🎟️ PROMO RAW [allPromocode]: $r');
       responses.add(r);
     } catch (e) {
-      print('🎟️ PROMO ERR [allPromocode]: $e');
+      Log.w('promo', 'allPromocode endpoint failed', error: e);
     }
 
     final merged = <PromoCode>[];
     final seen = <String>{};
     for (final response in responses) {
       for (final promo in _promosFromResponse(response)) {
-        print('🎟️ PROMO PARSED: id=${promo.id} code=${promo.code} discount=${promo.discount} type=${promo.type}');
         final key = '${promo.id}:${_normalizeCode(promo.code)}';
         if (seen.add(key)) {
           merged.add(promo);
@@ -293,7 +293,8 @@ class PromoCodeService {
     try {
       final local = await _offlineDb.getPromoCodes(ApiConstants.branchId);
       return local.map((e) => PromoCode.fromJson(e)).toList();
-    } catch (_) {
+    } catch (e) {
+      Log.d('promo', 'offline read failed, returning empty list (non-fatal): $e');
       return [];
     }
   }
@@ -337,7 +338,7 @@ class PromoCodeService {
         if (_isNotFoundOrValidation(e)) {
           continue;
         }
-        print('Error fetching promo code from ${candidate.endpoint}: $e');
+        Log.w('promo', 'error fetching from ${candidate.endpoint}', error: e);
       }
     }
 

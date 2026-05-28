@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+
+import '../../locator.dart';
 import '../../screens/legal_page_screen.dart';
 import '../../services/api/profile_service.dart';
-import '../../locator.dart';
-import '../../services/language_service.dart';
 import '../../services/app_themes.dart';
+import '../../services/language_service.dart';
 
 class ProfileView extends StatefulWidget {
   final bool showPageHeader;
@@ -30,7 +31,6 @@ class _ProfileViewState extends State<ProfileView> {
     return code.startsWith('ar') || code.startsWith('ur');
   }
 
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   @override
   void initState() {
@@ -92,10 +92,7 @@ class _ProfileViewState extends State<ProfileView> {
             Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
             const SizedBox(height: 16),
             Text(
-              _tr(
-                'حدث خطأ أثناء تحميل الملف الشخصي',
-                'Error loading profile data',
-              ),
+              translationService.t('profile_load_error'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -108,7 +105,7 @@ class _ProfileViewState extends State<ProfileView> {
             ElevatedButton.icon(
               onPressed: _loadProfile,
               icon: const Icon(Icons.refresh),
-              label: Text(_tr('إعادة المحاولة', 'Retry')),
+              label: Text(translationService.t('retry')),
             ),
           ],
         ),
@@ -117,7 +114,7 @@ class _ProfileViewState extends State<ProfileView> {
 
     if (_profileData == null) {
       return Center(
-        child: Text(_tr('لا توجد بيانات', 'No data available')),
+        child: Text(translationService.t('no_data_available')),
       );
     }
 
@@ -139,7 +136,7 @@ class _ProfileViewState extends State<ProfileView> {
         children: [
           if (widget.showPageHeader) ...[
             Text(
-              _tr('الملف الشخصي', 'Profile'),
+              translationService.t('profile'),
               style: TextStyle(
                 fontSize: titleFontSize,
                 fontWeight: FontWeight.bold,
@@ -147,10 +144,7 @@ class _ProfileViewState extends State<ProfileView> {
             ),
             const SizedBox(height: 8),
             Text(
-              _tr(
-                'معلومات الحساب والإعدادات الشخصية',
-                'Account information and personal settings',
-              ),
+              translationService.t('profile_subtitle'),
               style: TextStyle(
                 fontSize: subtitleFontSize,
                 color: Colors.grey.shade600,
@@ -338,8 +332,8 @@ class _ProfileViewState extends State<ProfileView> {
                           SizedBox(width: compactLayout ? 6 : 8),
                           Text(
                             _profileData!.isVerified
-                                ? _tr('تم التحقق', 'Verified')
-                                : _tr('بانتظار التحقق', 'Pending verification'),
+                                ? translationService.t('verified')
+                                : translationService.t('pending_verification'),
                             style: TextStyle(
                               color: _profileData!.isVerified
                                   ? Colors.green
@@ -381,20 +375,20 @@ class _ProfileViewState extends State<ProfileView> {
 
                 // Contact Information
                 _buildSectionTitle(
-                  _tr('معلومات التواصل', 'Contact Information'),
+                  translationService.t('contact_information'),
                   compact: compactInfo,
                 ),
                 const SizedBox(height: 20),
                 _buildInfoRow(
                   icon: Icons.email,
-                  label: _tr('البريد الإلكتروني', 'Email'),
+                  label: translationService.t('email'),
                   value: _profileData!.email,
                   compact: compactInfo,
                 ),
                 if (_profileData!.mobile != null)
                   _buildInfoRow(
                     icon: Icons.phone,
-                    label: _tr('رقم الهاتف', 'Phone Number'),
+                    label: translationService.t('phone_number'),
                     value: _profileData!.mobile!,
                     compact: compactInfo,
                   ),
@@ -405,31 +399,31 @@ class _ProfileViewState extends State<ProfileView> {
 
                 // Account Information
                 _buildSectionTitle(
-                  _tr('معلومات الحساب', 'Account Information'),
+                  translationService.t('account_information'),
                   compact: compactInfo,
                 ),
                 const SizedBox(height: 20),
                 _buildInfoRow(
                   icon: Icons.numbers,
-                  label: _tr('معرف الحساب', 'Account ID'),
+                  label: translationService.t('account_id'),
                   value: '#${_profileData!.id}',
                   compact: compactInfo,
                 ),
                 _buildInfoRow(
                   icon: Icons.location_city,
-                  label: _tr('الدولة', 'Country'),
-                  value: _tr(
-                    'الدولة ${_profileData!.countryId}',
-                    'Country ${_profileData!.countryId}',
+                  label: translationService.t('country'),
+                  value: translationService.t(
+                    'country_n',
+                    args: {'id': _profileData!.countryId},
                   ),
                   compact: compactInfo,
                 ),
                 _buildInfoRow(
                   icon: Icons.location_on,
-                  label: _tr('المدينة', 'City'),
-                  value: _tr(
-                    'المدينة ${_profileData!.cityId}',
-                    'City ${_profileData!.cityId}',
+                  label: translationService.t('city'),
+                  value: translationService.t(
+                    'city_n',
+                    args: {'id': _profileData!.cityId},
                   ),
                   compact: compactInfo,
                 ),
@@ -440,24 +434,23 @@ class _ProfileViewState extends State<ProfileView> {
 
                 // Device Information
                 _buildSectionTitle(
-                  _tr('معلومات الجهاز والاتصال',
-                      'Device & Connection Information'),
+                  translationService.t('device_connection_info'),
                   compact: compactInfo,
                 ),
                 const SizedBox(height: 20),
                 if (_profileData!.ip != null)
                   _buildInfoRow(
                     icon: Icons.computer,
-                    label: _tr('عنوان IP', 'IP Address'),
+                    label: translationService.t('ip_address'),
                     value: _profileData!.ip!,
                     compact: compactInfo,
                   ),
                 _buildInfoRow(
                   icon: Icons.router,
-                  label: _tr('حالة المنفذ', 'Port Status'),
+                  label: translationService.t('port_status'),
                   value: _profileData!.portStatus
-                      ? _tr('متصل', 'Connected')
-                      : _tr('غير متصل', 'Disconnected'),
+                      ? translationService.t('connected')
+                      : translationService.t('disconnected'),
                   valueColor:
                       _profileData!.portStatus ? Colors.green : Colors.red,
                   compact: compactInfo,
@@ -465,14 +458,14 @@ class _ProfileViewState extends State<ProfileView> {
                 if (_profileData!.port != null)
                   _buildInfoRow(
                     icon: Icons.settings_ethernet,
-                    label: _tr('المنفذ', 'Port'),
+                    label: translationService.t('port'),
                     value: _profileData!.port!,
                     compact: compactInfo,
                   ),
                 if (_profileData!.serialPort != null)
                   _buildInfoRow(
                     icon: Icons.usb,
-                    label: _tr('منفذ USB', 'USB Port'),
+                    label: translationService.t('usb_port'),
                     value: _profileData!.serialPort!,
                     compact: compactInfo,
                   ),
@@ -483,30 +476,30 @@ class _ProfileViewState extends State<ProfileView> {
 
                 // Additional Info
                 _buildSectionTitle(
-                  _tr('معلومات إضافية', 'Additional Information'),
+                  translationService.t('additional_information'),
                   compact: compactInfo,
                 ),
                 const SizedBox(height: 20),
                 _buildInfoRow(
                   icon: Icons.calendar_today,
-                  label: _tr('تاريخ اليوم', 'Today Date'),
+                  label: translationService.t('today_date'),
                   value: _profileData!.today,
                   compact: compactInfo,
                 ),
                 if (_profileData!.birthdate != null)
                   _buildInfoRow(
                     icon: Icons.cake,
-                    label: _tr('تاريخ الميلاد', 'Birth Date'),
+                    label: translationService.t('birth_date'),
                     value: _profileData!.birthdate!,
                     compact: compactInfo,
                   ),
                 if (_profileData!.pays.isNotEmpty)
                   _buildInfoRow(
                     icon: Icons.account_balance_wallet,
-                    label: _tr('طرق الدفع', 'Payment Methods'),
-                    value: _tr(
-                      '${_profileData!.pays.length} طريقة',
-                      '${_profileData!.pays.length} methods',
+                    label: translationService.t('payment_methods'),
+                    value: translationService.t(
+                      'payment_methods_count',
+                      args: {'count': _profileData!.pays.length},
                     ),
                     compact: compactInfo,
                   ),
@@ -520,19 +513,19 @@ class _ProfileViewState extends State<ProfileView> {
                 // accessible WITHIN the app, not just on the App
                 // Store listing or login screen.
                 _buildSectionTitle(
-                  _tr('قانوني', 'Legal'),
+                  translationService.t('legal'),
                   compact: compactInfo,
                 ),
                 const SizedBox(height: 20),
                 _buildLegalRow(
                   icon: Icons.privacy_tip_outlined,
-                  label: _tr('سياسة الخصوصية', 'Privacy Policy'),
+                  label: translationService.t('privacy_policy'),
                   slug: 'privacy-policy',
                   compact: compactInfo,
                 ),
                 _buildLegalRow(
                   icon: Icons.description_outlined,
-                  label: _tr('الشروط والأحكام', 'Terms & Conditions'),
+                  label: translationService.t('terms_conditions'),
                   slug: 'terms-conditions',
                   compact: compactInfo,
                 ),

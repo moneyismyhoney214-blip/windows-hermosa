@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../invoice_details_dialog.dart';
 
 extension InvoiceDetailsDialogDataLoading on _InvoiceDetailsDialogState {
@@ -102,8 +102,9 @@ extension InvoiceDetailsDialogDataLoading on _InvoiceDetailsDialogState {
   }
 
   void _maybeAutoOpenSingleItemRefund() {
-    if (_didAutoOpenSingleItemRefund || !widget.autoOpenSingleItemRefund)
+    if (_didAutoOpenSingleItemRefund || !widget.autoOpenSingleItemRefund) {
       return;
+    }
     _didAutoOpenSingleItemRefund = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;

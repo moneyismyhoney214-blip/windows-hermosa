@@ -3,6 +3,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../../services/logger_service.dart';
 import '../models/waiter_message.dart';
 
 /// Shows a material banner when another waiter calls this device.
@@ -57,6 +58,8 @@ void showIncomingCallBanner(BuildContext context, WaiterMessage msg) {
   Future.delayed(const Duration(seconds: 8), () {
     try {
       messenger.hideCurrentMaterialBanner();
-    } catch (_) {}
+    } catch (e) {
+      Log.d('IncomingCallBanner', 'hide-banner timer fired after dispose (non-fatal): $e');
+    }
   });
 }

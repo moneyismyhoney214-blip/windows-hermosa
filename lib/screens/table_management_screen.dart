@@ -3,36 +3,64 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
+import '../dialogs/booking_details_dialog.dart';
+import '../dialogs/booking_refund_dialog.dart';
+import '../dialogs/edit_order_dialog.dart';
 import '../dialogs/waitlist_notify_dialog.dart';
+import '../dialogs/waitlist_seat_dialog.dart';
+import '../locator.dart';
 import '../models.dart';
+import '../models/booking_invoice.dart';
 import '../models/waitlist_entry.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
 import '../services/api/device_service.dart';
+import '../services/api/order_service.dart';
 import '../services/api/table_service.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/cashier_mesh_bootstrap.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/print_orchestrator_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/waitlist_assign_controller.dart';
 import '../services/waitlist_service.dart';
 import '../services/whatsapp_service.dart';
-import '../locator.dart';
+import '../utils/order_status.dart';
+import '../utils/ui_feedback.dart';
 import '../waiter_module/dialogs/send_cashier_message_dialog.dart';
 import '../waiter_module/models/table_pickup_request.dart';
 import '../waiter_module/models/waiter_table_event.dart';
 import '../waiter_module/services/waiter_controller.dart';
+import '../waiter_module/widgets/waiter_status_chip.dart';
 import '../widgets/waitlist_assign_banner.dart';
 import '../widgets/waitlist_sheet.dart';
+
+part 'table_management_screen_parts/table_management_screen.helper_widgets.dart';
+part 'table_management_screen_parts/table_management_screen.builders.dart';
 
 class TableManagementScreen extends StatefulWidget {
   final VoidCallback onBack;
   final Function(TableItem) onTableTap;
 
+  /// Print an order-change ticket to the kitchen printers. Same callback
+  /// the orders screen wires into [EditOrderDialog] — passed through so the
+  /// cashier can edit a table's order straight from the tables grid and
+  /// still get the kitchen "changes" ticket.
+  final void Function(
+    List<OrderChange> changes,
+    String orderNumber, {
+    bool isFullCancel,
+    String? customerName,
+    String? employeeName,
+  })? onPrintOrderChanges;
+
   const TableManagementScreen({
     super.key,
     required this.onBack,
     required this.onTableTap,
+    this.onPrintOrderChanges,
   });
 
   @override
@@ -50,19 +78,24 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   final Map<String, bool> _deactivatedTables = {};
   String? _selectedSectionKey;
 
-  /// Latest pickup request per table id. A table with an entry here has
-  /// either an outstanding broadcast or a just-claimed/cancelled one
-  /// still visible to the cashier for a few seconds.
+  /// `tableId -> bookingId` for busy tables whose order was NOT created through the waiter mesh.
+  /// Filled from recent-bookings so long-press actions appear for cashier-created orders.
+  final Map<String, String> _bookingByTable = {};
+
+  /// Latest pickup request per table id (outstanding broadcast or recently-claimed/cancelled).
   final Map<String, TablePickupRequest> _pickupByTable = {};
 
-  /// Table ids where the owning waiter is currently composing the first
-  /// order (opened the table but hasn't hit "Send to kitchen" yet). Renders
-  /// as "جاري اخذ الطلب" on the card. Cleared when the waiter either sends
-  /// the order or releases the table.
+  /// Table ids where a waiter is composing the first order (renders "جاري اخذ الطلب").
   final Set<String> _takingOrderTables = {};
 
   StreamSubscription<TablePickupRequest>? _pickupUpdateSub;
   StreamSubscription<WaiterTableEventEnvelope>? _tableEventSub;
+  /// Backstop poll for stale "taking order" rows; no-ops when nothing is pending.
+  Timer? _stalenessTimer;
+  /// Continuous ~40s reconcile so out-of-band order changes mirror into the waiter mesh.
+  Timer? _reconcileTimer;
+  /// Re-entrancy guard against overlapping `_hydrateFromRegistry` passes.
+  bool _loadingTables = false;
 
   @override
   void initState() {
@@ -71,13 +104,21 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     _pickupUpdateSub = _waiter.onPickupUpdate.listen(_onPickupUpdate);
     _tableEventSub = _waiter.onTableEvent.listen(_onTableEvent);
     _waiter.pickupStore.addListener(_onPickupStoreChanged);
-    // Waitlist: hydrate the stores and re-render when active entries
-    // change (badge count + "waiting for" pill) or when the host enters
-    // table-assign mode.
+    // Waitlist: hydrate stores; re-render on active-entry changes or assign-mode.
     unawaited(waitlistService.initialize());
     unawaited(whatsAppService.initialize());
     waitlistService.addListener(_onWaitlistChanged);
     waitlistAssignController.addListener(_onAssignModeChanged);
+    _stalenessTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      if (mounted && !_loadingTables && _takingOrderTables.isNotEmpty) {
+        unawaited(_loadTables(silent: true));
+      }
+    });
+    _reconcileTimer = Timer.periodic(const Duration(seconds: 40), (_) {
+      if (mounted && !_loadingTables) {
+        unawaited(_loadTables(silent: true));
+      }
+    });
     _loadTables();
   }
 
@@ -86,6 +127,8 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     translationService.removeListener(_onLanguageChanged);
     _pickupUpdateSub?.cancel();
     _tableEventSub?.cancel();
+    _stalenessTimer?.cancel();
+    _reconcileTimer?.cancel();
     _waiter.pickupStore.removeListener(_onPickupStoreChanged);
     waitlistService.removeListener(_onWaitlistChanged);
     waitlistAssignController.removeListener(_onAssignModeChanged);
@@ -98,13 +141,38 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
 
   void _onAssignModeChanged() {
     if (mounted) setState(() {});
+    // "Seat now" on a party already assigned → open that table directly.
+    final pending = waitlistAssignController.pending;
+    if (waitlistAssignController.seatImmediately &&
+        pending != null &&
+        pending.status == WaitlistStatus.notified &&
+        (pending.assignedTableId ?? '').isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!(waitlistAssignController.seatImmediately &&
+            waitlistAssignController.pending?.id == pending.id)) {
+          return;
+        }
+        TableItem? target;
+        for (final t in _tables) {
+          if (t.id == pending.assignedTableId) {
+            target = t;
+            break;
+          }
+        }
+        if (target == null) return;
+        waitlistAssignController.clear();
+        unawaited(waitlistService.markSeated(pending.id));
+        _checkTableStatus(target);
+      });
+    }
   }
 
   void _onPickupStoreChanged() {
     if (!mounted) return;
     final next = <String, TablePickupRequest>{};
     for (final req in _waiter.pickupStore.all) {
-      // Keep the newest per table (store already sorts newest first).
+      // Store is newest-first; keep first per table.
       next.putIfAbsent(req.tableId, () => req);
     }
     setState(() {
@@ -116,10 +184,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
 
   void _onPickupUpdate(TablePickupRequest req) {
     if (!mounted) return;
-    // Claim → mutate the local table so the card flips to the familiar
-    // "occupied" look without waiting for the next API refresh. Cancel
-    // just clears the overlay — the table stays on whatever status it
-    // was before the request.
+    // Claim flips local table to occupied; cancel only clears overlay.
     if (req.isClaimed) {
       final idx = _tables.indexWhere((t) => t.id == req.tableId);
       if (idx >= 0) {
@@ -135,7 +200,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
 
   void _onTableEvent(WaiterTableEventEnvelope envelope) {
     if (!mounted) return;
-    if (envelope.fromSelf) return; // cashier shouldn't re-apply its own echoes
+    if (envelope.fromSelf) return;
     final event = envelope.event;
     final idx = _tables.indexWhere((t) => t.id == event.tableId);
     if (idx < 0) return;
@@ -155,15 +220,11 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         if (event.waiterName.isNotEmpty) {
           t.waiterName = event.waiterName;
         }
-        // First real send (or any subsequent update) promotes the table
-        // out of the "taking order" state.
+        // Promote out of "taking order" on first send / update.
         _takingOrderTables.remove(event.tableId);
         break;
       case TableLifecycleKind.paid:
-        // Paid-but-still-seated: keep the table occupied until a
-        // waiter (or the cashier via 3-dots menu) explicitly releases.
-        // Flag isPaid so the card overlays the "paid" check icon; the
-        // registry already carries paid=true for re-mount hydration.
+        // Paid-but-still-seated: stays occupied until explicit release.
         t.status = TableStatus.occupied;
         t.isPaid = true;
         if (event.waiterName.isNotEmpty) {
@@ -177,6 +238,8 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         t.isPaid = false;
         _pickupByTable.remove(event.tableId);
         _takingOrderTables.remove(event.tableId);
+        // Detach waitlist row so future walk-in isn't mis-attributed.
+        unawaited(waitlistService.detachSeatedFromTable(event.tableId));
         break;
     }
     setState(() {});
@@ -188,10 +251,10 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         .length;
     if (onlineWaiters == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا يوجد نادل متصل — لا يمكن إرسال طلب استلام.'),
+        SnackBar(
+          content: Text(translationService.t('no_waiter_online_pickup')),
           backgroundColor: Colors.orange,
-          duration: Duration(seconds: 3),
+          duration: const Duration(seconds: 3),
         ),
       );
       return;
@@ -205,18 +268,17 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
       setState(() {
         _pickupByTable[table.id] = req;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تم إرسال طلب استلام الطاولة ${table.number}'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 2),
+      UiFeedback.success(
+        context,
+        translationService.t(
+          'pickup_request_sent_for_table',
+          args: {'number': table.number},
         ),
       );
     } on StateError catch (e) {
-      // Cashier hasn't joined the mesh yet (pre-branch state). Surface
-      // instead of silently dropping.
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر إرسال الطلب: $e')),
+      UiFeedback.info(
+        context,
+        translationService.t('request_send_failed_n', args: {'error': '$e'}),
       );
     }
   }
@@ -230,12 +292,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     });
   }
 
-  /// Cashier-driven force-release. Used when a table is stuck in
-  /// "paid-but-still-seated" (the waiter ended their shift without
-  /// tapping Release, or a ghost paid entry survived a disconnect).
-  /// Shows a confirm dialog because this wipes the party's state on
-  /// every peer — a mis-tap would make another waiter lose the live
-  /// table they were serving.
+  /// Cashier-driven force-release for stuck "paid-but-still-seated" tables; confirms because mis-tap wipes state on all peers.
   Future<void> _forceReleaseTable(TableItem table) async {
     final ownership = _waiter.tableRegistry.lookup(table.id);
     if (ownership == null) return;
@@ -249,14 +306,19 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
             const Icon(LucideIcons.logOut, color: Color(0xFFDC2626)),
             const SizedBox(width: 8),
             Text(
-              'تحرير الطاولة ${table.number}',
+              translationService.t(
+                'release_table_n',
+                args: {'number': table.number},
+              ),
               style: TextStyle(color: context.appText, fontSize: 17),
             ),
           ],
         ),
         content: Text(
-          'هل تريد تحرير الطاولة يدوياً؟ سيتم إزالتها من لوحة النادل '
-          '"${ownership.waiterName}" فوراً.',
+          translationService.t(
+            'release_table_body_n',
+            args: {'name': ownership.waiterName},
+          ),
           style: TextStyle(color: context.appText),
         ),
         actions: [
@@ -271,7 +333,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             icon: const Icon(LucideIcons.logOut, size: 16),
-            label: const Text('تحرير الطاولة'),
+            label: Text(translationService.t('release_table_btn')),
           ),
         ],
       ),
@@ -294,13 +356,297 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
       _takingOrderTables.remove(table.id);
       _pickupByTable.remove(table.id);
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('تم تحرير الطاولة ${table.number}'),
-        backgroundColor: const Color(0xFF10B981),
-        duration: const Duration(seconds: 2),
+    UiFeedback.success(
+      context,
+      translationService.t(
+        'table_released_n',
+        args: {'number': table.number},
       ),
     );
+  }
+
+  Future<void> _refundTableBooking(TableItem table, String bookingId) async {
+    final refunded = await showBookingRefundDialog(
+      context: context,
+      bookingId: bookingId,
+      bookingLabel: translationService.t(
+        'waiter_booking_table_label',
+        args: {'table': table.number},
+      ),
+    );
+    if (refunded != null && mounted) {
+      await _reconcileTableAfterBookingMutation(table, bookingId);
+    }
+  }
+
+  Future<void> _cancelTableBooking(TableItem table, String bookingId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.appSurface,
+        title: Text(translationService.t('cancel_booking_title'),
+            style: TextStyle(color: ctx.appText)),
+        content: Text(
+          translationService.t(
+            'confirm_cancel_table_booking_n',
+            args: {'number': table.number},
+          ),
+          style: TextStyle(color: ctx.appText),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(translationService.t('cancel')),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(translationService.t('yes_cancel')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    // Build kitchen cancel ticket from current lines before status 8.
+    List<OrderChange> cancelChanges = const [];
+    try {
+      final details = await getIt<OrderService>().getBookingDetails(bookingId);
+      final inner = (details['data'] is Map)
+          ? Map<String, dynamic>.from(details['data'] as Map)
+          : Map<String, dynamic>.from(details);
+      for (final key in const ['meals', 'booking_meals', 'items']) {
+        final v = inner[key];
+        if (v is List && v.isNotEmpty) {
+          cancelChanges = v.whereType<Map>().map((m) {
+            final mm = m.map((k, val) => MapEntry(k.toString(), val));
+            return OrderChange(
+              type: 'cancel',
+              name: (mm['meal_name'] ?? mm['item_name'] ?? mm['name'] ?? '')
+                  .toString(),
+              quantity:
+                  int.tryParse(mm['quantity']?.toString() ?? '1') ?? 1,
+            );
+          }).toList();
+          break;
+        }
+      }
+    } catch (e) {
+      Log.d('TableManagementScreen', 'extract meals for cancel ticket failed (non-fatal): $e');
+    }
+    try {
+      await getIt<OrderService>().updateBookingStatus(
+        orderId: bookingId,
+        status: 8,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      UiFeedback.error(
+        context,
+        translationService.t(
+          'cancel_booking_failed_n',
+          args: {'error': '$e'},
+        ),
+      );
+      return;
+    }
+    if (cancelChanges.isNotEmpty) {
+      widget.onPrintOrderChanges
+          ?.call(cancelChanges, bookingId, isFullCancel: true);
+    }
+    if (!mounted) return;
+    UiFeedback.success(
+      context,
+      translationService.t(
+        'table_booking_cancelled_n',
+        args: {'number': table.number},
+      ),
+    );
+    await _reconcileTableAfterBookingMutation(table, bookingId);
+  }
+
+  /// After a booking is mutated, re-pull state and broadcast `released`/`updated` to all peers.
+  Future<void> _reconcileTableAfterBookingMutation(
+    TableItem table,
+    String bookingId,
+  ) async {
+    try {
+      final after = await getIt<OrderService>().getBookingDetails(bookingId);
+      // 500 sentinel from detail endpoint is a transient hiccup; skip and rely on getTables reload.
+      if (after['status']?.toString().trim() == '500') {
+        if (mounted) await _loadTables(silent: true);
+        return;
+      }
+      final inner = (after['data'] is Map)
+          ? Map<String, dynamic>.from(after['data'] as Map)
+          : Map<String, dynamic>.from(after);
+      final refreshed = Booking.fromJson(inner);
+      final statusStr = refreshed.status.toString().toLowerCase();
+      List<Map<String, dynamic>> rawMeals = const [];
+      for (final key in const [
+        'meals',
+        'booking_meals',
+        'booking_products',
+        'booking_items',
+        'items',
+        'invoice_items',
+      ]) {
+        final v = inner[key];
+        if (v is List) {
+          final rows = v
+              .whereType<Map>()
+              .map((e) => e.map((k, val) => MapEntry(k.toString(), val)))
+              .toList();
+          if (rows.isNotEmpty) {
+            rawMeals = rows;
+            break;
+          }
+        }
+      }
+      // Only release on positive cancellation evidence — empty meals alone is ambiguous.
+      final cancelled = statusStr == '8' ||
+          statusStr == 'cancelled' ||
+          statusStr == 'canceled' ||
+          statusStr.contains('cancel');
+      final waiterId = _waiter.tableRegistry.ownerIdFor(table.id) ?? '';
+      final waiterName = _waiter.tableRegistry.ownerNameFor(table.id) ?? '';
+      if (cancelled) {
+        _waiter.broadcastTableEvent(TableLifecycleEvent(
+          kind: TableLifecycleKind.released,
+          tableId: table.id,
+          tableNumber: table.number,
+          waiterId: waiterId,
+          waiterName: waiterName,
+        ));
+      } else if (rawMeals.isNotEmpty) {
+        double toD(Object? x) {
+          if (x is num) return x.toDouble();
+          return double.tryParse(x?.toString() ?? '') ?? 0;
+        }
+
+        final snapshots = rawMeals.map((row) {
+          var qty = toD(row['quantity'] ?? 1);
+          if (qty == 0) qty = 1;
+          final unit = row['unit_price'] != null
+              ? toD(row['unit_price'])
+              : toD(row['price']) / qty;
+          final note = (row['note'] ?? row['notes'] ?? '').toString();
+          return TableItemSnapshot(
+            name: (row['meal_name'] ?? row['item_name'] ?? row['name'] ?? '')
+                .toString(),
+            quantity: qty,
+            unitPrice: unit,
+            note: note.isEmpty ? null : note,
+            mealId: (row['meal_id'] ?? row['id'])?.toString(),
+            categoryId: row['category_id']?.toString(),
+          );
+        }).toList();
+        final preTax = snapshots.fold<double>(0, (s, it) => s + it.lineTotal);
+        final cnt = snapshots.fold<int>(0, (s, it) => s + it.quantity.round());
+        _waiter.broadcastTableEvent(TableLifecycleEvent(
+          kind: TableLifecycleKind.updated,
+          tableId: table.id,
+          tableNumber: table.number,
+          waiterId: waiterId,
+          waiterName: waiterName,
+          guestCount: _waiter.tableRegistry.guestCountFor(table.id),
+          total: preTax,
+          itemCount: cnt,
+          items: snapshots,
+          orderId: bookingId,
+        ));
+      }
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
+      // Peers will reconcile on their next getTables() poll.
+    }
+    if (mounted) await _loadTables(silent: true);
+  }
+
+  Future<Map<String, dynamic>?> _fetchBookingDetailsForTable(
+    String bookingId,
+  ) async {
+    try {
+      return await getIt<OrderService>().getBookingDetails(bookingId);
+    } catch (e) {
+      if (mounted) {
+        UiFeedback.info(
+          context,
+          translationService.t(
+            'order_details_fetch_failed_n',
+            args: {'error': '$e'},
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<void> _showTableOrderDetails(
+    TableItem table,
+    String bookingId,
+  ) async {
+    final details = await _fetchBookingDetailsForTable(bookingId);
+    if (details == null || !mounted) return;
+    _applyWaitlistCustomerName(details, table.id);
+    await showDialog<void>(
+      context: context,
+      builder: (_) => BookingDetailsDialog(
+        bookingData: details,
+        onEditOrder: table.isPaid
+            ? null
+            : () => _editTableOrder(table, bookingId, prefetched: details),
+        onRefund: () => _refundTableBooking(table, bookingId),
+      ),
+    );
+  }
+
+  /// Prefer waitlist party name over backend default "عميل عام" for tables.
+  void _applyWaitlistCustomerName(Map<String, dynamic> data, String tableId) {
+    final name = waitlistService.customerNameForTable(tableId)?.trim();
+    if (name != null && name.isNotEmpty) {
+      data['customer_name'] = name;
+      data['client_name'] = name;
+    }
+  }
+
+  Future<void> _editTableOrder(
+    TableItem table,
+    String bookingId, {
+    Map<String, dynamic>? prefetched,
+  }) async {
+    final details = prefetched ?? await _fetchBookingDetailsForTable(bookingId);
+    if (details == null || !mounted) return;
+    _applyWaitlistCustomerName(details, table.id);
+    final data = details['data'] is Map
+        ? Map<String, dynamic>.from(details['data'] as Map)
+        : Map<String, dynamic>.from(details);
+    // Ensure booking id present so EditOrderDialog PATCHes the right record.
+    data['id'] ??= int.tryParse(bookingId) ?? bookingId;
+    _applyWaitlistCustomerName(data, table.id);
+    final booking = Booking.fromJson(data);
+    // Closed/cancelled/invoiced/paid bookings can't be edited (same gate as orders screen).
+    if (table.isPaid ||
+        isOrderLockedValue(booking.status) ||
+        isOrderLockedValue(data['status'])) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(duration: const Duration(seconds: 3), content: Text(translationService.t('order_no_edit'))),
+      );
+      return;
+    }
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (_) => EditOrderDialog(
+        booking: booking,
+        bookingData: details,
+        onPrintChanges: widget.onPrintOrderChanges,
+      ),
+    );
+    if (updated == true && mounted) {
+      await _reconcileTableAfterBookingMutation(table, bookingId);
+    }
   }
 
   Future<void> _openSendMessageDialog() async {
@@ -311,11 +657,9 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
   }
 
   Future<void> _migrateTable(TableItem source) async {
-    // The group has to be actually seated somewhere before it can be
-    // migrated — an available table has no order to move.
     if (source.status == TableStatus.available) return;
 
-    // Destinations: any ACTIVE + available table that isn't the source.
+    // Destinations: active + available tables (excluding source).
     final destinations = _tables
         .where((t) =>
             t.id != source.id &&
@@ -324,10 +668,10 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         .toList();
     if (destinations.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد طاولة فاضية للنقل إليها.'),
+        SnackBar(
+          content: Text(translationService.t('waiter_tables_no_empty_target')),
           backgroundColor: Colors.orange,
-          duration: Duration(seconds: 3),
+          duration: const Duration(seconds: 3),
         ),
       );
       return;
@@ -343,22 +687,14 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     if (picked == null) return;
     if (!mounted) return;
 
-    // Re-validate the destination right before broadcasting. Between
-    // dialog open and the cashier picking, a waiter may have claimed
-    // the destination (via استلام), a pickup request may be pending
-    // on it, or the table may have been deleted/deactivated by admin
-    // — we must NOT overwrite it with the source's cart, which would
-    // merge two parties' orders.
+    // Re-validate destination right before broadcasting to avoid merging two parties' carts.
     final latestIdx = _tables.indexWhere((t) => t.id == picked.id);
     if (latestIdx < 0) {
-      // Table was removed from the list entirely.
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'الطاولة ${picked.number} لم تعد موجودة — النقل ملغي.',
-          ),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 3),
+      UiFeedback.warning(
+        context,
+        translationService.t(
+          'table_no_longer_exists_move_cancelled',
+          args: {'number': picked.number},
         ),
       );
       return;
@@ -370,21 +706,17 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         pending?.isClaimed != true &&
         pending?.isPending != true;
     if (!stillAvailable) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'الطاولة ${picked.number} لم تعد متاحة — النقل ملغي.',
-          ),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 3),
+      UiFeedback.warning(
+        context,
+        translationService.t(
+          'waiter_tables_destination_taken',
+          args: {'table': picked.number},
         ),
       );
       return;
     }
 
-    // Fire the broadcast — the owning waiter will shuffle its cart and
-    // re-broadcast release+assign, which our _onTableEvent listener
-    // then applies to the local _tables list.
+    // Broadcast: owning waiter shuffles cart and re-broadcasts release+assign.
     try {
       final event = _waiter.migrateTable(
         oldTableId: source.id,
@@ -393,15 +725,25 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         newTableNumber: picked.number,
       );
       if (event == null) return;
+      // Move customer↔table binding so migrated table keeps the same customer (mesh-synced).
+      unawaited(waitlistService.reassignAssignedTable(
+        source.id,
+        picked.id,
+        toTableNumber: picked.number,
+      ));
     } on StateError catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر نقل الطاولة: $e')),
+      UiFeedback.info(
+        context,
+        translationService.t(
+          'table_move_failed_n',
+          args: {'error': '$e'},
+        ),
       );
       return;
     }
 
-    // Optimistic local flip — the waiter's echo will reaffirm this.
+    // Optimistic local flip; waiter echo reaffirms.
     setState(() {
       final srcIdx = _tables.indexWhere((t) => t.id == source.id);
       if (srcIdx >= 0) {
@@ -411,25 +753,20 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
       final dstIdx = _tables.indexWhere((t) => t.id == picked.id);
       if (dstIdx >= 0) {
         _tables[dstIdx].status = TableStatus.occupied;
-        _tables[dstIdx].waiterName =
-            source.waiterName; // carries to new table
+        _tables[dstIdx].waiterName = source.waiterName;
       }
       _pickupByTable.remove(source.id);
     });
 
-    // Print the migration ticket at the kitchen so the chef knows the
-    // already-fired order at `source` is now under `picked`. Fire and
-    // forget — success/failure is surfaced via a snackbar either way.
+    // Migration ticket: tell kitchen the fired order moved; failures surface via snackbar.
     unawaited(_printMigrationTicket(source: source, destination: picked));
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'تم نقل الطاولة ${source.number} إلى الطاولة ${picked.number}',
-        ),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 3),
+    UiFeedback.success(
+      context,
+      translationService.t(
+        'table_moved_n_to_n',
+        args: {'from': source.number, 'to': picked.number},
       ),
     );
   }
@@ -457,12 +794,12 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
       if (kitchenPrinters.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              '⚠️ تم نقل الطاولة ولكن لا توجد طابعة مطبخ متصلة لطباعة التذكرة',
+              '⚠️ ${translationService.t('table_moved_no_kitchen_printer')}',
             ),
             backgroundColor: Colors.orange,
-            duration: Duration(seconds: 4),
+            duration: const Duration(seconds: 4),
           ),
         );
         return;
@@ -517,12 +854,9 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     } catch (e) {
       debugPrint('⚠️ migration ticket print failed: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('⚠️ تم النقل ولكن تعذر طباعة تذكرة المطبخ: $e'),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 4),
-        ),
+      UiFeedback.warning(
+        context,
+        '⚠️ ${translationService.t('migration_ticket_print_failed_n', args: {'error': '$e'})}',
       );
     }
   }
@@ -531,11 +865,15 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _loadTables() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  Future<void> _loadTables({bool silent = false}) async {
+    if (_loadingTables) return;
+    _loadingTables = true;
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
 
     try {
       final tables = await _tableService.getTables();
@@ -544,10 +882,16 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         _deactivatedTables[table.id] = !table.isActive;
       }
 
-      // Overlay the live waiter-mesh state onto the freshly-loaded list
-      // so states survive a navigate-away/back. Before this, the mount
-      // only subscribed to *future* events — existing ownership from a
-      // still-running shift looked "empty" until the next event fired.
+      // Evict ghost rows before mirroring registry; preserve broadcast pay-later bookings.
+      _waiter.tableRegistry.reconcileWithBackend(
+        tables
+            .where((t) => t.isActive && t.status == TableStatus.available)
+            .map((t) => t.id),
+        selfId: _waiter.session.self?.id,
+        evictCommitted: false,
+      );
+
+      // Overlay live mesh state so existing ownership survives navigate-away/back.
       _hydrateFromRegistry(tables);
 
       if (mounted) {
@@ -556,19 +900,171 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
           _isLoading = false;
         });
       }
+
+      // Resolve booking ids for cashier-created tables not on the mesh.
+      unawaited(_refreshTableBookings(tables));
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
+        if (silent) {
+          // Transient hiccup on silent refresh — keep existing list.
+          debugPrint('⚠️ table_management silent refresh failed: $e');
+        } else {
+          setState(() {
+            _error = e.toString();
+            _isLoading = false;
+          });
+        }
       }
+    } finally {
+      _loadingTables = false;
     }
   }
 
-  /// Mirror the authoritative in-memory registry onto the fresh list of
-  /// tables, and replay the pickup store. Runs on every load so the
-  /// cashier sees the current state immediately on re-entry.
+  /// Reconcile recent-bookings against waiter-mesh registry: rebuilds [_bookingByTable] and
+  /// re-broadcasts missed deltas (paymentPending for new, released for closed). Conservative —
+  /// only acts on positive evidence; never touches takingOrder/assigned/paid rows.
+  Future<void> _refreshTableBookings(List<TableItem> tables) async {
+    final activeById = <String, TableItem>{
+      for (final t in tables)
+        if (t.isActive) t.id: t,
+    };
+    if (activeById.isEmpty) {
+      if (_bookingByTable.isNotEmpty && mounted) {
+        setState(_bookingByTable.clear);
+      }
+      return;
+    }
+    try {
+      final resp = await getIt<OrderService>().getBookings(perPage: 100);
+      final data = resp['data'];
+      if (data is! List) return;
+
+      bool isTruthy(dynamic v) =>
+          v == true || v == 1 || v == '1' || v.toString().toLowerCase() == 'true';
+
+      // tableId -> highest-id live bookingId (not paid, not cancelled).
+      final liveBookingByTable = <String, int>{};
+      final closedBookingIds = <String>{};
+      final knownBookingIds = <String>{};
+      // bookingId -> {total, itemCount} for enriching mesh broadcast.
+      final liveBookingMeta = <String, ({double total, int itemCount})>{};
+
+      for (final raw in data) {
+        if (raw is! Map) continue;
+        final m = raw.cast<String, dynamic>();
+        final bid = int.tryParse(
+            (m['booking_id'] ?? m['id'] ?? '').toString().trim());
+        if (bid == null) continue;
+        final bidStr = bid.toString();
+        knownBookingIds.add(bidStr);
+        final statusStr = (m['status'] ?? '').toString().trim();
+        final statusLower = statusStr.toLowerCase();
+        final cancelled = statusStr == '8' ||
+            statusLower.contains('cancel');
+        final paid = isTruthy(m['is_paid']) ||
+            (statusStr.isNotEmpty && isOrderLockedValue(statusStr));
+        final closed = cancelled || paid;
+        if (closed) closedBookingIds.add(bidStr);
+
+        final tableId =
+            (m['table_id'] ?? m['restaurant_table_id'])?.toString().trim();
+        if (tableId == null ||
+            tableId.isEmpty ||
+            !activeById.containsKey(tableId)) {
+          continue;
+        }
+        if (closed) continue;
+        final cur = liveBookingByTable[tableId];
+        if (cur == null || bid > cur) {
+          liveBookingByTable[tableId] = bid;
+          final total = (m['grand_total'] ?? m['total'] ?? m['total_price']);
+          final totalNum = (total is num)
+              ? total.toDouble()
+              : double.tryParse(total?.toString() ?? '') ?? 0.0;
+          final meals = m['booking_meals'] ?? m['meals'] ?? m['booking_products'];
+          final count = (meals is List) ? meals.length : 0;
+          liveBookingMeta[bidStr] = (total: totalNum, itemCount: count);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _bookingByTable
+          ..clear()
+          ..addEntries(liveBookingByTable.entries
+              .map((e) => MapEntry(e.key, e.value.toString())));
+      });
+
+      // Re-broadcast deltas the mesh missed.
+      final mesh = getIt<CashierMeshBootstrap>();
+      final reg = _waiter.tableRegistry;
+
+      // (a) live backend booking unknown to registry → pending
+      for (final entry in liveBookingByTable.entries) {
+        final tableId = entry.key;
+        final bidStr = entry.value.toString();
+        final table = activeById[tableId];
+        if (table == null) continue;
+        // Don't pre-empt a waiter mid-compose; they'll broadcast on send.
+        if (reg.takingOrderFor(tableId)) continue;
+        final knownOrderId = reg.bookingIdFor(tableId);
+        if (knownOrderId != null && knownOrderId.trim() == bidStr) continue;
+        final meta = liveBookingMeta[bidStr];
+        mesh.broadcastCashierTableState(
+          tableId: tableId,
+          tableNumber: table.number,
+          reserved: true,
+          bookingId: bidStr,
+          total: meta?.total,
+          itemCount: meta?.itemCount,
+        );
+        if (table.status == TableStatus.available) {
+          table.status = TableStatus.occupied;
+        }
+      }
+
+      // (b) registry pay-later row whose booking is now closed → release
+      for (final table in activeById.values) {
+        final snap = reg.lookup(table.id);
+        if (snap == null) continue;
+        if (!reg.paymentPendingFor(table.id)) continue;
+        final orderId = reg.bookingIdFor(table.id)?.trim();
+        if (orderId == null || orderId.isEmpty) continue;
+        // Only act on positive evidence (id is in fetched list AND closed).
+        if (!knownBookingIds.contains(orderId)) continue;
+        if (!closedBookingIds.contains(orderId)) continue;
+        if (liveBookingByTable.containsKey(table.id)) continue;
+        mesh.broadcastCashierTableState(
+          tableId: table.id,
+          tableNumber: table.number,
+          reserved: false,
+        );
+        table.status = TableStatus.available;
+        table.waiterName = null;
+        table.isPaid = false;
+        _takingOrderTables.remove(table.id);
+        unawaited(waitlistService.detachSeatedFromTable(table.id));
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('⚠️ table_management booking reconcile failed: $e');
+    }
+  }
+
+  /// Resolve live booking id: registry first (waiter-created), then backend-derived map.
+  String? _bookingIdForTable(String tableId) {
+    final fromRegistry = _waiter.tableRegistry.bookingIdFor(tableId);
+    if (fromRegistry != null && fromRegistry.trim().isNotEmpty) {
+      return fromRegistry;
+    }
+    final fromBackend = _bookingByTable[tableId];
+    if (fromBackend != null && fromBackend.trim().isNotEmpty) {
+      return fromBackend;
+    }
+    return null;
+  }
+
+  /// Mirror in-memory registry onto fresh table list and replay pickup store on every load.
   void _hydrateFromRegistry(List<TableItem> tables) {
     _takingOrderTables.clear();
     for (final t in tables) {
@@ -576,8 +1072,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
       if (ownership == null) continue;
       if (_waiter.tableRegistry.paidFor(t.id)) {
         t.isPaid = true;
-        // Paid but still seated: treat as occupied until the waiter
-        // explicitly releases (see manual availability toggle).
+        // Paid but still seated → occupied until explicit release.
         t.status = TableStatus.occupied;
       } else if (_waiter.tableRegistry.paymentPendingFor(t.id)) {
         t.status = TableStatus.occupied;
@@ -591,34 +1086,57 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         _takingOrderTables.add(t.id);
       }
     }
-    // Replay the pickup store so pending/claimed banners survive nav.
     _pickupByTable.clear();
     for (final req in _waiter.pickupStore.all) {
       _pickupByTable.putIfAbsent(req.tableId, () => req);
     }
   }
 
-  /// Single entry point for every tap on a table card. Routes through
-  /// the waitlist assign flow first, then falls back to the default
-  /// "open table" behaviour.
+  /// Single entry for table-card taps: waitlist assign flow first, then default open.
   Future<void> _handleTableTap(TableItem table) async {
     final pending = waitlistAssignController.pending;
     if (pending != null) {
       await _tryAssignWaitlistEntry(pending, table);
       return;
     }
-    // If this table is already "holding" a notified party, open the
-    // normal flow — the cashier is about to seat them.
-    final linked = waitlistService.entryForTable(table.id);
-    await _checkTableStatus(table);
-    // Best-effort cleanup: after the cashier opens the table (order
-    // screen), we mark the party as seated. If onTableTap didn't
-    // actually open anything (e.g. a lock dialog showed instead) the
-    // UI is still correct — the party stays "notified" until manually
-    // resolved.
-    if (linked != null && table.status == TableStatus.available) {
-      unawaited(waitlistService.markSeated(linked.id));
+    // A table held for a notified waitlist party is locked until confirmed/dropped.
+    final held = waitlistService.entryForTable(table.id);
+    if (held != null) {
+      final choice = await WaitlistSeatDialog.show(
+        context,
+        entry: held,
+        tableNumber: table.number,
+      );
+      if (choice == null || !mounted) return;
+      if (choice == WaitlistSeatChoice.cancelHold) {
+        final reg = _waiter.tableRegistry;
+        final snap = reg.lookup(table.id);
+        final hasOrder = reg.bookingIdFor(table.id) != null ||
+            reg.paymentPendingFor(table.id) ||
+            reg.paidFor(table.id) ||
+            ((snap?.itemCount ?? 0) > 0);
+        if (hasOrder) {
+          UiFeedback.error(context, translationService.t('waitlist_cannot_revert_has_order'));
+          return;
+        }
+        await waitlistService.releaseHold(held.id);
+        return;
+      }
+      await waitlistService.markSeated(held.id);
+      if (!mounted) return;
+      await _checkTableStatus(table);
+      return;
     }
+    // Use live mesh state: prevent starting a second cart on an in-progress/paid table.
+    final regSnap = _waiter.tableRegistry.lookup(table.id);
+    if (regSnap != null) {
+      final msg = _waiter.tableRegistry.takingOrderFor(table.id)
+          ? 'نادل يقوم بأخذ طلب على هذه الطاولة الآن'
+          : 'هذه الطاولة بها طلب مفتوح — اضغط مطوّلاً لإدارته';
+      UiFeedback.error(context, msg);
+      return;
+    }
+    await _checkTableStatus(table);
   }
 
   Future<void> _tryAssignWaitlistEntry(
@@ -626,16 +1144,24 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     TableItem table,
   ) async {
     if (table.status != TableStatus.available) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFFDC2626),
-          behavior: SnackBarBehavior.floating,
-          content: Text(
-            translationService.t('waitlist_assign_table_unavailable'),
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-        ),
+      UiFeedback.error(context, translationService.t('waitlist_assign_table_unavailable'));
+      return;
+    }
+    final existingHold = waitlistService.entryForTable(table.id);
+    if (existingHold != null && existingHold.id != entry.id) {
+      UiFeedback.error(context, 'الطاولة محجوزة بالفعل لـ ${existingHold.customerName}');
+      return;
+    }
+    // "Seat now": hold + open, skipping waiting-message dialog.
+    if (waitlistAssignController.seatImmediately) {
+      await waitlistService.markNotified(
+        entryId: entry.id,
+        tableId: table.id,
+        tableNumber: table.number,
       );
+      waitlistAssignController.clear();
+      if (!mounted) return;
+      await _checkTableStatus(table);
       return;
     }
     await WaitlistNotifyDialog.show(
@@ -650,6 +1176,130 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
     await WaitlistSheet.show(context);
   }
 
+  /// Bottom sheet listing every waiter on the LAN with live status (free/busy/on break).
+  Future<void> _openWaitersSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: context.appSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AnimatedBuilder(
+          animation: _waiter.roster,
+          builder: (ctx, _) {
+            final waiters = _waiter.roster.all
+                .where((w) => !w.isViewer)
+                .toList()
+              ..sort((a, b) => a.name.compareTo(b.name));
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: context.appBorder,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Icon(LucideIcons.users, color: context.appPrimary),
+                        const SizedBox(width: 8),
+                        Text(
+                          'النوادل',
+                          style: TextStyle(
+                            color: context.appText,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (waiters.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 28),
+                        child: Text(
+                          'لا يوجد نادل متصل حالياً',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: context.appTextMuted),
+                        ),
+                      )
+                    else
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.sizeOf(ctx).height * 0.5,
+                        ),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: waiters.length,
+                          separatorBuilder: (_, __) => Divider(
+                            height: 1,
+                            color: context.appBorder.withValues(alpha: 0.5),
+                          ),
+                          itemBuilder: (_, i) {
+                            final w = waiters[i];
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 10),
+                              child: Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: context.appPrimary
+                                        .withValues(alpha: 0.12),
+                                    child: Text(
+                                      w.name.isNotEmpty
+                                          ? w.name.substring(0, 1)
+                                          : '؟',
+                                      style: TextStyle(
+                                        color: context.appPrimary,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      w.name.isEmpty ? 'نادل' : w.name,
+                                      style: TextStyle(
+                                        color: context.appText,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  WaiterStatusChip(status: w.status),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _checkTableStatus(TableItem table) async {
     final tableDetails = await _tableService.getTableDetails(table.id);
 
@@ -658,7 +1308,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         _deactivatedTables[table.id] = true;
         setState(() {});
 
-        showDialog(
+        unawaited(showDialog(
           context: context,
           builder: (context) => AlertDialog(
             title: Row(
@@ -679,11 +1329,10 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
               ),
             ],
           ),
-        );
+        ));
       }
     } else {
-      // If the detail response has no id (malformed API response), fall back to
-      // the original table from the list which always has a valid id.
+      // Fall back to list table if detail response is missing an id.
       final resolvedTable =
           tableDetails.id.trim().isNotEmpty ? tableDetails : table;
       final waiterLabel = resolvedTable.waiterName?.trim() ?? '';
@@ -693,7 +1342,7 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
         if (!mounted) return;
         final isReservedState = resolvedTable.status == TableStatus.occupied &&
             waiterLabel.contains('محجوز');
-        showDialog(
+        unawaited(showDialog(
           context: context,
           builder: (context) => AlertDialog(
             title: Row(
@@ -718,11 +1367,10 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
               ),
             ],
           ),
-        );
+        ));
         return;
       }
 
-      // Table is active and available, proceed.
       widget.onTableTap(resolvedTable);
     }
   }
@@ -736,11 +1384,12 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
 
     return Scaffold(
       backgroundColor: context.appBg,
-      body: Directionality(
+      // Full-screen (no parent AppBar) — own safe-area handling.
+      body: SafeArea(
+        child: Directionality(
         textDirection: TextDirection.rtl,
         child: Column(
           children: [
-            // Header Bar
             Container(
               padding: EdgeInsets.symmetric(
                 horizontal: isCompact ? 12 : 24,
@@ -777,18 +1426,27 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                             ),
                           ),
                         ),
-                        if (ApiConstants.whatsappEnabled)
+                        // Waitlist available when venue has waiters or WhatsApp notifications.
+                        if (ApiConstants.whatsappEnabled ||
+                            ApiConstants.haveWaiters)
                           _WaitlistHeaderIconButton(
                             count: waitlistService.activeCount,
                             onPressed: _openWaitlistSheet,
                           ),
-                        if (ApiConstants.haveWaiters)
+                        if (ApiConstants.haveWaiters) ...[
+                          IconButton(
+                            onPressed: _openWaitersSheet,
+                            tooltip: 'النوادل',
+                            icon: const Icon(LucideIcons.users),
+                            color: const Color(0xFFF58220),
+                          ),
                           IconButton(
                             onPressed: _openSendMessageDialog,
                             tooltip: 'إرسال رسالة للنوادل',
                             icon: const Icon(LucideIcons.messageSquare),
                             color: const Color(0xFFF58220),
                           ),
+                        ],
                         IconButton(
                           onPressed: _loadTables,
                           icon: const Icon(LucideIcons.refreshCw),
@@ -819,12 +1477,19 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            if (ApiConstants.whatsappEnabled)
+                            if (ApiConstants.whatsappEnabled ||
+                                ApiConstants.haveWaiters)
                               _WaitlistHeaderActionBtn(
                                 count: waitlistService.activeCount,
                                 onTap: _openWaitlistSheet,
                               ),
                             if (ApiConstants.haveWaiters) ...[
+                              const SizedBox(width: 8),
+                              _HeaderActionBtn(
+                                icon: LucideIcons.users,
+                                label: 'النوادل',
+                                onTap: _openWaitersSheet,
+                              ),
                               const SizedBox(width: 8),
                               _HeaderActionBtn(
                                 icon: LucideIcons.messageSquare,
@@ -844,11 +1509,8 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                     ),
             ),
 
-            // Waitlist assign banner — collapses to zero height when
-            // the host isn't in assign mode.
             const WaitlistAssignBanner(),
 
-            // Content Area
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
@@ -859,886 +1521,13 @@ class _TableManagementScreenState extends State<TableManagementScreen> {
                           : _buildTableGrid(_tablesForSelectedSection()),
             ),
 
-            // Bottom tabs — one per category, mirrors the reference layout
-            // where switching DINE IN / BAR TABLE / VIP TABLE filters the
-            // grid above.
+            // Bottom category tabs filter the grid above.
             if (!_isLoading && _error == null && _tables.isNotEmpty)
               _buildSectionTabBar(),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildErrorView() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(LucideIcons.alertCircle, size: 64, color: Colors.red.shade300),
-          const SizedBox(height: 16),
-          Text(
-            translationService.t('error'),
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.red.shade700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(_error!, style: TextStyle(color: Colors.grey.shade600)),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _loadTables,
-            icon: const Icon(LucideIcons.refreshCw),
-            label: Text(translationService.t('retry')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyView() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(LucideIcons.layers, size: 64, color: Colors.grey[300]),
-          const SizedBox(height: 16),
-          Text(translationService.t('no_data'),
-              style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTableGrid(List<TableItem> tables) {
-    // Use a single responsive grid for every screen size. The previous
-    // free-positioned canvas didn't reflow on resize, so toggling
-    // fullscreen made tiles vanish off-screen — the grid below always
-    // fills the available width regardless of the parent's constraints.
-    return LayoutBuilder(builder: (_, constraints) {
-      final w = constraints.maxWidth;
-      final double maxExtent = w < 430
-          ? 120
-          : w < 900
-              ? 140
-              : 170;
-      return GridView.builder(
-        padding: const EdgeInsets.all(8),
-        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: maxExtent,
-          mainAxisSpacing: 6,
-          crossAxisSpacing: 6,
-          childAspectRatio: 1.0,
-        ),
-        itemCount: tables.length,
-        itemBuilder: (context, index) {
-          final table = tables[index];
-          final isDeactivated = _deactivatedTables[table.id] ?? false;
-
-          final pickup = _pickupByTable[table.id];
-          final hasMeshOwner =
-              _waiter.tableRegistry.ownerIdFor(table.id) != null;
-          final waitlistHold = waitlistService.entryForTable(table.id);
-          final waiterEnabled = ApiConstants.haveWaiters;
-          return _NormalTableCard(
-            key: ValueKey('table_${table.id}'),
-            table: table,
-            isDeactivated: isDeactivated,
-            compact: true,
-            width: double.infinity,
-            height: double.infinity,
-            onTap: isDeactivated ? null : () => _handleTableTap(table),
-            activePickup: pickup,
-            onRequestPickup: (isDeactivated || !waiterEnabled)
-                ? null
-                : () => _requestPickup(table),
-            onCancelPickup: (isDeactivated || !waiterEnabled)
-                ? null
-                : () => _cancelPickup(table),
-            onMigrate: (isDeactivated || !waiterEnabled)
-                ? null
-                : () => _migrateTable(table),
-            onReleaseTable: (isDeactivated || !hasMeshOwner || !waiterEnabled)
-                ? null
-                : () => _forceReleaseTable(table),
-            isTakingOrder: _takingOrderTables.contains(table.id),
-            guestCount: _waiter.tableRegistry.guestCountFor(table.id),
-            holdingForName: waitlistHold?.customerName,
-          );
-        },
-      );
-    });
-  }
-
-  // Tables for the active bottom-tab section. If no section has been picked
-  // yet, default to the first one so the screen is never blank.
-  List<TableItem> _tablesForSelectedSection() {
-    final sections = _groupBySection(_tables);
-    if (sections.isEmpty) return const [];
-    _selectedSectionKey ??= sections.first.key;
-    final active = sections.firstWhere(
-      (s) => s.key == _selectedSectionKey,
-      orElse: () => sections.first,
-    );
-    _selectedSectionKey = active.key;
-    return active.tables;
-  }
-
-  Widget _buildSectionTabBar() {
-    final sections = _groupBySection(_tables);
-    if (sections.length <= 1) return const SizedBox.shrink();
-    final activeKey = _selectedSectionKey ?? sections.first.key;
-    return Container(
-      decoration: BoxDecoration(
-        color: context.appCardBg,
-        border: Border(
-          top: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
         ),
       ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 56,
-          child: Row(
-            children: [
-              for (final section in sections)
-                Expanded(
-                  child: InkWell(
-                    onTap: () =>
-                        setState(() => _selectedSectionKey = section.key),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          top: BorderSide(
-                            color: section.key == activeKey
-                                ? const Color(0xFFF58220)
-                                : Colors.transparent,
-                            width: 3,
-                          ),
-                        ),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        section.title,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: section.key == activeKey
-                              ? const Color(0xFFF58220)
-                              : context.appText,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Groups tables by `category_name`. The "General" bucket is always
-  // present (even when empty) so the user can land on it after a refresh
-  // even if the backend now returns a category for every table.
-  List<_RestaurantTableSection> _groupBySection(List<TableItem> tables) {
-    const generalKey = '__none__';
-    final generalTitle = translationService.t('uncategorized_section');
-    final order = <String>[generalKey];
-    final byKey = <String, _RestaurantTableSection>{
-      generalKey: _RestaurantTableSection(
-        key: generalKey,
-        title: generalTitle,
-        tables: [],
-      ),
-    };
-    for (final t in tables) {
-      final raw = t.categoryName?.trim();
-      final isGeneral = raw == null || raw.isEmpty;
-      final key = isGeneral ? generalKey : raw;
-      final title = isGeneral ? generalTitle : raw;
-      final bucket = byKey.putIfAbsent(key, () {
-        order.add(key);
-        return _RestaurantTableSection(
-            key: key, title: title, tables: []);
-      });
-      bucket.tables.add(t);
-    }
-    return [for (final k in order) byKey[k]!];
-  }
-}
-
-class _RestaurantTableSection {
-  final String key;
-  final String title;
-  final List<TableItem> tables;
-  _RestaurantTableSection({
-    required this.key,
-    required this.title,
-    required this.tables,
-  });
-}
-
-class GridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.grey.withValues(alpha: 0.1)
-      ..strokeWidth = 1;
-
-    const gridSize = 50.0;
-
-    for (double x = 0; x < size.width; x += gridSize) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    for (double y = 0; y < size.height; y += gridSize) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-
-class _NormalTableCard extends StatelessWidget {
-  final TableItem table;
-  final bool isDeactivated;
-  final VoidCallback? onTap;
-  final bool compact;
-  final double? width;
-  final double? height;
-
-  /// Most recent pickup state for this table. When non-null we overlay a
-  /// status strip / cancel button; when null and the table is available
-  /// we expose the "استلام" action so the cashier can broadcast.
-  final TablePickupRequest? activePickup;
-  final VoidCallback? onRequestPickup;
-  final VoidCallback? onCancelPickup;
-  final VoidCallback? onMigrate;
-  /// Cashier force-release: clears the waiter's hold on an occupied
-  /// table so it becomes available again. Manual only — the cashier
-  /// decides when to fire this (no auto-timeout).
-  final VoidCallback? onReleaseTable;
-  /// Waiter has opened the table and is composing the first order but has
-  /// not yet sent it to the kitchen. Shown to the cashier as
-  /// "جاري اخذ الطلب" instead of the generic occupied label.
-  final bool isTakingOrder;
-
-  /// Number of guests the waiter set for this table (distinct from the
-  /// table's capacity `seats`). Null when no active party.
-  final int? guestCount;
-
-  /// When non-null the table was handed to this waitlist party but
-  /// they haven't arrived yet. Overrides the normal free-state color
-  /// so the host doesn't accidentally double-book.
-  final String? holdingForName;
-
-  const _NormalTableCard({
-    super.key,
-    required this.table,
-    required this.isDeactivated,
-    this.onTap,
-    this.compact = false,
-    this.width,
-    this.height,
-    this.activePickup,
-    this.onRequestPickup,
-    this.onCancelPickup,
-    this.onMigrate,
-    this.onReleaseTable,
-    this.isTakingOrder = false,
-    this.guestCount,
-    this.holdingForName,
-  });
-
-  bool get _isHoldingForWaitlist {
-    if (isDeactivated) return false;
-    if (table.status != TableStatus.available) return false;
-    return holdingForName != null && holdingForName!.trim().isNotEmpty;
-  }
-
-  _TablePalette _paletteFor() {
-    if (isDeactivated) {
-      return const _TablePalette(
-        background: Color(0xFFF1F5F9),
-        border: Color(0xFFCBD5E1),
-        accent: Color(0xFF64748B),
-      );
-    }
-    if (_isHoldingForWaitlist) {
-      // Warm amber — mirrors the waiter card + assign banner so the
-      // host reads "this table is reserved for an incoming party" at
-      // a glance.
-      return const _TablePalette(
-        background: Color(0xFFFEF3C7),
-        border: Color(0xFFF59E0B),
-        accent: Color(0xFFB45309),
-      );
-    }
-    switch (table.status) {
-      case TableStatus.available:
-        return const _TablePalette(
-          background: Color(0xFFDCFCE7),
-          border: Color(0xFF16A34A),
-          accent: Color(0xFF16A34A),
-        );
-      case TableStatus.occupied:
-        return const _TablePalette(
-          background: Color(0xFFFFFFFF),
-          border: Color(0xFFDC2626),
-          accent: Color(0xFFDC2626),
-        );
-      case TableStatus.printed:
-        return const _TablePalette(
-          background: Color(0xFFFEF3C7),
-          border: Color(0xFFF59E0B),
-          accent: Color(0xFFB45309),
-        );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = _paletteFor();
-    final subtitle = _subtitleLabel();
-
-    return SizedBox(
-      width: width ?? 140,
-      height: height ?? 140,
-      child: RepaintBoundary(
-        child: RawGestureDetector(
-          behavior: HitTestBehavior.opaque,
-          gestures: isDeactivated || !_hasAnyAction()
-              ? const <Type, GestureRecognizerFactory>{}
-              : <Type, GestureRecognizerFactory>{
-                  LongPressGestureRecognizer:
-                      GestureRecognizerFactoryWithHandlers<
-                          LongPressGestureRecognizer>(
-                    () => LongPressGestureRecognizer(
-                      duration: const Duration(seconds: 2),
-                    ),
-                    (instance) {
-                      instance.onLongPressStart = (details) =>
-                          _openActionsMenu(context, details.globalPosition);
-                    },
-                  ),
-                },
-          child: Material(
-          color: palette.background,
-          borderRadius: BorderRadius.circular(10),
-          child: InkWell(
-            onTap: isDeactivated ? null : onTap,
-            borderRadius: BorderRadius.circular(10),
-            child: Ink(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: palette.border, width: 1.4),
-              ),
-              child: Stack(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          table.number,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: isDeactivated
-                                ? palette.accent
-                                : const Color(0xFF0F172A),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        if (subtitle != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(
-                              subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: palette.accent,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        const Spacer(),
-                        Align(
-                          alignment: AlignmentDirectional.bottomEnd,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(LucideIcons.user,
-                                  size: 12, color: palette.accent),
-                              const SizedBox(width: 2),
-                              Text(
-                                '${(guestCount != null && guestCount! > 0) ? guestCount : table.seats}',
-                                style: TextStyle(
-                                  color: palette.accent,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (table.isPaid && !isDeactivated)
-                    const PositionedDirectional(
-                      bottom: 4,
-                      start: 6,
-                      child: Icon(
-                        LucideIcons.dollarSign,
-                        size: 12,
-                        color: Color(0xFFB45309),
-                      ),
-                    ),
-                  // 3-dots menu was replaced by a 2-second long-press
-                  // anywhere on the card — see RawGestureDetector above.
-                  if (!isDeactivated && _showPickupHint())
-                    PositionedDirectional(
-                      bottom: 4,
-                      start: table.isPaid ? 20 : 6,
-                      child: _buildPickupHint(),
-                    ),
-                  if (isDeactivated)
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.55),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(LucideIcons.ban,
-                                  color: Colors.white, size: 22),
-                              const SizedBox(height: 4),
-                              Text(
-                                translationService.t('disabled'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        ),
-      ),
-    );
-  }
-
-  String? _subtitleLabel() {
-    if (isDeactivated) return null;
-    // Holding-for-waitlist overrides every other free-state signal —
-    // that table is effectively reserved, so "بانتظار نادل" or similar
-    // would confuse the host.
-    if (_isHoldingForWaitlist) {
-      return translationService.t(
-        'waitlist_table_pill_waiting_for',
-        args: {'name': holdingForName!},
-      );
-    }
-    if (table.status == TableStatus.occupied && isTakingOrder) {
-      return 'جاري اخذ الطلب';
-    }
-    if (table.status == TableStatus.printed) {
-      return translationService.t('printed');
-    }
-    if (table.status == TableStatus.occupied) {
-      final pickup = activePickup;
-      if (pickup != null && pickup.isClaimed) {
-        return pickup.claimedByWaiterName;
-      }
-      final name = table.waiterName?.trim() ?? '';
-      if (name.isNotEmpty) return name;
-      return translationService.t('occupied');
-    }
-    final pickup = activePickup;
-    if (pickup != null && pickup.isPending) return 'بانتظار نادل...';
-    if (pickup != null && pickup.isClaimed) {
-      return '${pickup.claimedByWaiterName ?? ''} استلم';
-    }
-    return null;
-  }
-
-  bool _showPickupHint() {
-    final pickup = activePickup;
-    if (pickup != null && pickup.isPending) return true;
-    return false;
-  }
-
-  Widget _buildPickupHint() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF58220).withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: const SizedBox(
-        width: 10,
-        height: 10,
-        child: CircularProgressIndicator(
-          strokeWidth: 1.5,
-          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF58220)),
-        ),
-      ),
-    );
-  }
-
-  bool _hasAnyAction() {
-    final canPickup = activePickup == null &&
-        table.status == TableStatus.available &&
-        onRequestPickup != null;
-    final canCancelPickup = activePickup != null &&
-        activePickup!.isPending &&
-        onCancelPickup != null;
-    return canPickup ||
-        canCancelPickup ||
-        onMigrate != null ||
-        onReleaseTable != null;
-  }
-
-  // Long-press anchor: opens the actions menu at the touch position
-  // (instead of a fixed corner-anchored 3-dots button).
-  Future<void> _openActionsMenu(
-    BuildContext context,
-    Offset globalPosition,
-  ) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-    final position = RelativeRect.fromLTRB(
-      globalPosition.dx,
-      globalPosition.dy,
-      overlay.size.width - globalPosition.dx,
-      overlay.size.height - globalPosition.dy,
-    );
-    final value = await showMenu<String>(
-      context: context,
-      position: position,
-      items: [
-        if (activePickup == null &&
-            table.status == TableStatus.available &&
-            onRequestPickup != null)
-          const PopupMenuItem<String>(
-            value: 'pickup',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.handMetal,
-                    size: 16, color: Color(0xFFF58220)),
-                SizedBox(width: 8),
-                Text(
-                  'استلام',
-                  style: TextStyle(
-                    color: Color(0xFFF58220),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (activePickup != null &&
-            activePickup!.isPending &&
-            onCancelPickup != null)
-          const PopupMenuItem<String>(
-            value: 'cancel_pickup',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.x, size: 16, color: Color(0xFFDC2626)),
-                SizedBox(width: 8),
-                Text(
-                  'إلغاء الاستلام',
-                  style: TextStyle(
-                    color: Color(0xFFDC2626),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (onMigrate != null)
-          const PopupMenuItem<String>(
-            value: 'migrate',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.moveRight,
-                    size: 16, color: Color(0xFF2563EB)),
-                SizedBox(width: 8),
-                Text(
-                  'نقل إلى طاولة أخرى',
-                  style: TextStyle(
-                    color: Color(0xFF2563EB),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (onReleaseTable != null)
-          const PopupMenuItem<String>(
-            value: 'release',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.logOut, size: 16, color: Color(0xFFDC2626)),
-                SizedBox(width: 8),
-                Text(
-                  'تحرير الطاولة',
-                  style: TextStyle(
-                    color: Color(0xFFDC2626),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-    if (value == 'pickup' && onRequestPickup != null) onRequestPickup!();
-    if (value == 'cancel_pickup' && onCancelPickup != null) onCancelPickup!();
-    if (value == 'migrate' && onMigrate != null) onMigrate!();
-    if (value == 'release' && onReleaseTable != null) onReleaseTable!();
-  }
-}
-
-class _TablePalette {
-  final Color background;
-  final Color border;
-  final Color accent;
-
-  const _TablePalette({
-    required this.background,
-    required this.border,
-    required this.accent,
-  });
-}
-
-class _HeaderActionBtn extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _HeaderActionBtn({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    const btnColor = Color(0xFFF58220);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 8,
-          vertical: 8,
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: btnColor, size: 18),
-            const SizedBox(width: 8),
-            Text(label,
-                style: const TextStyle(
-                    color: btnColor,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Compact icon-only waitlist button for the compact header layout.
-class _WaitlistHeaderIconButton extends StatelessWidget {
-  final int count;
-  final VoidCallback onPressed;
-
-  const _WaitlistHeaderIconButton({
-    required this.count,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      onPressed: onPressed,
-      tooltip: translationService.t('waitlist_tooltip'),
-      icon: Badge(
-        isLabelVisible: count > 0,
-        label: Text('$count'),
-        backgroundColor: const Color(0xFFDC2626),
-        child: const Icon(LucideIcons.clock),
-      ),
-      color: const Color(0xFFF58220),
-    );
-  }
-}
-
-/// Full-width waitlist action button matching [_HeaderActionBtn] styling.
-class _WaitlistHeaderActionBtn extends StatelessWidget {
-  final int count;
-  final VoidCallback onTap;
-
-  const _WaitlistHeaderActionBtn({
-    required this.count,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    const btnColor = Color(0xFFF58220);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        child: Row(
-          children: [
-            Badge(
-              isLabelVisible: count > 0,
-              label: Text('$count'),
-              backgroundColor: const Color(0xFFDC2626),
-              child: const Icon(LucideIcons.clock, color: btnColor, size: 18),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              translationService.t('waitlist_title'),
-              style: const TextStyle(
-                color: btnColor,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-
-class _MigrateDestinationDialog extends StatelessWidget {
-  final TableItem source;
-  final List<TableItem> destinations;
-
-  const _MigrateDestinationDialog({
-    required this.source,
-    required this.destinations,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final sorted = [...destinations]
-      ..sort((a, b) {
-        final an = int.tryParse(a.number) ?? 0;
-        final bn = int.tryParse(b.number) ?? 0;
-        return an.compareTo(bn);
-      });
-    return AlertDialog(
-      backgroundColor: context.appSurface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Row(
-        children: [
-          const Icon(LucideIcons.moveRight, color: Color(0xFF2563EB)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              "نقل الطاولة ${source.number} إلى...",
-              style: TextStyle(color: context.appText, fontSize: 17),
-            ),
-          ),
-        ],
-      ),
-      content: SizedBox(
-        width: 420,
-        height: 360,
-        child: GridView.builder(
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 140,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.1,
-          ),
-          itemCount: sorted.length,
-          itemBuilder: (_, i) {
-            final t = sorted[i];
-            return InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => Navigator.of(context).pop(t),
-              child: Ink(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: context.appBorder),
-                  color: context.appSurfaceAlt,
-                ),
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(LucideIcons.armchair,
-                        color: context.appSuccess, size: 28),
-                    const SizedBox(height: 8),
-                    Text(
-                      t.number,
-                      style: TextStyle(
-                        color: context.appText,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "${t.seats} أشخاص",
-                      style: TextStyle(
-                        color: context.appTextMuted,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text("إلغاء"),
-        ),
-      ],
     );
   }
 }

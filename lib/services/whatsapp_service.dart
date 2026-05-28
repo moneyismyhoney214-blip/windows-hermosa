@@ -5,15 +5,14 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 /// Result of a send attempt. Kept compact on purpose — the UI just
-/// needs to know "did a message reach (or will reach) the customer"
-/// plus a human-readable reason when it didn't.
+/// needs to know "did a message reach the customer" plus a
+/// human-readable reason when it didn't.
 class WhatsAppSendResult {
-  /// True when either the WAWP API accepted the payload OR the device
-  /// successfully launched the WhatsApp app for the host to hit "send"
-  /// manually.
+  /// True when the WAWP API accepted the payload. Every send goes through
+  /// the WAWP HTTP API — there is no `wa.me` deep-link fallback anywhere
+  /// in this service, so an `ok` result always means WAWP responded 2xx.
   final bool ok;
 
   /// What actually happened — useful for the snackbar copy and for
@@ -28,13 +27,11 @@ class WhatsAppSendResult {
 
   const WhatsAppSendResult.apiOk()
       : this._(true, WhatsAppSendChannel.wawpApi, null);
-  const WhatsAppSendResult.deepLinkOk(WhatsAppSendChannel channel)
-      : this._(true, channel, null);
   const WhatsAppSendResult.failure(String reason)
       : this._(false, WhatsAppSendChannel.none, reason);
 }
 
-enum WhatsAppSendChannel { wawpApi, whatsappDeepLink, none }
+enum WhatsAppSendChannel { wawpApi, none }
 
 /// Host-configurable WAWP credentials.
 ///
@@ -80,9 +77,7 @@ class WhatsAppConfig {
     );
   }
 
-  // WAWP credentials (instanceId/accessToken) are sourced from the
-  // backend `/seller/branches/{id}/settings` payload and held in memory
-  // only — they are intentionally NOT persisted here.
+  // WAWP creds are backend-sourced and in-memory only — NOT persisted here.
   Map<String, dynamic> toJson() => {
         'defaultCountryCode': defaultCountryCode,
         'messageTemplate': messageTemplate,
@@ -100,15 +95,16 @@ class WhatsAppConfig {
       );
 }
 
-/// Singleton gateway for sending "your table is ready" messages.
+/// Singleton gateway for sending WhatsApp messages.
 ///
-/// Two-tier pipeline so the host is never stuck:
-///   1. WAWP HTTP API — silent, no app switching. Needs credentials.
-///   2. `https://wa.me/<phone>?text=...` deep link — opens WhatsApp with
-///       the message pre-filled; host taps "send".
-///
-/// Tier 1 is skipped when WAWP credentials are missing, and falls
-/// through to tier 2 when the API returns a non-2xx response.
+/// Both [sendTableReady] and [sendInvoicePdf] are **WAWP HTTP API only**
+/// — there is no `wa.me` deep-link fallback. If the branch has no WAWP
+/// credentials, or the API call fails/times out, the method returns a
+/// failure result and the caller shows a "something went wrong — contact
+/// support" message. Opening `wa.me` was banned because the deep link
+/// silently mangles a wrong phone (e.g. an extra leading zero gets
+/// "fixed" into a doubled country code) and sends the host to a chat
+/// with the wrong customer.
 class WhatsAppService extends ChangeNotifier {
   static final WhatsAppService _instance = WhatsAppService._internal();
   factory WhatsAppService() => _instance;
@@ -117,8 +113,8 @@ class WhatsAppService extends ChangeNotifier {
   static const String _storageKey = 'whatsapp_wawp_config_v1';
   static const String _apiEndpoint = 'https://api.wawp.net/v2/send/text';
   static const String _pdfEndpoint = 'https://api.wawp.net/v2/send/pdf';
-  static const Duration _apiTimeout = Duration(seconds: 12);
-  static const Duration _mediaTimeout = Duration(seconds: 25);
+  static const Duration _apiTimeout = Duration(seconds: 25);
+  static const Duration _mediaTimeout = Duration(seconds: 30);
 
   WhatsAppConfig _config = const WhatsAppConfig();
   WhatsAppConfig get config => _config;
@@ -139,12 +135,7 @@ class WhatsAppService extends ChangeNotifier {
         final decoded = jsonDecode(raw);
         if (decoded is Map<String, dynamic>) {
           final stored = WhatsAppConfig.fromJson(decoded);
-          // Preserve any in-memory creds that may have been seeded from
-          // `/seller/branches/{id}/settings` while we were waiting on
-          // prefs. The stored JSON intentionally only carries the
-          // user-tuned `defaultCountryCode` + `messageTemplate`; creds
-          // live in memory only and would otherwise be wiped by a naive
-          // assignment here.
+          // Preserve in-memory creds seeded from backend while prefs were loading.
           _config = stored.copyWith(
             instanceId: _config.instanceId,
             accessToken: _config.accessToken,
@@ -200,10 +191,7 @@ class WhatsAppService extends ChangeNotifier {
       return;
     }
     _config = _config.copyWith(instanceId: id, accessToken: tok);
-    // NOTE: do NOT touch `_initialized` here — that flag is owned by
-    // [_load] and toggling it from this seeding path would short-circuit
-    // the prefs load, silently losing the user's saved
-    // `messageTemplate` + `defaultCountryCode`.
+    // Don't touch _initialized — owned by _load; toggling here would lose prefs.
     notifyListeners();
   }
 
@@ -223,9 +211,7 @@ class WhatsAppService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ---------------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------------
+  // --- Public API ---
 
   /// Render the host's template against a customer + table. Exposed so
   /// the caller can preview the exact text before hitting Send.
@@ -257,32 +243,125 @@ class WhatsAppService extends ChangeNotifier {
     final trimmed = raw.trim();
     if (trimmed.isEmpty) return '';
 
-    // Keep only digits (and a leading +).
     final hasPlus = trimmed.startsWith('+');
     final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
 
+    String resolved;
     if (hasPlus) {
-      // Already international — just drop the +.
+      resolved = digits;
+    } else if (digits.startsWith('00') && digits.length > 2) {
+      // ITU "00" prefix — strip to bare international.
+      resolved = digits.substring(2);
+    } else {
+      final cc = _sanitizeCountryCode(
+        countryCodeOverride ?? _config.defaultCountryCode,
+      );
+
+      if (digits.startsWith(cc) && digits.length > cc.length + 6) {
+        // Already carries this country code — trust as-is.
+        resolved = digits;
+      } else if (digits.startsWith('0')) {
+        // Local format "0501234567" → drop the 0 and prepend CC.
+        final withoutZero = digits.substring(1);
+        // Guard against data-entry mistakes like "0966501234567" (a stray
+        // leading 0 before the country code). Without this, we'd strip the
+        // 0 AND prepend CC, producing "966966501234567" — a 15-digit phone
+        // that WAWP would either reject or, worse, route to the wrong chat.
+        if (withoutZero.startsWith(cc) && withoutZero.length > cc.length + 6) {
+          resolved = withoutZero;
+        } else {
+          resolved = '$cc$withoutZero';
+        }
+      } else if (countryCodeOverride != null &&
+          countryCodeOverride.trim().isNotEmpty &&
+          digits.length <= 11) {
+        // Override means caller knows the country — handles 10-digit
+        // Egyptian mobiles the heuristic below would miss.
+        resolved = '$cc$digits';
+      } else if (digits.length <= 9) {
+        // Too short for international — assume local.
+        resolved = '$cc$digits';
+      } else {
+        // Already looks international (e.g. "9665…") — trust it.
+        resolved = digits;
+      }
+    }
+
+    // Repair "double country code" corruption. The backend's
+    // `bookings/{id}.user.mobile` endpoint prepends `+966` to every saved
+    // mobile regardless of the customer's actual country, so a stored
+    // Egyptian number "201090081223" comes back as "+966201090081223" and
+    // the dispatcher hands that to us. Detect: digits start with the
+    // default CC (`966`) AND the remainder by itself starts with a known
+    // foreign country code AND the total length is implausible for that
+    // default CC. When all three match, strip the spurious prefix.
+    resolved = _stripDoubledCountryCode(resolved);
+
+    // Sanity bounds. ITU-T E.164 caps the international subscriber number
+    // at 15 digits, and 8 is the floor for any country's mobile MSISDN
+    // including its country code (e.g. UK 44+7… = 11). Anything outside
+    // this window is corrupt data — return empty so `sendInvoicePdf`
+    // surfaces `invalid_phone` to the UI instead of letting WAWP fail
+    // with an opaque HTTP 400.
+    if (resolved.length < 8 || resolved.length > 15) {
+      return '';
+    }
+    return resolved;
+  }
+
+  /// Strip a leading Saudi (`966`) country code when it was wrongly
+  /// prepended on top of an already-international number. Fires when:
+  ///   * The inner number begins with one of [_knownForeignCcs] — the
+  ///     `+966` was stacked on top of a foreign customer.
+  ///   * The inner number itself begins with `966` — the booking
+  ///     endpoint stacked the Saudi prefix on top of a Saudi number
+  ///     that was already correctly formatted.
+  /// Otherwise (e.g. a real `+9665…` Saudi mobile) returns the digits
+  /// unchanged so we never corrupt valid numbers.
+  static String _stripDoubledCountryCode(String digits) {
+    const sa = '966';
+    if (!digits.startsWith(sa) || digits.length <= sa.length + 7) {
       return digits;
     }
-
-    final cc = _sanitizeCountryCode(
-      countryCodeOverride ?? _config.defaultCountryCode,
-    );
-
-    // Local format: "0501234567" → drop the 0 and prepend CC.
-    if (digits.startsWith('0')) {
-      return '$cc${digits.substring(1)}';
+    final inner = digits.substring(sa.length);
+    // Self-match — "966966…" is almost certainly the booking-endpoint
+    // double-prefix bug, since Saudi mobiles never exceed 12 digits.
+    if (inner.startsWith(sa) && inner.length - sa.length >= 7) {
+      return inner;
     }
-
-    // Too short to be international — assume local.
-    if (digits.length <= 9) {
-      return '$cc$digits';
+    for (final cc in _knownForeignCcs) {
+      if (inner.startsWith(cc) && inner.length - cc.length >= 6) {
+        return inner;
+      }
     }
-
-    // Already looks international (e.g. "9665…") — trust it.
     return digits;
   }
+
+  /// Country dialing codes the cashier could legitimately serve other
+  /// than Saudi. Used by [_stripDoubledCountryCode] to differentiate
+  /// "real Saudi number" from "Saudi prefix mistakenly stacked on a
+  /// foreign number".
+  ///
+  /// **NANP `1` is deliberately excluded** — Saudi landline numbers
+  /// start with `1` after the country code (Riyadh `+966 11…`, Jeddah
+  /// `+966 12…`, …). Including `1` here would misread real Saudi
+  /// landlines as "Saudi prefix stacked on a US/Canada number" and
+  /// strip the leading `966`, corrupting valid numbers. The cashier
+  /// app doesn't serve US/Canada anyway, so the trade-off favours
+  /// preserving Saudi landlines.
+  static const List<String> _knownForeignCcs = <String>[
+    '971', '962', '961', '964', '963', '970', '967',
+    '249', '218', '216', '213', '212', '222', '252', '253', '269',
+    '973', '968', '974', '965', // Gulf neighbours
+    '20', // Egypt
+    '34', // Spain
+    '90', // Turkey
+    '92', // Pakistan
+    '91', // India
+    '44', // UK
+    '33', // France
+    '49', // Germany
+  ];
 
   /// Strip everything except digits from a country code string. Falls
   /// back to `966` (Saudi) when the input sanitizes to empty so we never
@@ -293,18 +372,28 @@ class WhatsAppService extends ChangeNotifier {
     return digits.isEmpty ? '966' : digits;
   }
 
-  /// Main send method. Pipeline: try the WAWP HTTP API first when the
-  /// branch has credentials, then fall back to the `wa.me` deep link so
-  /// the host can finish manually if the API call fails. SMS is no
-  /// longer supported — every notification goes through WhatsApp.
+  /// Main send method — goes through the WAWP HTTP API only. There is no
+  /// `wa.me` deep-link fallback: if the branch has no WAWP credentials, or
+  /// the API call fails, this returns a failure result and the UI surfaces
+  /// a "something went wrong, contact support" message. SMS is not
+  /// supported either — every notification goes through the WAWP API.
   Future<WhatsAppSendResult> sendTableReady({
     required String rawPhone,
     required String customerName,
     required String tableNumber,
+    String? countryCodeOverride,
   }) async {
-    final phone = normalizePhone(rawPhone);
+    final phone = normalizePhone(
+      rawPhone,
+      countryCodeOverride: countryCodeOverride,
+    );
     if (phone.isEmpty) {
       return const WhatsAppSendResult.failure('invalid_phone');
+    }
+
+    if (!_config.isApiReady) {
+      debugPrint('🟢 [WAWP/text] isApiReady=false — no WAWP credentials, aborting');
+      return const WhatsAppSendResult.failure('wawp_not_configured');
     }
 
     final message = renderMessage(
@@ -312,24 +401,23 @@ class WhatsAppService extends ChangeNotifier {
       tableNumber: tableNumber,
     );
 
-    if (_config.isApiReady) {
-      final apiResult = await _sendViaWawp(phone, message);
-      if (apiResult.ok) return apiResult;
-      // API configured but failed — fall through to deep link so the
-      // host can finish the job manually.
+    final apiResult = await _sendViaWawp(phone, message);
+    if (!apiResult.ok) {
+      debugPrint('🟢 [WAWP/text] API leg failed (${apiResult.errorMessage})');
     }
-    return _openWhatsAppDeepLink(phone, message);
+    return apiResult;
   }
 
   /// Send an invoice PDF directly through WAWP — same architecture as
   /// [sendTableReady]: app talks to WAWP without going through the
-  /// backend. Caller supplies a publicly reachable [pdfUrl] (WAWP fetches
-  /// it server-side, so a localhost path or auth-gated URL won't work).
+  /// backend. Either [pdfBytes] (preferred — sends inline base64) or
+  /// [pdfUrl] (the public URL path) MUST be set. Bytes win when both are
+  /// provided.
   ///
-  /// Falls through to a `wa.me` deep link with the PDF link as text when
-  /// the API call fails so the host can finish the send manually.
-  /// Either [pdfBytes] (preferred — sends inline base64) or [pdfUrl] (the
-  /// public URL path) MUST be set. Bytes win when both are provided.
+  /// **API only — no `wa.me` fallback.** If WAWP credentials are missing
+  /// or the API call fails, this returns a failure result. We never open
+  /// a `wa.me` deep link, because a wrong customer phone would silently
+  /// route the host to someone else's chat.
   ///
   /// Bytes path: WAWP receives the document directly in the request body
   /// as base64 — no public hosting required. Recommended whenever the PDF
@@ -359,31 +447,25 @@ class WhatsAppService extends ChangeNotifier {
       return const WhatsAppSendResult.failure('missing_pdf_payload');
     }
 
-    if (_config.isApiReady) {
-      final apiResult = await _sendPdfViaWawp(
-        phone: phone,
-        pdfBytes: hasBytes ? pdfBytes : null,
-        pdfUrl: hasBytes ? null : pdfUrl!.trim(),
-        filename: filename,
-        caption: caption,
-      );
-      if (apiResult.ok) return apiResult;
+    if (!_config.isApiReady) {
+      return const WhatsAppSendResult.failure('wawp_not_configured');
     }
-    // Fallback: open WhatsApp with caption (and the URL when we have one)
-    // so the host can attach manually if the API leg failed. We don't
-    // include the base64 blob in the deep link — it would never fit.
-    final trimmedUrl = pdfUrl?.trim() ?? '';
-    final deepLinkBody = hasUrl
-        ? (caption.trim().isEmpty ? trimmedUrl : '$caption\n$trimmedUrl')
-        : caption;
-    return _openWhatsAppDeepLink(phone, deepLinkBody);
+
+    return _sendPdfViaWawp(
+      phone: phone,
+      pdfBytes: hasBytes ? pdfBytes : null,
+      pdfUrl: hasBytes ? null : pdfUrl!.trim(),
+      filename: filename,
+      caption: caption,
+    );
   }
 
-  // ---------------------------------------------------------------------------
-  // Internals
-  // ---------------------------------------------------------------------------
+  // --- Internals ---
 
   Future<WhatsAppSendResult> _sendViaWawp(String phone, String message) async {
+    debugPrint('🟢 [WAWP/text] POST $_apiEndpoint  chatId="$phone" '
+        'instanceLen=${(_config.instanceId ?? '').length} '
+        'tokenLen=${(_config.accessToken ?? '').length} msgLen=${message.length}');
     try {
       final response = await http
           .post(
@@ -398,6 +480,11 @@ class WhatsAppService extends ChangeNotifier {
           )
           .timeout(_apiTimeout);
 
+      final bodySnippet = response.body.length > 400
+          ? '${response.body.substring(0, 400)}…'
+          : response.body;
+      debugPrint('🟢 [WAWP/text] HTTP ${response.statusCode} — body: $bodySnippet');
+
       final statusOk = response.statusCode >= 200 && response.statusCode < 300;
       if (!statusOk) {
         developer.log(
@@ -406,8 +493,7 @@ class WhatsAppService extends ChangeNotifier {
         return WhatsAppSendResult.failure('wawp_http_${response.statusCode}');
       }
 
-      // WAWP returns a JSON body — parse defensively since a warning
-      // response can still come back with 200.
+      // Parse JSON defensively — a warning response can still come back as 200.
       try {
         final body = jsonDecode(response.body);
         if (body is Map<String, dynamic>) {
@@ -419,21 +505,25 @@ class WhatsAppService extends ChangeNotifier {
             final reason =
                 body['message']?.toString() ?? 'wawp_body_error';
             developer.log('WhatsAppService: WAWP body error — $reason');
+            debugPrint('🟢 [WAWP/text] body says failed — $reason');
             return WhatsAppSendResult.failure(reason);
           }
         }
       } catch (_) {
-        // Body isn't JSON — treat HTTP 2xx as success.
+        // Non-JSON body — treat 2xx as success.
       }
+      debugPrint('🟢 [WAWP/text] OK ✅');
       return const WhatsAppSendResult.apiOk();
     } on TimeoutException {
+      debugPrint('🟢 [WAWP/text] TIMEOUT after ${_apiTimeout.inSeconds}s');
       return const WhatsAppSendResult.failure('wawp_timeout');
     } catch (e, st) {
       developer.log(
-        'WhatsAppService: WAWP call threw — falling through to deep link',
+        'WhatsAppService: WAWP call threw',
         error: e,
         stackTrace: st,
       );
+      debugPrint('🟢 [WAWP/text] EXCEPTION: $e');
       return const WhatsAppSendResult.failure('wawp_exception');
     }
   }
@@ -445,9 +535,7 @@ class WhatsAppService extends ChangeNotifier {
     Uint8List? pdfBytes,
     String? pdfUrl,
   }) async {
-    // V2 PDF endpoint expects credentials on the query string and the
-    // file payload nested under a `file` object — same structure as the
-    // image/document endpoints.
+    // V2 PDF endpoint: creds on query string, file payload under `file` object.
     final uri = Uri.parse(_pdfEndpoint).replace(queryParameters: {
       'instance_id': _config.instanceId ?? '',
       'access_token': _config.accessToken ?? '',
@@ -497,7 +585,7 @@ class WhatsAppService extends ChangeNotifier {
           }
         }
       } catch (_) {
-        // Non-JSON 2xx — treat as success.
+        // Non-JSON 2xx → success.
       }
       return const WhatsAppSendResult.apiOk();
     } on TimeoutException {
@@ -510,33 +598,6 @@ class WhatsAppService extends ChangeNotifier {
       );
       return const WhatsAppSendResult.failure('wawp_exception');
     }
-  }
-
-  Future<WhatsAppSendResult> _openWhatsAppDeepLink(
-    String phone,
-    String message,
-  ) async {
-    final uri = Uri.parse(
-      'https://wa.me/$phone?text=${Uri.encodeComponent(message)}',
-    );
-    try {
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (launched) {
-        return const WhatsAppSendResult.deepLinkOk(
-          WhatsAppSendChannel.whatsappDeepLink,
-        );
-      }
-    } catch (e, st) {
-      developer.log(
-        'WhatsAppService: WhatsApp deep-link failed',
-        error: e,
-        stackTrace: st,
-      );
-    }
-    return const WhatsAppSendResult.failure('wa_not_installed');
   }
 
 }

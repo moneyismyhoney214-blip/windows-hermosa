@@ -6,6 +6,7 @@ import '../locator.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
 import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/waitlist_mesh_bridge.dart';
 import '../services/waitlist_service.dart';
 import 'screens/waiter_home_screen.dart';
@@ -43,6 +44,7 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
   final _authService = getIt<AuthService>();
 
   bool _ready = false;
+  bool _bootstrapping = false;
 
   @override
   void initState() {
@@ -51,28 +53,28 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
   }
 
   Future<void> _bootstrap() async {
+    // Guard overlapping runs (initState + retry button).
+    if (_bootstrapping) return;
+    _bootstrapping = true;
+    try {
+      await _bootstrapInner();
+    } finally {
+      _bootstrapping = false;
+    }
+  }
+
+  Future<void> _bootstrapInner() async {
     await _session.initialize(branchId: ApiConstants.branchId.toString());
-    // Hydrate any printer / KDS snapshots the cashier pushed last session
-    // before we bring up the mesh — otherwise the first incoming NEW_ORDER
-    // could race with config arriving from the cashier's push-on-HELLO.
+    // Hydrate cached printer/KDS snapshots BEFORE mesh comes up — avoids race with cashier's push-on-HELLO.
     await _configStore.initialize();
     await _outbox.initialize();
-    // Refresh the user profile on every waiter app entry: the cashier does
-    // this in main_screen.session.dart (_loadUserData), but the waiter path
-    // skips that screen. Without this, a cold-start waiter keeps whatever
-    // profile was cached at last login — so a freshly-enabled NearPay flag
-    // on the backend would never reach the device until re-login. Runs
-    // before hydrateNearPayConfig so the latter sees the latest options.
+    // Refresh profile (waiter path skips main_screen) so flags like NearPay propagate without re-login.
     try {
       await _authService.getProfile();
     } catch (e) {
       debugPrint('⚠️ Waiter profile refresh failed (using cached): $e');
     }
-    // Auto-sign-in using the name from the backend profile — there's no
-    // reason to ask the waiter to retype it. We call signIn() even when
-    // the session already has a stored name so a stale / test name
-    // (e.g. an old "ببب" from a dev login) gets replaced with the
-    // authoritative profile name on every boot.
+    // Auto sign-in from profile name; re-signs even when already signed in to overwrite stale/test names.
     try {
       final resolvedName = _resolveWaiterName();
       debugPrint(
@@ -86,29 +88,23 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
           branchId: ApiConstants.branchId.toString(),
         );
       } else if (resolvedName.isEmpty && !_session.isSignedIn) {
-        // Nothing to sign in with — leave _ready=true with isSignedIn
-        // false so the fallback splash renders.
+        // No name resolvable; fallback splash will render.
         debugPrint('⚠️ Waiter auto sign-in: no name resolved from profile');
       }
     } catch (e) {
       debugPrint('⚠️ Waiter auto sign-in failed: $e');
     }
-    // Mirror the cashier's login-time NearPay bootstrap so a waiter paying
-    // with card on a NearPay-enabled branch gets the same in-app flow the
-    // cashier does (setNearPayEnabled + JWT pre-warm + SDK ensureReady).
-    // Non-blocking: runs concurrently with the rest of the boot.
+    // NearPay bootstrap mirrors cashier (setNearPayEnabled + JWT pre-warm + ensureReady), non-blocking.
     unawaited(_billing.hydrateNearPayConfig());
     if (_session.isSignedIn) {
-      // Realign the live DisplayAppService WebSocket to whatever KDS the
-      // cashier last pushed. No-op if the endpoint already matches.
+      // Realign WS endpoint to cashier's last-pushed KDS (no-op if unchanged).
       await _configStore.reapplyKdsEndpointToLiveService();
-      // Resume a previously-started shift automatically.
       try {
         await _controller.start();
-      } catch (_) {}
-      // Wire the waitlist service to this waiter's controller so every
-      // queue mutation made on this device rides the mesh, and deltas
-      // from the cashier (or other waiters) apply here.
+      } catch (e) {
+        Log.d('WaiterModuleEntry', 'resume previous shift failed (non-fatal): $e');
+      }
+      // Wire waitlist service to the mesh controller.
       unawaited(waitlistService.initialize());
       waitlistMeshBridge.attach(_controller);
     }
@@ -130,8 +126,7 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
         final v = fullname[key];
         if (v is String && v.trim().isNotEmpty) return v.trim();
       }
-      // Some backends flatten to a single string even under the map;
-      // grab the first non-empty value we see.
+      // Some backends flatten the map — grab the first non-empty value.
       for (final v in fullname.values) {
         if (v is String && v.trim().isNotEmpty) return v.trim();
       }
@@ -162,8 +157,7 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
     if (_session.isSignedIn) {
       return WaiterHomeScreen(controller: _controller);
     }
-    // Fallback: profile didn't yield a usable name (unlikely) — show a
-    // minimal retry splash instead of the old "enter your name" form.
+    // Fallback when profile didn't yield a usable name.
     return Scaffold(
       body: Center(
         child: Padding(
@@ -173,8 +167,8 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
             children: [
               const Icon(Icons.error_outline, size: 48),
               const SizedBox(height: 12),
-              const Text(
-                'تعذّر تحميل بيانات النادل. اضغط لإعادة المحاولة.',
+              Text(
+                translationService.t('waiter_load_failed_retry'),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -184,7 +178,7 @@ class _WaiterModuleEntryState extends State<WaiterModuleEntry> {
                   _bootstrap();
                 },
                 icon: const Icon(Icons.refresh),
-                label: const Text('إعادة المحاولة'),
+                label: Text(translationService.t('waiter_retry')),
               ),
             ],
           ),

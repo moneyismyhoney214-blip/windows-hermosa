@@ -3,12 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:lucide_icons/lucide_icons.dart';
+
 import '../locator.dart';
-import '../services/api/base_client.dart';
 import '../services/api/api_constants.dart';
+import '../services/api/base_client.dart';
+import '../services/app_themes.dart';
 import '../services/cache_service.dart';
 import '../services/language_service.dart';
-import '../services/app_themes.dart';
 
 /// Salon Appointments Calendar Screen.
 ///
@@ -31,7 +32,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
   final CacheService _cache = getIt<CacheService>();
   final NumberFormat _amountFormatter = NumberFormat('#,##0.##');
 
-  // ── State ────────────────────────────────────────────────────────────────
   DateTime _selectedDate = DateTime.now();
   String? _selectedEmployeeId;
   bool _isLoading = true;
@@ -43,14 +43,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
   /// Employee options extracted from response (id -> name).
   Map<String, String> _employeeOptions = {};
 
-  // ── Language helpers ──────────────────────────────────────────────────────
-  String get _langCode =>
-      translationService.currentLanguageCode.trim().toLowerCase();
-  bool get _useArabicUi =>
-      _langCode.startsWith('ar') || _langCode.startsWith('ur');
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
-
-  // ── Lifecycle ────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
@@ -68,13 +60,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     if (mounted) setState(() {});
   }
 
-  // ── Data loading ─────────────────────────────────────────────────────────
-  // Cache key for the current (date, employee) filter pair. Used to paint
-  // the last-seen response instantly while the network call refreshes in
-  // the background — same pattern as `OrdersScreenData._loadData` for
-  // restaurant bookings, since the user reported the spinner-blocking
-  // delay made the salon screen feel slower than orders despite the
-  // matching API.
+  // Cache key for (date, employee) filter pair; paints last-seen response while refreshing.
   String get _appointmentsCacheKey {
     final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
     final emp =
@@ -92,8 +78,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
       endpoint += '&employee_id=$_selectedEmployeeId';
     }
 
-    // Paint the cached response (if any) immediately so the user sees
-    // their appointments while the fresh request is still in flight.
+    // Paint cached response immediately while fresh request is in flight.
     Map<String, dynamic>? cached;
     try {
       final raw = await _cache.get(_appointmentsCacheKey);
@@ -127,9 +112,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
 
       _parseResponse(responseMap);
 
-      // Persist for next open. 6h expiry is well past a typical salon
-      // shift and short enough that a stale entry won't outlive the day's
-      // schedule changes by much.
+      // 6h expiry: past a typical shift but short enough to bound staleness.
       unawaited(_cache.set(
         _appointmentsCacheKey,
         responseMap,
@@ -142,8 +125,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        // Keep the cached list visible if we already painted it; only
-        // surface the error when there's nothing on screen.
+        // Keep cached list visible; only show error when screen is empty.
         if (_appointments.isEmpty) {
           _error = e.toString();
         }
@@ -152,9 +134,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     }
   }
 
-  // ── Parser for actual API format ──────────────────────────────────────────
-  // API returns a list of employees, each with nested appointments:
-  // [{"id":110,"name":"وضحى","appointments":[{"id":498798,"start":"2025-11-08T09:00:00","status":3},...]}]
+  /// API returns a list of employees with nested `appointments` (or sometimes flat).
   void _parseResponse(Map<String, dynamic> response) {
     _appointments = [];
     _employeeOptions = {};
@@ -162,13 +142,11 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     final dynamic data = response['data'];
 
     if (data is List) {
-      // Check if it's a list of employees with nested appointments
       final hasNested = data.isNotEmpty &&
           data.first is Map &&
           (data.first as Map).containsKey('appointments');
 
       if (hasNested) {
-        // List of employees with nested appointments
         for (final emp in data) {
           if (emp is! Map) continue;
           final empId = (emp['id'] ?? '').toString();
@@ -189,7 +167,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
           }
         }
       } else {
-        // Flat list of appointments
         _appointments =
             data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       }
@@ -204,22 +181,20 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
       }
     }
 
-    // Client-side date filter (API may not filter by date)
+    // Client-side date filter (API may not filter).
     final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
     _appointments = _appointments.where((a) {
       final start = (a['start'] ?? '').toString();
-      if (start.isEmpty) return true; // keep if no date info
+      if (start.isEmpty) return true;
       return start.startsWith(dateStr);
     }).toList();
 
-    // Client-side employee filter
     if (_selectedEmployeeId != null && _selectedEmployeeId!.isNotEmpty) {
       _appointments = _appointments
           .where((a) => (a['_employee_id'] ?? '').toString() == _selectedEmployeeId)
           .toList();
     }
 
-    // Sort by start time
     _appointments.sort((a, b) {
       final timeA = (a['start'] ?? '').toString();
       final timeB = (b['start'] ?? '').toString();
@@ -227,7 +202,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     });
   }
 
-  // ── Field helpers (flexible) ─────────────────────────────────────────────
   String _field(Map<String, dynamic> appt, List<String> keys,
       [String fallback = '-']) {
     for (final key in keys) {
@@ -256,7 +230,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
   String _timeDisplay(Map<String, dynamic> a) {
     final start = (a['start'] ?? a['start_time'] ?? a['time'] ?? '').toString();
     if (start.isEmpty) return '-';
-    // Parse ISO datetime (e.g. "2025-11-08T09:00:00")
     try {
       final dt = DateTime.parse(start);
       return DateFormat('hh:mm a').format(dt);
@@ -265,8 +238,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     }
   }
 
-  /// Normalize status to a string key (handles both numeric and string).
-  /// API returns numeric: 1=confirmed, 2=in_progress, 3=completed, 4=cancelled, 7=done
+  /// Normalize status to string key; API numeric codes: 1=confirmed, 2=in_progress, 3/7=completed, 4=cancelled.
   String _status(Map<String, dynamic> a) {
     final raw = a['status'] ?? a['appointment_status'] ?? a['state'] ?? 'unknown';
     if (raw is int) {
@@ -295,33 +267,32 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     return '${_amountFormatter.format(parsed)} ${ApiConstants.currency}';
   }
 
-  // ── Status helpers ───────────────────────────────────────────────────────
   Color _statusColor(String status) {
     switch (status) {
       case 'confirmed':
       case 'approved':
       case 'booked':
-        return const Color(0xFF2196F3); // blue
+        return const Color(0xFF2196F3);
       case 'in_progress':
       case 'in-progress':
       case 'started':
       case 'ongoing':
-        return const Color(0xFFFF9800); // orange
+        return const Color(0xFFFF9800);
       case 'completed':
       case 'done':
       case 'finished':
-        return const Color(0xFF4CAF50); // green
+        return const Color(0xFF4CAF50);
       case 'cancelled':
       case 'canceled':
       case 'rejected':
       case 'no_show':
       case 'no-show':
-        return const Color(0xFFF44336); // red
+        return const Color(0xFFF44336);
       case 'pending':
       case 'waiting':
-        return const Color(0xFF9C27B0); // purple
+        return const Color(0xFF9C27B0);
       default:
-        return const Color(0xFF607D8B); // grey-blue
+        return const Color(0xFF607D8B);
     }
   }
 
@@ -330,26 +301,26 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
       case 'confirmed':
       case 'approved':
       case 'booked':
-        return _tr('مؤكد', 'Confirmed');
+        return translationService.t('confirmed');
       case 'in_progress':
       case 'in-progress':
       case 'started':
       case 'ongoing':
-        return _tr('قيد التنفيذ', 'In Progress');
+        return translationService.t('in_progress');
       case 'completed':
       case 'done':
       case 'finished':
-        return _tr('مكتمل', 'Completed');
+        return translationService.t('completed');
       case 'cancelled':
       case 'canceled':
       case 'rejected':
-        return _tr('ملغي', 'Cancelled');
+        return translationService.t('cancelled');
       case 'no_show':
       case 'no-show':
-        return _tr('لم يحضر', 'No Show');
+        return translationService.t('no_show');
       case 'pending':
       case 'waiting':
-        return _tr('بالانتظار', 'Pending');
+        return translationService.t('pending');
       default:
         return status;
     }
@@ -385,7 +356,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     }
   }
 
-  // ── Date picker ──────────────────────────────────────────────────────────
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -409,11 +379,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
     if (picked != null && picked != _selectedDate) {
       setState(() => _selectedDate = picked);
-      _loadAppointments();
+      unawaited(_loadAppointments());
     }
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
@@ -421,37 +390,34 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      body: Directionality(
-        textDirection: TextDirection.rtl,
-        child: Column(
-          children: [
-            // Header Bar
-            _buildHeader(isCompact),
-
-            // Filter Bar
-            _buildFilterBar(isCompact),
-
-            // Content Area
-            Expanded(
-              child: _isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFFF58220),
-                      ),
-                    )
-                  : _error != null
-                      ? _buildErrorView()
-                      : _appointments.isEmpty
-                          ? _buildEmptyView()
-                          : _buildAppointmentsList(isCompact),
-            ),
-          ],
+      // Full-screen (no parent AppBar) — own safe-area handling.
+      body: SafeArea(
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Column(
+            children: [
+              _buildHeader(isCompact),
+              _buildFilterBar(isCompact),
+              Expanded(
+                child: _isLoading
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFFF58220),
+                        ),
+                      )
+                    : _error != null
+                        ? _buildErrorView()
+                        : _appointments.isEmpty
+                            ? _buildEmptyView()
+                            : _buildAppointmentsList(isCompact),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // ── Header ───────────────────────────────────────────────────────────────
   Widget _buildHeader(bool isCompact) {
     return Container(
       padding: EdgeInsets.symmetric(
@@ -478,7 +444,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                 ),
                 Expanded(
                   child: Text(
-                    _tr('مواعيد الصالون', 'Salon Appointments'),
+                    translationService.t('salon_appointments'),
                     textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -518,7 +484,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                   ),
                 ),
                 Text(
-                  _tr('مواعيد الصالون', 'Salon Appointments'),
+                  translationService.t('salon_appointments'),
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w900,
@@ -535,7 +501,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 
-  // ── Filter Bar ───────────────────────────────────────────────────────────
   Widget _buildFilterBar(bool isCompact) {
     final dateLabel = DateFormat('yyyy-MM-dd').format(_selectedDate);
     final isToday = DateUtils.isSameDay(_selectedDate, DateTime.now());
@@ -556,7 +521,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          // Date selector
           InkWell(
             onTap: _pickDate,
             borderRadius: BorderRadius.circular(8),
@@ -573,7 +537,9 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                   const Icon(LucideIcons.calendar, size: 18, color: Color(0xFFF58220)),
                   const SizedBox(width: 8),
                   Text(
-                    isToday ? _tr('اليوم ($dateLabel)', 'Today ($dateLabel)') : dateLabel,
+                    isToday
+                        ? translationService.t('today_with_date', args: {'date': dateLabel})
+                        : dateLabel,
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -587,13 +553,12 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
             ),
           ),
 
-          // Quick nav: previous / next day
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               _SmallIconBtn(
                 icon: LucideIcons.chevronRight,
-                tooltip: _tr('اليوم السابق', 'Previous day'),
+                tooltip: translationService.t('previous_day'),
                 onTap: () {
                   setState(() => _selectedDate =
                       _selectedDate.subtract(const Duration(days: 1)));
@@ -603,7 +568,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
               const SizedBox(width: 4),
               _SmallIconBtn(
                 icon: LucideIcons.chevronLeft,
-                tooltip: _tr('اليوم التالي', 'Next day'),
+                tooltip: translationService.t('next_day'),
                 onTap: () {
                   setState(() => _selectedDate =
                       _selectedDate.add(const Duration(days: 1)));
@@ -613,7 +578,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
             ],
           ),
 
-          // Today button (shown if not already on today)
           if (!isToday)
             TextButton.icon(
               onPressed: () {
@@ -621,14 +585,13 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                 _loadAppointments();
               },
               icon: const Icon(LucideIcons.calendarCheck, size: 16),
-              label: Text(_tr('اليوم', 'Today')),
+              label: Text(translationService.t('today')),
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFFF58220),
                 textStyle: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
 
-          // Employee filter dropdown
           if (_employeeOptions.isNotEmpty)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -641,7 +604,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                 child: DropdownButton<String>(
                   value: _selectedEmployeeId,
                   hint: Text(
-                    _tr('كل الموظفين', 'All Employees'),
+                    translationService.t('all_employees'),
                     style: const TextStyle(
                       fontSize: 14,
                       color: Color(0xFF64748B),
@@ -650,7 +613,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                   items: [
                     DropdownMenuItem<String>(
                       value: null,
-                      child: Text(_tr('كل الموظفين', 'All Employees')),
+                      child: Text(translationService.t('all_employees')),
                     ),
                     ..._employeeOptions.entries.map(
                       (e) => DropdownMenuItem<String>(
@@ -667,7 +630,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
               ),
             ),
 
-          // Appointment count badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -675,7 +637,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
-              '${_appointments.length} ${_tr('موعد', 'appointments')}',
+              translationService.t('appointments_count', args: {'count': _appointments.length}),
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -688,7 +650,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 
-  // ── Error View ───────────────────────────────────────────────────────────
   Widget _buildErrorView() {
     return Center(
       child: Column(
@@ -728,7 +689,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 
-  // ── Empty View ───────────────────────────────────────────────────────────
   Widget _buildEmptyView() {
     return Center(
       child: Column(
@@ -737,7 +697,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
           Icon(LucideIcons.calendarOff, size: 64, color: Colors.grey[300]),
           const SizedBox(height: 16),
           Text(
-            _tr('لا توجد مواعيد', 'No appointments'),
+            translationService.t('no_appointments'),
             style: TextStyle(
               color: Colors.grey[400],
               fontSize: 18,
@@ -746,10 +706,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            _tr(
-              'لا توجد مواعيد لهذا اليوم',
-              'No appointments found for this day',
-            ),
+            translationService.t('no_appointments_this_day'),
             style: TextStyle(color: Colors.grey[400], fontSize: 14),
           ),
         ],
@@ -757,7 +714,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 
-  // ── Appointments List ────────────────────────────────────────────────────
   Widget _buildAppointmentsList(bool isCompact) {
     return RefreshIndicator(
       color: const Color(0xFFF58220),
@@ -773,7 +729,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 
-  // ── Single Appointment Card ──────────────────────────────────────────────
   Widget _buildAppointmentCard(Map<String, dynamic> appt, bool isCompact) {
     final status = _status(appt);
     final color = _statusColor(status);
@@ -849,10 +804,9 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Row 1: time + status
         Row(
           children: [
-            Icon(LucideIcons.clock, size: 16, color: const Color(0xFF64748B)),
+            const Icon(LucideIcons.clock, size: 16, color: Color(0xFF64748B)),
             const SizedBox(width: 6),
             Expanded(
               child: Text(
@@ -868,26 +822,24 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
           ],
         ),
         const SizedBox(height: 10),
-        // Row 2: customer, service
         _InfoRow(
           icon: LucideIcons.user,
-          label: _tr('العميل', 'Customer'),
+          label: translationService.t('customer'),
           value: customer,
         ),
         const SizedBox(height: 6),
         _InfoRow(
           icon: LucideIcons.scissors,
-          label: _tr('الخدمة', 'Service'),
+          label: translationService.t('service'),
           value: service,
         ),
         const SizedBox(height: 6),
-        // Row 3: employee, price
         Row(
           children: [
             Expanded(
               child: _InfoRow(
                 icon: LucideIcons.userCheck,
-                label: _tr('الموظف', 'Employee'),
+                label: translationService.t('employee'),
                 value: employee,
               ),
             ),
@@ -917,7 +869,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
   }) {
     return Row(
       children: [
-        // Time column
         SizedBox(
           width: 130,
           child: Column(
@@ -945,36 +896,33 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
           ),
         ),
         const SizedBox(width: 16),
-        // Details column
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _InfoRow(
                 icon: LucideIcons.user,
-                label: _tr('العميل', 'Customer'),
+                label: translationService.t('customer'),
                 value: customer,
               ),
               const SizedBox(height: 4),
               _InfoRow(
                 icon: LucideIcons.scissors,
-                label: _tr('الخدمة', 'Service'),
+                label: translationService.t('service'),
                 value: service,
               ),
             ],
           ),
         ),
         const SizedBox(width: 16),
-        // Employee column
         Expanded(
           child: _InfoRow(
             icon: LucideIcons.userCheck,
-            label: _tr('الموظف', 'Employee'),
+            label: translationService.t('employee'),
             value: employee,
           ),
         ),
         const SizedBox(width: 16),
-        // Price
         Text(
           price,
           style: const TextStyle(
@@ -987,7 +935,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 
-  // ── Detail dialog ────────────────────────────────────────────────────────
   void _showAppointmentDetails(Map<String, dynamic> appt) {
     final status = _status(appt);
     final color = _statusColor(status);
@@ -1008,7 +955,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    _tr('تفاصيل الموعد', 'Appointment Details'),
+                    translationService.t('appointment_details'),
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -1024,7 +971,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Highlighted summary
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
@@ -1036,7 +982,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${_tr('الحالة', 'Status')}: ${_statusLabel(status)}',
+                            '${translationService.t('status')}: ${_statusLabel(status)}',
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               color: color,
@@ -1044,18 +990,16 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${_tr('الوقت', 'Time')}: ${_timeDisplay(appt)}',
+                            '${translationService.t('time')}: ${_timeDisplay(appt)}',
                             style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 16),
-                    // All raw fields
                     ...entries.map((e) {
                       final key = e.key;
                       final value = e.value?.toString() ?? '';
-                      // Skip internal keys
                       if (key.startsWith('_')) {
                         return const SizedBox.shrink();
                       }
@@ -1104,10 +1048,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Private helper widgets
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class _HeaderActionBtn extends StatelessWidget {
   final IconData icon;

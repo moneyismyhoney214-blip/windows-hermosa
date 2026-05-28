@@ -27,13 +27,27 @@ extension InvoicePrintWidgetHelpers on InvoicePrintWidget {
 
   double get _impliedDiscount {
     if (data == null) return 0;
-    // If there's an explicit order discount, use it
     if (data!.hasOrderDiscount) return data!.orderDiscountAmount ?? 0;
-    // Compare items sum with totalInclVat (both tax-inclusive) to avoid false discounts
-    final itemsSum = data!.items.fold<double>(0.0, (s, i) => s + i.total);
-    final totalWithTax = data!.totalInclVat;
-    return itemsSum > totalWithTax && (itemsSum - totalWithTax) > 0.01
-        ? itemsSum - totalWithTax
-        : 0.0;
+    // Sum the explicit per-item discounts. Previously this used
+    // `itemsSum - totalInclVat` which collapsed to 0 for fully-free
+    // orders (both sides == 0) and hid the "إجمالي خصم الأصناف" row
+    // — switching to the per-item sum makes the implied discount
+    // robust to the backend's pre/post-discount convention quirks.
+    return data!.items.fold<double>(
+        0.0, (sum, item) => sum + (item.discountAmount ?? 0));
+  }
+
+  /// True when the receipt has any discount at all (order-level OR
+  /// per-item). Used by the totals widget to decide if a zero-total
+  /// receipt should fire the "FREE ORDER" banner — covers IN-824-style
+  /// orders that reached zero entirely via per-item free toggles
+  /// without an explicit order-level discount/coupon.
+  bool get _hasAnyDiscountSource {
+    if (data == null) return false;
+    if (data!.hasOrderDiscount) return true;
+    for (final item in data!.items) {
+      if ((item.discountAmount ?? 0) > 0.01) return true;
+    }
+    return false;
   }
 }

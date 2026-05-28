@@ -74,7 +74,7 @@ class InvoicePrintExample extends StatelessWidget {
             onPressed: () {
               // هنا يمكن إضافة كود الطباعة
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('جاري الطباعة...')),
+                const SnackBar(duration: Duration(seconds: 3), content: Text('جاري الطباعة...')),
               );
             },
           ),

@@ -27,9 +27,14 @@ class WaiterPickupStore extends ChangeNotifier {
       LinkedHashMap<String, TablePickupRequest>();
 
   UnmodifiableListView<TablePickupRequest> get all {
-    _gc();
+    // Filter out TTL-expired entries WITHOUT mutating `_byId` — a getter
+    // that quietly shrinks the map (and doesn't notifyListeners) leaves
+    // any widget that just read it showing stale rows. Actual eviction
+    // happens in `_gc()`, called from the mutating paths; the map is
+    // bounded by `_capacity` in the meantime.
+    final now = DateTime.now();
     // Newest first so the banner / message screen shows the latest item.
-    final list = _byId.values.toList()
+    final list = _byId.values.where((r) => !_isExpired(r, now)).toList()
       ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
     return UnmodifiableListView(list);
   }
@@ -126,18 +131,19 @@ class WaiterPickupStore extends ChangeNotifier {
     }
   }
 
+  bool _isExpired(TablePickupRequest req, DateTime now) {
+    if (req.isClaimed || req.cancelled) {
+      return now.difference(req.claimedAt ?? req.requestedAt) > terminalTtl;
+    }
+    return now.difference(req.requestedAt) > pendingTtl;
+  }
+
   void _gc() {
     final now = DateTime.now();
-    final toRemove = <String>[];
-    _byId.forEach((id, req) {
-      if (req.isClaimed || req.cancelled) {
-        final terminalAge = now.difference(req.claimedAt ?? req.requestedAt);
-        if (terminalAge > terminalTtl) toRemove.add(id);
-      } else {
-        final age = now.difference(req.requestedAt);
-        if (age > pendingTtl) toRemove.add(id);
-      }
-    });
+    final toRemove = <String>[
+      for (final e in _byId.entries)
+        if (_isExpired(e.value, now)) e.key,
+    ];
     for (final id in toRemove) {
       _byId.remove(id);
     }

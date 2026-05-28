@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+
+import '../logger_service.dart';
 
 /// Manages the bundled server-schema SQLite database for offline POS.
 ///
@@ -38,13 +41,10 @@ class OfflinePosDatabase {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, _dbName);
 
-    // Copy from assets if the file doesn't exist yet
     if (!await File(path).exists()) {
       debugPrint('Copying bundled database from assets...');
       try {
-        // Ensure directory exists
         await Directory(dbPath).create(recursive: true);
-        // Copy from assets
         final data = await rootBundle.load(_assetPath);
         final bytes = data.buffer.asUint8List(
           data.offsetInBytes,
@@ -54,19 +54,14 @@ class OfflinePosDatabase {
         debugPrint('Bundled database copied to: $path');
       } catch (e) {
         debugPrint('Failed to copy bundled database: $e');
-        // If copy fails, create a fresh DB - the sync will populate it
+        // Fresh DB will be created; sync will repopulate it.
       }
     }
 
     final db = await openDatabase(
       path,
       onOpen: (db) async {
-        // Enable WAL for concurrent reads/writes. PRAGMA journal_mode
-        // returns a result row, so on Android it must go through rawQuery —
-        // calling `execute` throws "Queries can be performed using ...
-        // rawQuery methods only" and aborts the whole DB open. Wrapped in
-        // try/catch so even an unexpected failure falls back to the default
-        // rollback journal instead of taking the app offline.
+        // PRAGMA journal_mode returns a row, so on Android it must go through rawQuery (execute throws).
         try {
           await db.rawQuery('PRAGMA journal_mode=WAL');
         } catch (e) {
@@ -84,7 +79,7 @@ class OfflinePosDatabase {
   Future<void> _createOverlayTables(Database db) async {
     final batch = db.batch();
 
-    // ── Pending POS Sales (queued for /sync/pos upload) ──
+    // --- Pending POS Sales (queued for /sync/pos upload) ---
     batch.execute('''
       CREATE TABLE IF NOT EXISTS pending_pos_sales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +110,7 @@ class OfflinePosDatabase {
       )
     ''');
 
-    // ── Sync Cursors (track incremental sync position per resource) ──
+    // --- Sync Cursors (track incremental sync position per resource) ---
     batch.execute('''
       CREATE TABLE IF NOT EXISTS sync_cursors (
         resource TEXT PRIMARY KEY,
@@ -125,7 +120,7 @@ class OfflinePosDatabase {
       )
     ''');
 
-    // ── Sync Manifest Cache ──
+    // --- Sync Manifest Cache ---
     batch.execute('''
       CREATE TABLE IF NOT EXISTS sync_manifest (
         id INTEGER PRIMARY KEY DEFAULT 1,
@@ -134,7 +129,6 @@ class OfflinePosDatabase {
       )
     ''');
 
-    // Indexes
     batch.execute(
       'CREATE INDEX IF NOT EXISTS idx_pending_sales_status ON pending_pos_sales(sync_status)',
     );
@@ -145,9 +139,7 @@ class OfflinePosDatabase {
     await batch.commit(noResult: true);
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  SYNC CURSORS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Sync cursors ---
 
   /// Get the sync cursor for a resource (e.g. "employees", "customers").
   Future<String?> getSyncCursor(String resource) async {
@@ -201,9 +193,7 @@ class OfflinePosDatabase {
         where: 'resource = ?', whereArgs: [resource]);
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  SYNC MANIFEST
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Sync manifest ---
 
   Future<void> saveManifest(Map<String, dynamic> manifest) async {
     final db = await database;
@@ -225,14 +215,13 @@ class OfflinePosDatabase {
     try {
       return jsonDecode(rows.first['manifest_json'] as String)
           as Map<String, dynamic>;
-    } catch (_) {
+    } catch (e) {
+      Log.d('offline-pos', 'manifest decode failed (non-fatal): $e');
       return null;
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  RESOURCE UPSERT (employees, customers from sync API)
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Resource upsert (employees, customers from sync API) ---
 
   /// Upsert rows into any table. Each row must have an 'id' key.
   /// Used by the sync API to write downloaded resources.
@@ -248,11 +237,9 @@ class OfflinePosDatabase {
     final batch = db.batch();
     int count = 0;
     for (final row in rows) {
-      // Filter to only valid columns
       final filtered = <String, dynamic>{};
       for (final entry in row.entries) {
         if (validColumns.contains(entry.key)) {
-          // Handle JSON fields - if the value is a Map or List, encode it
           final value = entry.value;
           if (value is Map || value is List) {
             filtered[entry.key] = jsonEncode(value);
@@ -270,9 +257,7 @@ class OfflinePosDatabase {
     return count;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  READ HELPERS (for offline fallback)
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Read helpers (offline fallback) ---
 
   /// Get employees for a seller from the local database.
   Future<List<Map<String, dynamic>>> getEmployees(int sellerId) async {
@@ -290,7 +275,7 @@ class OfflinePosDatabase {
       {String? search}) async {
     final db = await database;
     String where = 'seller_id = ? AND is_active = 1 AND deleted_at IS NULL';
-    List<dynamic> whereArgs = [sellerId];
+    final List<dynamic> whereArgs = [sellerId];
     if (search != null && search.isNotEmpty) {
       where += ' AND (name LIKE ? OR mobile LIKE ? OR email LIKE ?)';
       final pattern = '%$search%';
@@ -305,7 +290,7 @@ class OfflinePosDatabase {
       {int? categoryId}) async {
     final db = await database;
     String where = 'branch_id = ? AND is_active = 1';
-    List<dynamic> whereArgs = [branchId];
+    final List<dynamic> whereArgs = [branchId];
     if (categoryId != null) {
       where += ' AND category_id = ?';
       whereArgs.add(categoryId);
@@ -319,7 +304,7 @@ class OfflinePosDatabase {
       {int? categoryId}) async {
     final db = await database;
     String where = 'branch_id = ? AND is_active = 1';
-    List<dynamic> whereArgs = [branchId];
+    final List<dynamic> whereArgs = [branchId];
     if (categoryId != null) {
       where += ' AND category_id = ?';
       whereArgs.add(categoryId);
@@ -333,7 +318,7 @@ class OfflinePosDatabase {
       {int? categoryId}) async {
     final db = await database;
     String where = 'branch_id = ? AND is_active = 1';
-    List<dynamic> whereArgs = [branchId];
+    final List<dynamic> whereArgs = [branchId];
     if (categoryId != null) {
       where += ' AND category_id = ?';
       whereArgs.add(categoryId);
@@ -347,7 +332,7 @@ class OfflinePosDatabase {
       {int? type}) async {
     final db = await database;
     String where = 'branch_id = ? AND is_active = 1';
-    List<dynamic> whereArgs = [branchId];
+    final List<dynamic> whereArgs = [branchId];
     if (type != null) {
       where += ' AND type = ?';
       whereArgs.add(type);
@@ -387,9 +372,7 @@ class OfflinePosDatabase {
     return result;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  PENDING POS SALES
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Pending POS sales ---
 
   /// Save a POS sale for offline sync. Returns the UUID.
   Future<String> savePendingSale({
@@ -494,18 +477,16 @@ class OfflinePosDatabase {
     final paymentJson = saleRow['payment_json'] as String? ?? '[]';
     final rawPayloadJson = saleRow['raw_payload_json'] as String?;
 
-    // If we have the raw payload, use it directly
     if (rawPayloadJson != null && rawPayloadJson.isNotEmpty) {
       try {
         return jsonDecode(rawPayloadJson) as Map<String, dynamic>;
-      } catch (_) {}
+      } catch (e) { Log.w('pos-db', 'JSON decode failed for cached row', error: e); }
     }
 
-    // Build from structured fields
     final products = jsonDecode(productsJson);
     final payments = jsonDecode(paymentJson);
 
-    // Convert products list to indexed map as expected by /sync/pos
+    // /sync/pos expects products as a 1-indexed map, not a list.
     final productsMap = <String, dynamic>{};
     if (products is List) {
       for (var i = 0; i < products.length; i++) {
@@ -550,9 +531,7 @@ class OfflinePosDatabase {
     };
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  HELPERS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Helpers ---
 
   /// Decode JSON string fields (name, description, etc.) in rows.
   /// The bundled database stores some fields as JSON strings (e.g. name is
@@ -569,7 +548,7 @@ class OfflinePosDatabase {
         if (value is String && value.startsWith('{')) {
           try {
             decoded[key] = jsonDecode(value);
-          } catch (_) {}
+          } catch (e) { Log.w('pos-db', 'JSON decode failed for cached row', error: e); }
         }
       }
       return decoded;
@@ -584,7 +563,8 @@ class OfflinePosDatabase {
         'SELECT COUNT(*) as count FROM $table LIMIT 1',
       );
       return (Sqflite.firstIntValue(result) ?? 0) > 0;
-    } catch (_) {
+    } catch (e) {
+      Log.d('offline-pos', 'count query failed (non-fatal): $e');
       return false;
     }
   }

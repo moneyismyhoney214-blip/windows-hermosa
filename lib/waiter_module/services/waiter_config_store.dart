@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../services/display_app_service.dart';
 import '../../locator.dart';
+import '../../services/display_app_service.dart';
 
 /// Canonical kitchen-printer snapshot the cashier pushes to every waiter.
 ///
@@ -199,6 +200,22 @@ class WaiterConfigStore extends ChangeNotifier {
   String? _lastKdsEndpointSource;
   bool _loaded = false;
 
+  // Serializes config mutations (apply*/reapply*) so two CONFIG messages
+  // arriving back-to-back can't interleave their read-check-write or both
+  // call DisplayAppService.connect() for the same endpoint concurrently.
+  Future<void> _opTail = Future<void>.value();
+  Future<T> _serialize<T>(Future<T> Function() op) {
+    final completer = Completer<T>();
+    _opTail = _opTail.then((_) async {
+      try {
+        completer.complete(await op());
+      } catch (e, st) {
+        completer.completeError(e, st);
+      }
+    });
+    return completer.future;
+  }
+
   SyncedKitchenPrintersConfig? get kitchenPrinters => _kitchenPrinters;
   SyncedKdsEndpoint? get kdsEndpoint => _kdsEndpoint;
 
@@ -243,10 +260,16 @@ class WaiterConfigStore extends ChangeNotifier {
 
   /// Accept a snapshot from the cashier. Rejects strictly older
   /// versions; on an exact version tie (two cashiers broadcast in the
-  /// same millisecond), the alphabetically-smaller [sourceId] wins so
+  /// same millisecond), the alphabetically-LARGER [sourceId] wins so
   /// every waiter converges on the same snapshot independent of
   /// delivery order.
   Future<bool> applyKitchenPrinters(
+    Map<String, dynamic> payload, {
+    String? sourceId,
+  }) =>
+      _serialize(() => _applyKitchenPrintersLocked(payload, sourceId: sourceId));
+
+  Future<bool> _applyKitchenPrintersLocked(
     Map<String, dynamic> payload, {
     String? sourceId,
   }) async {
@@ -288,6 +311,12 @@ class WaiterConfigStore extends ChangeNotifier {
   Future<bool> applyKdsEndpoint(
     Map<String, dynamic> payload, {
     String? sourceId,
+  }) =>
+      _serialize(() => _applyKdsEndpointLocked(payload, sourceId: sourceId));
+
+  Future<bool> _applyKdsEndpointLocked(
+    Map<String, dynamic> payload, {
+    String? sourceId,
   }) async {
     await initialize();
     final incoming = SyncedKdsEndpoint.fromJson(payload);
@@ -325,11 +354,11 @@ class WaiterConfigStore extends ChangeNotifier {
   /// at waiter startup so a hydrated endpoint from the last session is
   /// reflected on the socket immediately instead of waiting for the next
   /// cashier broadcast.
-  Future<void> reapplyKdsEndpointToLiveService() async {
-    final endpoint = _kdsEndpoint;
-    if (endpoint == null) return;
-    await _applyKdsEndpointToLiveService(endpoint);
-  }
+  Future<void> reapplyKdsEndpointToLiveService() => _serialize(() async {
+        final endpoint = _kdsEndpoint;
+        if (endpoint == null) return;
+        await _applyKdsEndpointToLiveService(endpoint);
+      });
 
   Future<void> _applyKdsEndpointToLiveService(SyncedKdsEndpoint e) async {
     if (!e.enabled || e.host.trim().isEmpty) return;

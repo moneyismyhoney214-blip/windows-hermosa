@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'dart:async';
 import 'dart:convert';
 
@@ -27,6 +28,13 @@ class WaiterTableRegistry extends ChangeNotifier {
   Timer? _persistDebounce;
 
   static const String _persistKeyPrefix = 'waiter_table_registry_v2_';
+
+  /// A `takingOrder` row ("جاري اخذ الطلب") with no booking is treated as
+  /// stranded once it's been sitting unchanged this long — long enough that
+  /// a waiter actually composing an order (who flips the table to `updated`
+  /// the moment they add the first item) is never caught by it, short
+  /// enough that a walked-away / force-killed waiter's pill self-clears.
+  static const Duration _takingOrderStaleAfter = Duration(minutes: 5);
 
   /// Build the persistence scope so the same device serving two waiters
   /// (shared Sunmi tablet) never leaks one's state into the other's
@@ -87,13 +95,7 @@ class WaiterTableRegistry extends ChangeNotifier {
           paymentPending: false,
           paid: false,
           takingOrder: true,
-          // Preserve the backend bookingId across lifecycle events —
-          // without this, a pay-later booking's orderId would be wiped
-          // by any subsequent takingOrder/assigned event, and the next
-          // "Create Invoice" would fall back to creating a brand-new
-          // booking. Root cause of the "invoice creates a second
-          // booking" bug. If the incoming event carries a fresh
-          // orderId we prefer it; otherwise we keep the one we had.
+          // Preserve bookingId across lifecycle events — prevents the "invoice creates a second booking" bug.
           orderId: event.orderId ?? prev?.orderId,
         );
         break;
@@ -128,25 +130,12 @@ class WaiterTableRegistry extends ChangeNotifier {
           items: event.items,
           // Any real update (items sent) clears the "taking order" flag.
           takingOrder: false,
-          // Preserve orderId if this update carries one, else keep the
-          // existing (copyWith defaults to `this.orderId` anyway, but
-          // being explicit here avoids a future maintainer wondering
-          // whether this case drops the bookingId like takingOrder/
-          // assigned used to).
+          // Explicit orderId preservation (copyWith default behavior, made explicit for clarity).
           orderId: event.orderId ?? prev?.orderId,
         );
         break;
       case TableLifecycleKind.paymentPending:
-        // Reject a late paymentPending after the row was already
-        // marked paid for the SAME billing session — that's an
-        // out-of-order broadcast (the network delivered `paid` first,
-        // `paymentPending` after). Applying it would flip the table
-        // back to "pending" and re-open the cashier's collection flow
-        // on a closed booking.
-        //
-        // Scoped by orderId so a re-opened/adjusted invoice with a
-        // fresh orderId — or no recorded prev orderId — still flows
-        // through. Same orderId after `paid` is the only case we drop.
+        // Drop out-of-order paymentPending after paid in SAME billing session (scoped by orderId).
         final sameSession = prev?.paid == true &&
             prev?.orderId != null &&
             prev!.orderId == event.orderId;
@@ -156,11 +145,13 @@ class WaiterTableRegistry extends ChangeNotifier {
             'for table ${event.tableId} — row already paid for orderId '
             '${prev.orderId}',
           );
-          break;
+          return;
         }
         _byTableId[event.tableId] = (prev ?? _empty(event)).copyWith(
           paymentPending: true,
           paid: false,
+          // Clear takingOrder so a row that never got an `updated` event doesn't stick on "جاري اخذ الطلب".
+          takingOrder: false,
           total: event.total,
           itemCount: event.itemCount,
           items: event.items,
@@ -171,20 +162,16 @@ class WaiterTableRegistry extends ChangeNotifier {
         _byTableId[event.tableId] = (prev ?? _empty(event)).copyWith(
           paymentPending: false,
           paid: true,
+          // Invoiced table isn't taking order — clear flag so card flips to paid state.
+          takingOrder: false,
           total: event.total,
-          // Lock the orderId on `paid` so the paymentPending guard
-          // above can scope rejection to this exact billing session.
+          // Lock orderId on paid so paymentPending guard can scope rejection to this billing session.
           orderId: event.orderId ?? prev?.orderId,
         );
         break;
     }
     notifyListeners();
-    // Commit-level events — released / paid / paymentPending — flush
-    // to disk immediately instead of waiting for the 300ms debounce.
-    // A force-kill in that window after a waiter taps "Release" or a
-    // pay-later commit would otherwise resurrect the closed table on
-    // next launch, which is exactly the kind of amnesia this layer is
-    // meant to prevent.
+    // Commit-level events flush immediately — force-kill within 300ms debounce would resurrect closed tables.
     switch (event.kind) {
       case TableLifecycleKind.released:
       case TableLifecycleKind.paid:
@@ -200,9 +187,7 @@ class WaiterTableRegistry extends ChangeNotifier {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Persistence
-  // ---------------------------------------------------------------------------
+  // --- Persistence ---
 
   /// Pull the registry rows saved for this waiter on this device. Safe
   /// to call repeatedly — rehydrating while rows exist replaces the
@@ -222,10 +207,7 @@ class WaiterTableRegistry extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final primaryKey = '$_persistKeyPrefix$_persistScope';
       final backupKey = '$primaryKey.bak';
-      // Dual-slot read: if the primary blob is corrupt (power-loss
-      // mid-write on a cheap Sunmi filesystem), the backup is the
-      // pre-commit snapshot we wrote BEFORE the primary. Worst case
-      // we lose the last edit but keep everything prior.
+      // Dual-slot read for power-loss-mid-write recovery on cheap Sunmi filesystems.
       Map? decoded;
       for (final key in [primaryKey, backupKey]) {
         final raw = prefs.getString(key);
@@ -249,13 +231,9 @@ class WaiterTableRegistry extends ChangeNotifier {
           final loaded = _TableOwnership.fromJson(
             value.map((k, v) => MapEntry(k.toString(), v)),
           );
-          // The persistence key is already scoped to this waiter, so
-          // any row we pull out is by definition ours. Rewrite the
-          // waiterId/Name to the CURRENT session identity so
-          // `ownedBy(self.id)` picks these rows up when we HELLO
-          // peers — without this, a reinstall / device-id regen
-          // would leave hydrated rows with a stale waiterId that no
-          // longer matches and our snapshot push would miss them.
+          // Drop legacy persisted takingOrder rows that would resurrect a stuck pill.
+          if (loaded.takingOrder) return;
+          // Rewrite waiterId/Name to CURRENT session so reinstall / device-id regen doesn't lose ownership.
           _byTableId[key] = loaded.copyWith(
             waiterId: selfId,
             waiterName: name,
@@ -279,22 +257,29 @@ class WaiterTableRegistry extends ChangeNotifier {
     _persistDebounce = Timer(const Duration(milliseconds: 300), _flushPersist);
   }
 
-  Future<void> _flushPersist() async {
+  // Serialize persist writes so the backup→primary pair stays atomic against the next flush.
+  Future<void> _persistTail = Future<void>.value();
+
+  Future<void> _flushPersist() {
+    _persistTail = _persistTail.then((_) => _flushPersistOnce());
+    return _persistTail;
+  }
+
+  Future<void> _flushPersistOnce() async {
     final scope = _persistScope;
     if (scope == null) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final map = <String, dynamic>{};
       _byTableId.forEach((k, v) {
+        // Don't persist transient takingOrder rows — they'd resurrect a stuck "جاري اخذ الطلب" on relaunch.
+        if (v.takingOrder) return;
         map[k] = v.toJson();
       });
       final encoded = jsonEncode(map);
       final primaryKey = '$_persistKeyPrefix$scope';
       final backupKey = '$primaryKey.bak';
-      // Dual-slot write: update the backup FIRST (so if we die now, the
-      // backup still matches the prior primary); THEN update the
-      // primary. A kernel panic between the two leaves primary stale
-      // but backup current-or-prior — either way hydrate can recover.
+      // Backup first, then primary — survives mid-write kernel panic.
       await prefs.setString(backupKey, encoded);
       await prefs.setString(primaryKey, encoded);
     } catch (e) {
@@ -310,14 +295,18 @@ class WaiterTableRegistry extends ChangeNotifier {
     _persistDebounce?.cancel();
     _persistScope = null;
     if (scope == null) return;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final primaryKey = '$_persistKeyPrefix$scope';
-      await prefs.remove(primaryKey);
-      await prefs.remove('$primaryKey.bak');
-    } catch (e) {
-      debugPrint('⚠️ WaiterTableRegistry clearPersisted failed: $e');
-    }
+    // Chain wipe onto persist tail so an in-flight setString can't resurrect cleared rows.
+    _persistTail = _persistTail.then((_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final primaryKey = '$_persistKeyPrefix$scope';
+        await prefs.remove(primaryKey);
+        await prefs.remove('$primaryKey.bak');
+      } catch (e) {
+        debugPrint('⚠️ WaiterTableRegistry clearPersisted failed: $e');
+      }
+    });
+    return _persistTail;
   }
 
   _TableOwnership _empty(TableLifecycleEvent event) => _TableOwnership(
@@ -328,40 +317,74 @@ class WaiterTableRegistry extends ChangeNotifier {
 
   /// Drop registry rows for tables that the backend now reports as
   /// freely available. Used after `getTables()` to evict ghost entries
-  /// from the persisted snapshot when the source of truth has moved
-  /// on — e.g. the cashier closed a pay-later booking on this device's
-  /// behalf while the waiter was offline.
+  /// when the source of truth has moved on.
   ///
-  /// Evicts `paid`, `paymentPending` AND `takingOrder` rows. `takingOrder`
-  /// was previously skipped on the assumption it's transient local-only
-  /// state, but the order screen broadcasts and persists it before the
-  /// waiter has placed any items — leaving a waiter who walks away from
-  /// the order screen with a permanent ghost claim. The backend is the
-  /// authority on whether a table is free; if it says `available` we
-  /// drop our local opinion.
+  /// Evicts, for a table the backend says is `available`:
+  ///   * `takingOrder` rows — transient ("the order screen is open"); the
+  ///     backend never sees a booking for one. Kept ONLY when this device
+  ///     currently has the order screen open for that exact table
+  ///     ([activeOrderingTableId] == id) — otherwise the backend's
+  ///     "available" wins, so a `released` that never reached us (Wi-Fi
+  ///     flap / force-kill) can't strand the table at "جاري اخذ الطلب".
+  ///   * draft-only rows — no booking id, but with items: the waiter opened
+  ///     the table, dropped an item in, and walked away without sending; no
+  ///     booking exists, so the backend is right that the table is free.
+  ///   * `paid` / `paymentPending` rows — the booking was closed/cancelled
+  ///     elsewhere while this device was offline. Suppressed when
+  ///     [evictCommitted] is false (the cashier passes false: it owns the
+  ///     close flow, and a momentarily-stale `getTables` read mustn't drop a
+  ///     pay-later booking it just saw broadcast). Also suppressed — always —
+  ///     for a committed row this device owns ([selfId] matches and it carries
+  ///     a booking id): the booking write may simply not have surfaced in the
+  ///     `getTables` snapshot yet; it clears on the matching `released`/`paid`.
   ///
-  /// [selfId] — when provided, takingOrder rows owned by self are kept
-  /// even if the backend says the table is available. The local waiter
-  /// is mid-order; the backend doesn't see the booking until items are
-  /// pushed. Without this guard, an unlucky reconcile fired while the
-  /// waiter is composing the order would wipe their table card and the
-  /// indicator would have to wait for the next broadcast to come back.
+  /// [selfId] — this device's waiter id (for the `takingOrder` self-owned
+  /// check). [activeOrderingTableId] — the table this device currently has
+  /// the order-composition screen open for, if any.
   void reconcileWithBackend(
     Iterable<String> availableTableIds, {
     String? selfId,
+    String? activeOrderingTableId,
+    bool evictCommitted = true,
   }) {
     if (_byTableId.isEmpty) return;
     final evicted = <String>[];
     for (final id in availableTableIds) {
       final row = _byTableId[id];
       if (row == null) continue;
+      // Mid-order on this device for this table — keep it; booking doesn't exist yet.
       if (row.takingOrder &&
           selfId != null &&
           selfId.isNotEmpty &&
-          row.waiterId == selfId) {
+          row.waiterId == selfId &&
+          activeOrderingTableId != null &&
+          activeOrderingTableId == id) {
         continue;
       }
-      if (row.paid || row.paymentPending || row.takingOrder) {
+      final committed = row.paid || row.paymentPending;
+      final hasBooking = row.orderId != null && row.orderId!.isNotEmpty;
+      // Self-owned committed booking is authoritative — backend table list lags booking writes.
+      final selfCommitted = committed &&
+          hasBooking &&
+          selfId != null &&
+          selfId.isNotEmpty &&
+          row.waiterId == selfId;
+      // Only stale takingOrder rows get evicted — fresh ones are still mid-compose on a peer.
+      final takingOrderStale = row.takingOrder &&
+          DateTime.now().difference(row.touchedAt) > _takingOrderStaleAfter;
+      final draftWithItems =
+          !committed && !row.takingOrder && !hasBooking && (row.itemCount ?? 0) > 0;
+      // Self-owned draft with items — cart still holds them locally and the waiter will return
+      // to send/pay. Backend hasn't seen a booking yet, but the table is "ours" — don't flip it
+      // back to green just because getTables() lags the local cart. Manual "تحرير الطاولة" still releases.
+      final selfDraft = draftWithItems &&
+          selfId != null &&
+          selfId.isNotEmpty &&
+          row.waiterId == selfId;
+      final shouldEvict = (committed && evictCommitted && !selfCommitted) ||
+          takingOrderStale ||
+          (draftWithItems && !selfDraft);
+      if (shouldEvict) {
         _byTableId.remove(id);
         evicted.add(id);
       }
@@ -387,6 +410,29 @@ class WaiterTableRegistry extends ChangeNotifier {
     }
   }
 
+  /// Drop only the transient `takingOrder` rows owned by [waiterId] — used
+  /// when that waiter goes offline (force-killed / left the building) so a
+  /// "جاري اخذ الطلب" pill the cashier is still showing for them clears
+  /// fast, without disturbing their committed (pay-later / paid / sent)
+  /// tables, which the cashier still needs to close out.
+  void dropTakingOrderForWaiter(String waiterId) {
+    final removed = _byTableId.keys
+        .where((k) {
+          final row = _byTableId[k];
+          return row != null && row.waiterId == waiterId && row.takingOrder;
+        })
+        .toList();
+    for (final k in removed) {
+      _byTableId.remove(k);
+    }
+    if (removed.isNotEmpty) {
+      debugPrint(
+          '🧹 WaiterTableRegistry: dropped ${removed.length} takingOrder row(s) '
+          'for offline waiter $waiterId: $removed');
+      notifyListeners();
+    }
+  }
+
   /// Drop every ownership record. Used on branch switch / logout so the
   /// next session doesn't inherit the previous shift's table state.
   ///
@@ -398,9 +444,7 @@ class WaiterTableRegistry extends ChangeNotifier {
     final hadRows = _byTableId.isNotEmpty;
     _byTableId.clear();
     if (hadRows) notifyListeners();
-    // Await the disk wipe so a subsequent hydrate() on the same
-    // SharedPreferences instance observes the cleared key instead of
-    // racing against an in-flight remove.
+    // Await disk wipe so subsequent hydrate() observes the cleared key.
     await clearPersisted();
   }
 }
@@ -422,7 +466,17 @@ class _TableOwnership {
   /// record instead of creating a duplicate booking.
   final String? orderId;
 
-  const _TableOwnership({
+  /// When this row was (re)created. Only consulted for `takingOrder` rows:
+  /// a "جاري اخذ الطلب" that's been sitting unchanged this long with no
+  /// booking is treated as stranded (the waiter walked away / force-killed
+  /// and the `released` never arrived) and gets reconciled away. While it's
+  /// still fresh the cashier keeps showing the pill — that's the whole
+  /// point: the previous "evict any takingOrder row the backend reports
+  /// available" rule wiped the pill off the cashier the moment a waiter
+  /// opened a table.
+  final DateTime touchedAt;
+
+  _TableOwnership({
     required this.waiterId,
     required this.waiterName,
     this.tableNumber = '',
@@ -434,7 +488,8 @@ class _TableOwnership {
     this.paid = false,
     this.takingOrder = false,
     this.orderId,
-  });
+    DateTime? touchedAt,
+  }) : touchedAt = touchedAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
         'waiterId': waiterId,
@@ -449,6 +504,7 @@ class _TableOwnership {
         'paid': paid,
         'takingOrder': takingOrder,
         if (orderId != null) 'orderId': orderId,
+        'touchedAt': touchedAt.toIso8601String(),
       };
 
   factory _TableOwnership.fromJson(Map<String, dynamic> j) {
@@ -471,6 +527,7 @@ class _TableOwnership {
       paid: j['paid'] == true,
       takingOrder: j['takingOrder'] == true,
       orderId: j['orderId']?.toString(),
+      touchedAt: DateTime.tryParse(j['touchedAt']?.toString() ?? ''),
     );
   }
 
@@ -486,6 +543,7 @@ class _TableOwnership {
     bool? paid,
     bool? takingOrder,
     String? orderId,
+    DateTime? touchedAt,
   }) {
     return _TableOwnership(
       waiterId: waiterId ?? this.waiterId,
@@ -499,11 +557,11 @@ class _TableOwnership {
       paid: paid ?? this.paid,
       takingOrder: takingOrder ?? this.takingOrder,
       orderId: orderId ?? this.orderId,
+      touchedAt: touchedAt ?? this.touchedAt,
     );
   }
 }
 
-// Silences the unused import of Waiter — reserved for future getters that
-// need the full Waiter object.
+// Silences unused import of Waiter — reserved for future getters.
 // ignore: unused_element
 Type _waiterRef() => Waiter;

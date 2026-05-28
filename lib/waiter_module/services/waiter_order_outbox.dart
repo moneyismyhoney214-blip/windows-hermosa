@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../services/logger_service.dart';
 import '../../services/offline/connectivity_service.dart';
 import '../models/waiter.dart';
 import 'waiter_kitchen_bridge.dart';
@@ -35,6 +36,8 @@ class WaiterOrderOutbox {
   /// because `connectivity.onOnline` only fires on internet changes.
   late final VoidCallback _kdsHook = flushIfConnected;
   bool _flushing = false;
+  // Re-run-once flag for flushes requested while busy (so mid-flush reconnects aren't dropped).
+  bool _flushRequestedWhileBusy = false;
   bool _kdsListenerAttached = false;
 
   /// Single-writer mutex around the SharedPreferences read-modify-write
@@ -59,8 +62,8 @@ class WaiterOrderOutbox {
     } catch (e) {
       debugPrint('⚠️ Outbox: could not attach to KDS connection: $e');
     }
-    // Also try once at startup so queued orders don't wait on a toggle.
-    Future.microtask(flushIfConnected);
+    // Kick once at startup so queued orders don't wait for a connectivity toggle.
+    unawaited(Future.microtask(flushIfConnected));
   }
 
   Future<void> dispose() async {
@@ -68,7 +71,7 @@ class WaiterOrderOutbox {
     if (_kdsListenerAttached) {
       try {
         bridge.connectionChanges.removeListener(_kdsHook);
-      } catch (_) {}
+      } catch (e) { Log.w('waiter-outbox', 'outbox op failed', error: e); }
       _kdsListenerAttached = false;
     }
   }
@@ -104,11 +107,7 @@ class WaiterOrderOutbox {
         'branch_id': branchId,
         if (note != null) 'note': note,
         'queued_at': DateTime.now().toIso8601String(),
-        // Stable client-generated dedupe key. The KDS bridge can use
-        // this to discard duplicate sends caused by a kill mid-flush
-        // (order hit the wire, local SharedPreferences write didn't
-        // land → next launch's flush would resend the same row). Same
-        // UUID across every retry of the same entry.
+        // Stable client-generated dedupe key (KDS doesn't consume it yet; flush loop dedupes by persisting progress per send).
         'idempotency_key': const Uuid().v4(),
       });
       await _write(list);
@@ -123,17 +122,19 @@ class WaiterOrderOutbox {
   /// flush can't interleave their read-modify-write cycles.
   Future<T> _runLocked<T>(Future<T> Function() op) {
     final next = _writeLock.then((_) => op());
-    // Replace the tail with a never-throwing continuation so a single
-    // failure doesn't poison every subsequent caller. The original
-    // future still propagates its error to ITS awaiter.
+    // Never-throwing continuation so one failure doesn't poison the chain (original future still throws to its awaiter).
     _writeLock = next.then((_) {}, onError: (_) {});
     return next;
   }
 
   Future<void> flushIfConnected() async {
-    if (_flushing) return;
+    if (_flushing) {
+      _flushRequestedWhileBusy = true;
+      return;
+    }
     if (!bridge.isConnected) return;
     _flushing = true;
+    _flushRequestedWhileBusy = false;
     try {
       await _runLocked(() async {
         final list = await _read();
@@ -141,12 +142,7 @@ class WaiterOrderOutbox {
         final remaining = <Map<String, dynamic>>[];
         for (var i = 0; i < list.length; i++) {
           final entry = list[i];
-          // Mid-flush guard: if the KDS socket dropped between
-          // iterations we'd otherwise hammer every remaining entry
-          // with a guaranteed-failure send, all of which would bump
-          // their retry counter for nothing. Bail out and keep the
-          // rest of the queue intact for the next reconnect — the
-          // connection-changes listener will re-trigger flush.
+          // Bail mid-flush on KDS drop — otherwise every remaining entry burns a retry on guaranteed failure.
           if (!bridge.isConnected) {
             remaining.addAll(list.sublist(i).cast<Map<String, dynamic>>());
             debugPrint(
@@ -171,11 +167,16 @@ class WaiterOrderOutbox {
               total: (entry['total'] as num?)?.toDouble(),
               note: entry['note']?.toString(),
             );
+            // Persist immediately so a crash post-send can't re-send the order on next launch.
+            await _write(<Map<String, dynamic>>[
+              ...remaining,
+              ...list.sublist(i + 1).cast<Map<String, dynamic>>(),
+            ]);
           } catch (e) {
             final retries =
                 ((entry['_retries'] as num?)?.toInt() ?? 0) + 1;
             if (retries >= _maxRetries) {
-              // Give up on this entry so it doesn't wedge future flushes.
+              // Give up; otherwise this entry wedges future flushes.
               debugPrint(
                   '🗑️ Dropping outbox entry ${entry['order_id']} after $retries retries: $e');
             } else {
@@ -189,6 +190,11 @@ class WaiterOrderOutbox {
       });
     } finally {
       _flushing = false;
+    }
+    // Replay reconnect/enqueue swallowed by the _flushing guard above.
+    if (_flushRequestedWhileBusy && bridge.isConnected) {
+      _flushRequestedWhileBusy = false;
+      unawaited(flushIfConnected());
     }
   }
 
@@ -204,7 +210,7 @@ class WaiterOrderOutbox {
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
       }
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-outbox', 'outbox op failed', error: e); }
     return <Map<String, dynamic>>[];
   }
 

@@ -108,12 +108,21 @@ class Waiter {
         branchId: json['branch_id']?.toString() ?? '',
         status: WaiterStatusX.fromWire(json['status']?.toString()),
         host: json['host']?.toString(),
-        port: (json['port'] is int)
-            ? json['port'] as int
+        // Accept ints, doubles (some JSON encoders emit `8080.0`) and
+        // numeric strings.
+        port: (json['port'] is num)
+            ? (json['port'] as num).toInt()
             : int.tryParse(json['port']?.toString() ?? ''),
         lastSeen: DateTime.tryParse(json['last_seen']?.toString() ?? ''),
       );
 
+  // Identity is the device id ONLY — two Waiter values for the same device
+  // are "equal" even if status/host/lastSeen differ. This is deliberate:
+  // the roster and peer maps key on device identity, not on a snapshot of
+  // mutable presence fields. Consequence: `someSet.add(updatedWaiter)` will
+  // NOT replace an existing same-id entry — call sites that need the newer
+  // snapshot must overwrite by key (e.g. `map[w.id] = w`) rather than rely
+  // on Set/`contains` semantics.
   @override
   bool operator ==(Object other) => other is Waiter && other.id == id;
   @override

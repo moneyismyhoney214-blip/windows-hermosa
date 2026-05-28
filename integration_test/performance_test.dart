@@ -1,3 +1,8 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 // =============================================================================
 // CASHEIR APP - Performance Profiling Test
 // =============================================================================
@@ -12,9 +17,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:hermosa_pos/main.dart' as app;
 import 'package:hermosa_pos/widgets/product_card.dart';
+import 'package:integration_test/integration_test.dart';
 
 /// Frame timing collector using SchedulerBinding (no VM Service needed).
 class FrameTimingCollector {
@@ -127,7 +132,7 @@ class FrameTimingCollector {
       debugPrint('⚠️  $label: ${s['error']}');
       return;
     }
-    final pad = (dynamic v) => v.toString().padLeft(7);
+    String pad(dynamic v) => v.toString().padLeft(7);
     debugPrint('');
     debugPrint('┌─────────────────────────────────────────────────────┐');
     debugPrint('│  $label');
@@ -198,7 +203,10 @@ void main() {
       // Try common button types
       final elevatedButtons = find.byType(ElevatedButton);
       final materialButtons = find.byType(MaterialButton);
-      final inkWells = find.byType(InkWell);
+      // `find.byType(InkWell)` used to live here as a tertiary fallback
+      // but was never actually referenced in the resolution chain below.
+      // Removed to silence `unused_local_variable`; restore if a future
+      // login surface stops using ElevatedButton/MaterialButton.
 
       Finder? loginButton;
       if (elevatedButtons.evaluate().isNotEmpty) {

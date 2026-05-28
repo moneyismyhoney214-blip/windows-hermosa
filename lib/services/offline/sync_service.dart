@@ -1,14 +1,20 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
-import 'package:hermosa_pos/services/api/base_client.dart';
+import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/api/base_client.dart';
 import 'package:hermosa_pos/services/api/order_service.dart';
 import 'package:hermosa_pos/services/api/sync_api_service.dart';
+import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
-import 'package:hermosa_pos/services/offline/connectivity_service.dart';
-import 'package:hermosa_pos/locator.dart';
 
 /// Background sync engine that processes pending local operations
 /// and pushes them to the server when connectivity is available.
@@ -53,17 +59,28 @@ class SyncService extends ChangeNotifier {
     if (_isInitialized) return;
     _isInitialized = true;
 
-    // When device comes back online, trigger sync
+    // Trigger sync on reconnect; bound queue first so weeks-old synced rows don't drag every drain.
     _connectivity.onOnline(() {
       debugPrint('SyncService: Device came online - starting sync');
-      syncAll();
+      _runSyncWithCleanup();
     });
 
-    // Update pending count
     await _refreshPendingCount();
 
     debugPrint(
         'SyncService initialized (pending: $_pendingCount)');
+  }
+
+  /// Wrap [syncAll] with a best-effort sync_queue cleanup. The cleanup
+  /// only removes rows already marked `synced` so it can't drop work
+  /// the device hasn't uploaded yet.
+  Future<void> _runSyncWithCleanup() async {
+    try {
+      await _offlineDb.cleanupSyncedSyncQueue();
+    } catch (e) {
+      debugPrint('SyncService: cleanup skipped — $e');
+    }
+    await syncAll();
   }
 
   /// Number of POS sales pending sync.
@@ -101,7 +118,6 @@ class SyncService extends ChangeNotifier {
     final errors = <String>[];
 
     try {
-      // 0. Upload pending POS sales via sync API
       try {
         final posResult = await _syncApi.uploadPendingSales();
         synced += posResult.synced;
@@ -111,26 +127,22 @@ class SyncService extends ChangeNotifier {
         debugPrint('POS sales sync error: $e');
       }
 
-      // 0b. Download resources via sync API (employees, customers)
       try {
         await _syncApi.fullSync();
       } catch (e) {
         debugPrint('Resource sync error (non-fatal): $e');
       }
 
-      // 1. Sync local orders
       final orderResult = await _syncOrders();
       synced += orderResult.synced;
       failed += orderResult.failed;
       if (orderResult.errors.isNotEmpty) errors.addAll(orderResult.errors);
 
-      // 2. Sync local invoices
       final invoiceResult = await _syncInvoices();
       synced += invoiceResult.synced;
       failed += invoiceResult.failed;
       if (invoiceResult.errors.isNotEmpty) errors.addAll(invoiceResult.errors);
 
-      // 3. Sync local customers
       final customerResult = await _syncCustomers();
       synced += customerResult.synced;
       failed += customerResult.failed;
@@ -138,7 +150,6 @@ class SyncService extends ChangeNotifier {
         errors.addAll(customerResult.errors);
       }
 
-      // 4. Process generic sync queue
       final queueResult = await _processSyncQueue();
       synced += queueResult.synced;
       failed += queueResult.failed;
@@ -191,12 +202,10 @@ class SyncService extends ChangeNotifier {
 
           final payload = jsonDecode(rawJson) as Map<String, dynamic>;
 
-          // Remove local-only fields
           payload.remove('_is_local');
           payload.remove('_is_synced');
           payload.remove('_local_id');
 
-          // Create booking on server
           final response = await _client.post(
             ApiConstants.bookingsEndpoint,
             payload,
@@ -211,7 +220,7 @@ class SyncService extends ChangeNotifier {
               synced++;
               debugPrint('Order synced: $localId -> $serverId');
 
-              // Only auto-create invoice for pay-now orders, NOT deferred (pay later)
+              // Skip auto-invoice for deferred (pay-later) orders.
               final paymentType = order['payment_type']?.toString() ?? 'payment';
               if (paymentType != 'later') {
                 await _autoCreateInvoiceForBooking(
@@ -248,7 +257,6 @@ class SyncService extends ChangeNotifier {
       String localOrderId, int serverBookingId,
       Map<String, dynamic> orderRow) async {
     try {
-      // Find the matching local invoice for this order
       final db = await _offlineDb.database;
       final localInvoices = await db.query(
         'invoices',
@@ -261,18 +269,16 @@ class SyncService extends ChangeNotifier {
         if (rawJson == null) continue;
         final invPayload = jsonDecode(rawJson) as Map<String, dynamic>;
 
-        // Match by booking_id
         final invBookingId = invPayload['booking_id']?.toString() ?? '';
         if (invBookingId != localOrderId) continue;
 
-        // Step 1: Get items from the LOCAL order (not API - API may return 0 items initially)
-        List<Map<String, dynamic>> bookingItems = [];
+        // Pull items from local order — API may return 0 items immediately post-create.
+        final List<Map<String, dynamic>> bookingItems = [];
         try {
           final orderRawJson = orderRow['raw_json'] as String?;
           if (orderRawJson != null) {
             final orderPayload =
                 jsonDecode(orderRawJson) as Map<String, dynamic>;
-            // Try all possible item keys
             final items = orderPayload['card'] ??
                 orderPayload['meals'] ??
                 orderPayload['items'] ??
@@ -304,7 +310,6 @@ class SyncService extends ChangeNotifier {
           debugPrint('Could not read local order items: $e');
         }
 
-        // Step 2: Build invoice payload with items and use OrderService
         final invoicePayload = <String, dynamic>{
           if (invPayload['customer_id'] != null)
             'customer_id': invPayload['customer_id'],
@@ -322,7 +327,6 @@ class SyncService extends ChangeNotifier {
             'Auto-creating invoice for booking $serverBookingId (${bookingItems.length} items)');
 
         try {
-          // Use OrderService.createInvoice which handles normalization & retries
           final orderService = getIt<OrderService>();
           final response = await orderService.createInvoice(invoicePayload);
 
@@ -334,7 +338,6 @@ class SyncService extends ChangeNotifier {
               !invoiceServerId.startsWith('local_')) {
             await _offlineDb.markInvoiceSynced(
                 inv['id'] as String, invoiceServerId);
-            // Also remove related sync queue items
             final queueItems = await db.query('sync_queue',
                 where: 'local_ref_table = ? AND local_ref_id = ?',
                 whereArgs: ['invoices', inv['id']]);
@@ -363,7 +366,7 @@ class SyncService extends ChangeNotifier {
     final errors = <String>[];
 
     try {
-      // Re-fetch to get only truly unsynced (auto-create may have synced some)
+      // Re-fetch — auto-create above may have already synced some.
       final unsyncedInvoices = await _offlineDb.getUnsyncedInvoices();
       if (unsyncedInvoices.isEmpty) return _BatchResult(0, 0, []);
 
@@ -381,10 +384,7 @@ class SyncService extends ChangeNotifier {
           payload.remove('_is_synced');
           payload.remove('_local_id');
 
-          // Replace local booking_id / order_id with real server IDs
           await _resolveLocalIdsInPayload(payload);
-
-          // Enrich payload with items from the synced booking
           final enrichedPayload = await _enrichInvoiceWithBookingItems(payload);
 
           final response = await _client.post(
@@ -472,7 +472,6 @@ class SyncService extends ChangeNotifier {
             final serverId =
                 (data is Map ? data['id'] : response['id'])?.toString();
             if (serverId != null && serverId.isNotEmpty) {
-              // Update local record with server ID
               await db.update(
                 'customers',
                 {
@@ -523,7 +522,7 @@ class SyncService extends ChangeNotifier {
         final localRefTable = item['local_ref_table'] as String?;
         final localRefId = item['local_ref_id'] as String?;
 
-        // Skip items already handled by _syncOrders / _syncInvoices / _autoCreate
+        // Skip items already handled by _syncOrders / _syncInvoices / _autoCreate.
         if (localRefTable == 'orders' && localRefId != null) {
           final serverId = await _offlineDb.getOrderServerId(localRefId);
           if (serverId != null) {
@@ -553,7 +552,6 @@ class SyncService extends ChangeNotifier {
             payload = jsonDecode(payloadStr);
           }
 
-          // Resolve local IDs for invoice operations
           if (payload is Map<String, dynamic> &&
               operation.contains('INVOICE')) {
             await _resolveLocalIdsInPayload(payload);
@@ -578,7 +576,6 @@ class SyncService extends ChangeNotifier {
               throw Exception('Unsupported method: $method');
           }
 
-          // Update local reference if provided
           final localRefTable = item['local_ref_table'] as String?;
           final localRefId = item['local_ref_id'] as String?;
           if (localRefTable != null &&
@@ -624,7 +621,6 @@ class SyncService extends ChangeNotifier {
     }
 
     try {
-      // Fetch booking details from server
       final endpoint =
           '${ApiConstants.bookingsEndpoint}/$bookingId';
       final response = await _client.get(endpoint);
@@ -635,14 +631,12 @@ class SyncService extends ChangeNotifier {
           final bookingData =
               data.map((k, v) => MapEntry(k.toString(), v));
 
-          // Extract items from booking
           final bookingMeals = bookingData['booking_meals'] ??
               bookingData['items'] ??
               bookingData['card'] ??
               [];
 
           if (bookingMeals is List && bookingMeals.isNotEmpty) {
-            // Build card items from booking meals
             final card = <Map<String, dynamic>>[];
             for (final meal in bookingMeals) {
               if (meal is! Map) continue;
@@ -661,7 +655,6 @@ class SyncService extends ChangeNotifier {
             final enriched = Map<String, dynamic>.from(payload);
             enriched['card'] = card;
             enriched['items'] = card;
-            // Remove any empty items lists
             enriched.remove('meals');
             enriched.remove('sales_meals');
             debugPrint(
@@ -683,7 +676,6 @@ class SyncService extends ChangeNotifier {
       Map<String, dynamic> raw) {
     final clean = <String, dynamic>{};
 
-    // Required fields
     if (raw['customer_id'] != null) {
       clean['customer_id'] = raw['customer_id'];
     }
@@ -700,12 +692,11 @@ class SyncService extends ChangeNotifier {
       clean['cash_back'] = raw['cash_back'];
     }
 
-    // Pays
     if (raw['pays'] is List && (raw['pays'] as List).isNotEmpty) {
       clean['pays'] = raw['pays'];
     }
 
-    // Items - include if available (some endpoints need them)
+    // Some invoice endpoints require items inline; include first available list.
     for (final key in ['card', 'items', 'meals', 'sales_meals']) {
       if (raw[key] is List && (raw[key] as List).isNotEmpty) {
         clean[key] = raw[key];
@@ -713,7 +704,6 @@ class SyncService extends ChangeNotifier {
       }
     }
 
-    // Optional fields
     if (raw['type'] != null) clean['type'] = raw['type'];
     if (raw['type_extra'] != null) clean['type_extra'] = raw['type_extra'];
     if (raw['promocode_id'] != null) {
@@ -736,7 +726,7 @@ class SyncService extends ChangeNotifier {
           payload[key] = int.tryParse(serverId) ?? serverId;
           debugPrint('Resolved $key: $value -> $serverId');
         } else {
-          // Order not synced yet - remove the field so server doesn't reject it
+          // Order not synced yet — drop field to avoid server rejection.
           payload.remove(key);
           debugPrint('Removed unresolved $key: $value');
         }
@@ -744,10 +734,6 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  @override
-  void dispose() {
-    super.dispose();
-  }
 }
 
 /// Result of a sync operation.

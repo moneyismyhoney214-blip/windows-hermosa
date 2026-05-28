@@ -64,7 +64,7 @@ class WaitlistService extends ChangeNotifier {
   List<WaitlistEntry> get history {
     final sorted = _entries.where((e) => !e.isActive).toList()
       ..sort((a, b) {
-        // Seated → use notifiedAt (best proxy). Cancelled → createdAt.
+        // Seated → notifiedAt; cancelled → createdAt (best proxy).
         final aStamp = a.notifiedAt ?? a.createdAt;
         final bStamp = b.notifiedAt ?? b.createdAt;
         return bStamp.compareTo(aStamp);
@@ -82,6 +82,36 @@ class WaitlistService extends ChangeNotifier {
       if (e.status == WaitlistStatus.notified &&
           e.assignedTableId == tableId) {
         return e;
+      }
+    }
+    return null;
+  }
+
+  /// The backend customer id of whichever party was sent to [tableId] —
+  /// regardless of whether they're still `notified` or already `seated`
+  /// (the order screen reads this when billing, by which point the party
+  /// has been marked seated). Cancelled entries are ignored. Returns null
+  /// when there's no linked customer.
+  String? customerIdForTable(String tableId) {
+    for (final e in _entries.reversed) {
+      if (e.assignedTableId == tableId &&
+          e.status != WaitlistStatus.cancelled &&
+          e.customerId != null) {
+        return e.customerId;
+      }
+    }
+    return null;
+  }
+
+  /// Display name of whichever party was sent to [tableId] (notified or
+  /// seated), ignoring cancelled rows. Used by the waiter order screen to
+  /// label the linked customer when there's no manual binding to read.
+  String? customerNameForTable(String tableId) {
+    for (final e in _entries.reversed) {
+      if (e.assignedTableId == tableId &&
+          e.status != WaitlistStatus.cancelled &&
+          e.customerName.isNotEmpty) {
+        return e.customerName;
       }
     }
     return null;
@@ -121,8 +151,7 @@ class WaitlistService extends ChangeNotifier {
         }
       }
     } catch (e, st) {
-      // Corrupt prefs shouldn't crash the app — reset silently and keep
-      // an empty list. The host can just re-add the parties.
+      // Corrupt prefs — reset silently rather than crash; host can re-add parties.
       developer.log(
         'WaitlistService: failed to decode stored entries — starting empty',
         error: e,
@@ -163,13 +192,7 @@ class WaitlistService extends ChangeNotifier {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Mutations (local)
-  //
-  // Every local mutation calls the broadcaster after updating in-memory
-  // state. Remote mutations come in through [applyRemote] / [applySnapshot]
-  // which do NOT trigger the broadcaster — that's how we avoid echo loops.
-  // ---------------------------------------------------------------------------
+  // --- Local mutations. applyRemote/applySnapshot skip the broadcaster to avoid echo loops. ---
 
   Future<WaitlistEntry> add(WaitlistEntry entry) async {
     _entries.add(entry);
@@ -243,20 +266,99 @@ class WaitlistService extends ChangeNotifier {
     await _persist();
   }
 
+  /// Undo a table hold: the party that was `notified` onto [tableId] goes
+  /// back to plain `waiting` and the table is freed (its assigned-table
+  /// fields are cleared). Backs the "Cancel hold" action in the
+  /// seat-confirmation dialog. No-op if the entry isn't currently holding
+  /// that table.
+  Future<void> releaseHold(String entryId) async {
+    final idx = _entries.indexWhere((e) => e.id == entryId);
+    if (idx < 0) return;
+    final e = _entries[idx];
+    if (e.status != WaitlistStatus.notified) return;
+    final updated = e.copyWith(
+      status: WaitlistStatus.waiting,
+      clearAssignedTable: true,
+      clearNotifiedAt: true,
+    );
+    _entries[idx] = updated;
+    notifyListeners();
+    _broadcast(WaitlistMeshEvent.updated(updated));
+    await _persist();
+  }
+
+  /// Called when [tableId] is released (party done / booking cancelled).
+  /// Detaches any already-`seated` row that was pinned to that table so a
+  /// later walk-in on the same table doesn't get mis-attributed to the
+  /// previous party (via [customerIdForTable] / [customerNameForTable]).
+  /// `notified` rows are deliberately left alone — they're still a live
+  /// hold on the table (e.g. a "Seat now" party whose order screen the
+  /// waiter opened then backed out of with an empty cart).
+  Future<void> detachSeatedFromTable(String tableId) async {
+    if (tableId.isEmpty) return;
+    var changed = false;
+    for (int i = 0; i < _entries.length; i++) {
+      final e = _entries[i];
+      if (e.status == WaitlistStatus.seated && e.assignedTableId == tableId) {
+        final updated = e.copyWith(clearAssignedTable: true);
+        _entries[i] = updated;
+        _broadcast(WaitlistMeshEvent.updated(updated));
+        changed = true;
+      }
+    }
+    if (changed) {
+      notifyListeners();
+      await _persist();
+    }
+  }
+
+  /// Follow a table migration: re-point any `notified` / `seated` entry
+  /// from [fromTableId] to [toTableId] so the customer↔table binding moves
+  /// with the order (otherwise `customerIdForTable(newTable)` returns null
+  /// and the migrated table shows up as an anonymous walk-in). Broadcast so
+  /// every device converges. No-op when nothing is pinned to the source.
+  Future<void> reassignAssignedTable(
+    String fromTableId,
+    String toTableId, {
+    String? toTableNumber,
+  }) async {
+    if (fromTableId.isEmpty || toTableId.isEmpty || fromTableId == toTableId) {
+      return;
+    }
+    var changed = false;
+    for (int i = 0; i < _entries.length; i++) {
+      final e = _entries[i];
+      if (e.assignedTableId != fromTableId) continue;
+      if (e.status != WaitlistStatus.notified &&
+          e.status != WaitlistStatus.seated) {
+        continue;
+      }
+      final updated = e.copyWith(
+        assignedTableId: toTableId,
+        assignedTableNumber: (toTableNumber != null && toTableNumber.isNotEmpty)
+            ? toTableNumber
+            : e.assignedTableNumber,
+      );
+      _entries[i] = updated;
+      _broadcast(WaitlistMeshEvent.updated(updated));
+      changed = true;
+    }
+    if (changed) {
+      notifyListeners();
+      await _persist();
+    }
+  }
+
   /// Purges historical rows (seated / cancelled). Wired to a future
   /// "clear history" action in the settings.
   Future<void> clearHistory() async {
     _entries.removeWhere((e) => !e.isActive);
     notifyListeners();
     await _persist();
-    // Intentionally not broadcast — history pruning is a local-only
-    // housekeeping action. Peers keep their own history until they
-    // clear it themselves.
+    // Not broadcast: history pruning is local-only housekeeping.
   }
 
-  // ---------------------------------------------------------------------------
-  // Remote application (never re-broadcasts)
-  // ---------------------------------------------------------------------------
+  // --- Remote application (never re-broadcasts) ---
 
   /// Apply a delta received from another device. Mirrors every branch
   /// of the local mutations above **without** calling [_broadcast] —
@@ -272,9 +374,7 @@ class WaitlistService extends ChangeNotifier {
       case WaitlistMeshKind.added:
         if (event.entry == null) return;
         if (idx >= 0) {
-          // Race: peer added something we also added locally (same id
-          // is unlikely because ids are UUIDs, but handle it by
-          // treating as an update).
+          // Race: id collision (rare with UUIDs) — treat as update.
           _entries[idx] = event.entry!;
         } else {
           _entries.add(event.entry!);
@@ -288,8 +388,7 @@ class WaitlistService extends ChangeNotifier {
         if (idx >= 0) {
           _entries[idx] = event.entry!;
         } else {
-          // We never saw the original add (we joined late). Accept the
-          // payload as-is so the queue stays consistent.
+          // Joined late and never saw the original add — accept as-is for queue consistency.
           _entries.add(event.entry!);
         }
         break;

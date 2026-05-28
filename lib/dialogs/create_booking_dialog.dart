@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_dynamic_calls
+// JSON wire-boundary; dynamic accesses accepted pending typed-model refactor (audit_2026_05_19.md).
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -5,13 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../locator.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/base_client.dart';
 import '../services/api/branch_service.dart';
 import '../services/api/salon_employee_service.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
-import '../locator.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 
 /// Composer for creating a salon booking — supports both flows captured in
 /// the salon dashboard HAR:
@@ -57,7 +60,6 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
   final BaseClient _client = BaseClient();
   final NumberFormat _amountFormatter = NumberFormat('#,##0.##');
 
-  // ── Catalog state (services + flags) ─────────────────────────────────
   bool _isLoadingServices = true;
   String? _servicesError;
   List<Map<String, dynamic>> _services = [];
@@ -66,7 +68,6 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
   bool _posTimeSelection = true;
   bool _posEmployeeSelection = true;
 
-  // ── Customers ────────────────────────────────────────────────────────
   bool _isLoadingCustomers = false;
   List<Map<String, dynamic>> _customers = [];
   Map<String, dynamic>? _selectedCustomer;
@@ -74,24 +75,13 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       TextEditingController();
   Timer? _customerSearchDebounce;
 
-  // ── Selected services (cart) ─────────────────────────────────────────
   final List<_BookingLine> _lines = [];
 
-  // ── Submit state ─────────────────────────────────────────────────────
   bool _isSubmitting = false;
   String? _submitError;
 
-  // Branch logo — used as fallback thumbnail when a service has no image.
-  // Populated lazily from the cached branch-receipt info (same source the
-  // home screen / service-selection dialog already reads from), so the
-  // first paint reuses what's already in memory.
+  // Branch logo fallback thumbnail; lazy from cached branch-receipt info.
   String? _branchLogoUrl;
-
-  String get _langCode =>
-      translationService.currentLanguageCode.trim().toLowerCase();
-  bool get _useArabicUi =>
-      _langCode.startsWith('ar') || _langCode.startsWith('ur');
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   @override
   void initState() {
@@ -107,10 +97,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       String url = '';
       final cached = branchService.cachedBranchReceiptInfo;
       if (cached != null) {
-        // Top-level `branch_logo_url` is sourced from `/seller/branches`
-        // which always returns the logo, while the nested `branch.logo`
-        // depends on `/seller/get_branches/{id}` which 500s on some
-        // accounts. Prefer the reliable top-level value.
+        // Prefer top-level `branch_logo_url` — nested branch.logo depends on a 500-prone endpoint.
         final topLevel = cached['branch_logo_url']?.toString().trim() ?? '';
         if (topLevel.isNotEmpty && topLevel.toLowerCase() != 'null') {
           url = topLevel;
@@ -137,8 +124,8 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       if (url.startsWith('/')) url = 'https://portal.hermosaapp.com$url';
       if (!mounted) return;
       setState(() => _branchLogoUrl = url);
-    } catch (_) {
-      // Soft fail — fallback icon will show instead.
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
   }
 
@@ -155,7 +142,6 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       _servicesError = null;
     });
     try {
-      // GET /seller/branches/{id}/bookings/create?type=services&...
       final endpoint = '${ApiConstants.bookingCreateMetadataEndpoint}'
           '?type=services&is_favourite=0&category_id=&is_home=0&is_delivery=0&page=1&search=';
       final response = await _client.get(endpoint);
@@ -231,7 +217,8 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         _customers = list;
         _isLoadingCustomers = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (mounted) setState(() => _isLoadingCustomers = false);
     }
   }
@@ -243,11 +230,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
     });
   }
 
-  // ── Service / line helpers ───────────────────────────────────────────
-  // The salon API returns service prices as `"350.00 ر.س"` — and the Arabic
-  // currency suffix `ر.س` contains a literal dot. A naïve "strip non-digits
-  // except dots" leaves `"350.00."` which `double.tryParse` rejects, so we
-  // keep only the first dot and drop any subsequent ones.
+  // Salon prices like "350.00 ر.س" leave a trailing dot after strip — keep only the first.
   double _parseAmount(dynamic v) {
     if (v == null) return 0.0;
     if (v is num) return v.toDouble();
@@ -272,10 +255,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
     setState(() => _lines.add(line));
 
     if (_posEmployeeSelection) {
-      // Auto-load eligible employees so the user only has to pick one. The
-      // backend endpoint `/seller/bookings/branches/{id}/services/{sid}`
-      // returns the employees who can perform this service plus available
-      // time slots — see HAR line 4686.
+      // Auto-load eligible employees from `/seller/bookings/branches/{id}/services/{sid}`.
       await _loadEmployeesForLine(line);
       if (mounted) setState(() {});
     }
@@ -305,10 +285,8 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         }
       }
       line.eligibleEmployees = employees;
-    } catch (_) {
-      // Soft fail — user can still type/pick later, or the booking can be
-      // created without employee assignment if the branch doesn't require
-      // pos_employee_selection.
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
   }
 
@@ -316,11 +294,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
     final empId = line.employeeId;
     if (empId == null) return;
     try {
-      // The backend rejects GET on this route with 405 — only PATCH/PUT
-      // are accepted. Sending {date, service_id} as the JSON body returns
-      // the same slot list and correctly omits any time the employee is
-      // already booked at, so the cashier can't double-book a 19:30
-      // slot for two different customers.
+      // GET 405s here — must PATCH with {date, service_id} body to get slot list excluding bookings.
       final endpoint =
           ApiConstants.salonEmployeeAvailableTimesEndpoint(int.parse(empId));
       final dateStr = DateFormat('yyyy-MM-dd').format(line.date);
@@ -339,7 +313,8 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         }
       }
       line.availableSlots = slots;
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       line.availableSlots = [];
     }
   }
@@ -380,9 +355,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         fields['$p[employee_name]'] = l.employeeName ?? '';
         fields['$p[employee_id]'] = l.employeeId ?? '';
         fields['$p[date]'] = DateFormat('yyyy-MM-dd').format(l.date);
-        // HAR always sends a time, even for pay-later (default to "now"
-        // when the user didn't pick one). Backend rejects empty time on
-        // the appointment flow.
+        // HAR always sends a time, even for pay-later; backend rejects empty.
         fields['$p[time]'] = _formatTime(l.time ?? TimeOfDay.now());
         fields['$p[session_numbers]'] = '0';
         fields['$p[quantity]'] = l.quantity.toString();
@@ -391,9 +364,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         fields['$p[modified_unit_price]'] = '';
       }
 
-      // Type fields are sent empty in the HAR for in-store services. We
-      // mirror that exactly so the backend doesn't infer a delivery / car
-      // / table flow.
+      // HAR sends type fields empty for in-store; avoids backend inferring delivery/car/table.
       fields['type'] = '';
       fields['type_extra[car_number]'] = '';
       fields['type_extra[table_name]'] = '';
@@ -407,13 +378,12 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
 
       final response = await _client.postMultipart(endpoint, fields);
 
-      // The slot-availability cache is keyed on (employee, service, date)
-      // and the slot we just consumed is still in there. Drop it now so
-      // the next booking attempt re-queries the backend instead of
-      // re-offering the time we just took.
+      // Drop slot cache so next booking re-queries instead of re-offering the slot we just consumed.
       try {
         getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-      } catch (_) {}
+      } catch (e) {
+        Log.d('CreateBookingDialog', 'invalidate salon slot cache after booking failed (non-fatal): $e');
+      }
 
       if (!mounted) return;
       final data = response is Map<String, dynamic> ? response['data'] : null;
@@ -441,8 +411,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
   }
 
   String _moneyString(double v) {
-    // Backend example sends "25" / "115" — plain integer when whole, else
-    // up to digits_number decimals.
+    // HAR sends plain integer when whole, else up to digits_number decimals.
     if (v == v.roundToDouble()) {
       return v.toStringAsFixed(0);
     }
@@ -455,7 +424,6 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
     return '$h:$m';
   }
 
-  // ── UI ───────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
@@ -502,7 +470,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              _tr('إنشاء حجز جديد', 'New Booking'),
+              translationService.t('create_new_booking'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
@@ -537,7 +505,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _loadCreateForm,
-              child: Text(_tr('إعادة المحاولة', 'Retry')),
+              child: Text(translationService.t('retry')),
             ),
           ],
         ),
@@ -563,8 +531,8 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         children: [
           TabBar(
             tabs: [
-              Tab(text: _tr('الخدمات', 'Services')),
-              Tab(text: _tr('السلة (${_lines.length})', 'Cart (${_lines.length})')),
+              Tab(text: translationService.t('services_word')),
+              Tab(text: translationService.t('cart_n', args: {'count': _lines.length})),
             ],
           ),
           Expanded(
@@ -581,7 +549,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
     if (_services.isEmpty) {
       return Center(
         child: Text(
-          _tr('لا توجد خدمات متاحة', 'No services available'),
+          translationService.t('no_services_available'),
           style: TextStyle(color: context.appText.withValues(alpha: 0.7)),
         ),
       );
@@ -711,8 +679,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Text(
-                      _tr('أضف خدمة من القائمة',
-                          'Add a service from the catalog'),
+                      translationService.t('add_service_from_catalog'),
                       style: TextStyle(color: context.appText.withValues(alpha: 0.6)),
                     ),
                   ),
@@ -735,7 +702,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _tr('العميل', 'Customer'),
+            translationService.t('customer'),
             style: TextStyle(
               fontWeight: FontWeight.w700,
               color: context.appText,
@@ -774,7 +741,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
               controller: _customerSearchController,
               onChanged: _onCustomerSearchChanged,
               decoration: InputDecoration(
-                hintText: _tr('ابحث عن عميل...', 'Search customer...'),
+                hintText: translationService.t('search_customer_dots_v2'),
                 isDense: true,
                 prefixIcon: const Icon(LucideIcons.search, size: 16),
                 border: OutlineInputBorder(
@@ -819,7 +786,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
-                _tr('* اختيار العميل مطلوب', '* Customer is required'),
+                translationService.t('star_customer_required'),
                 style: const TextStyle(
                   color: Color(0xFFEF4444),
                   fontSize: 11,
@@ -874,7 +841,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Text(
-                _tr('بدون اختيار موظف', 'No employee assignment'),
+                translationService.t('no_employee_assignment'),
                 style: const TextStyle(
                   color: Color(0xFF94A3B8),
                   fontSize: 12,
@@ -894,7 +861,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
           Row(
             children: [
               Text(
-                _tr('الكمية', 'Qty'),
+                translationService.t('qty_label'),
                 style: TextStyle(
                   fontSize: 12,
                   color: context.appText.withValues(alpha: 0.7),
@@ -930,7 +897,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Text(
-          _tr('جاري تحميل الموظفين...', 'Loading employees...'),
+          translationService.t('loading_employees_dots'),
           style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
         ),
       );
@@ -940,7 +907,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       isDense: true,
       isExpanded: true,
       decoration: InputDecoration(
-        labelText: _tr('الموظف', 'Employee'),
+        labelText: translationService.t('employee'),
         isDense: true,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -993,7 +960,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       },
       child: InputDecorator(
         decoration: InputDecoration(
-          labelText: _tr('التاريخ', 'Date'),
+          labelText: translationService.t('date'),
           isDense: true,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -1010,14 +977,13 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
   Widget _buildTimeField(_BookingLine line) {
     final slots = line.availableSlots;
     if (slots.isNotEmpty) {
-      // Backend gave us time slots — present them as a dropdown so the user
-      // doesn't pick a time the employee can't work.
+      // Show dropdown of backend slots so user can't pick an unavailable time.
       return DropdownButtonFormField<String>(
         initialValue: line.time != null ? _formatTime(line.time!) : null,
         isDense: true,
         isExpanded: true,
         decoration: InputDecoration(
-          labelText: _tr('الوقت', 'Time'),
+          labelText: translationService.t('time'),
           isDense: true,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -1053,7 +1019,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
       },
       child: InputDecorator(
         decoration: InputDecoration(
-          labelText: _tr('الوقت', 'Time'),
+          labelText: translationService.t('time'),
           isDense: true,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -1087,7 +1053,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
           Row(
             children: [
               Text(
-                _tr('الإجمالي:', 'Total:'),
+                translationService.t('total_colon'),
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   color: context.appText,
@@ -1109,7 +1075,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
                       ? () => _submit(bookAppointment: false)
                       : null,
                   icon: const Icon(LucideIcons.clock, size: 16),
-                  label: Text(_tr('دفع لاحقاً', 'Pay Later')),
+                  label: Text(translationService.t('pay_later_label')),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 14),
@@ -1130,7 +1096,7 @@ class _CreateBookingDialogState extends State<CreateBookingDialog> {
                         ),
                       )
                     : const Icon(LucideIcons.calendarCheck, size: 16),
-                label: Text(_tr('حجز موعد', 'Book Appointment')),
+                label: Text(translationService.t('book_appointment')),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFF58220),
                   foregroundColor: Colors.white,

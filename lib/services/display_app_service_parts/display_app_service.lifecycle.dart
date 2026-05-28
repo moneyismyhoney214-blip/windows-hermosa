@@ -18,9 +18,7 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
     if (_profileNearPayEnabled == enabled) return;
     _profileNearPayEnabled = enabled;
     notifyListeners();
-    // If NearPay just became enabled and the WebSocket auth handshake already
-    // completed (race: auto-reconnect fired before _loadUserData returned),
-    // send a late NEARPAY_INIT so the Display App can bootstrap NearPay now.
+    // Late NEARPAY_INIT when WS auth completed before profile load (race).
     if (enabled && isConnected) {
       unawaited(_sendNearPayInit());
     }
@@ -118,7 +116,9 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
     return (tax / subtotal).clamp(0.0, 1.0).toDouble();
   }
 
-  DisplayAppService() {
+  // Never invoked — looks like an attempted constructor, but Dart doesn't allow them in `part` files.
+  // ignore: non_constant_identifier_names
+  void DisplayAppService() {
     _loadSavedConnection();
     translationService.addListener(_handleLanguageChanged);
     _initPresentation();
@@ -133,7 +133,6 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
     try {
       await _presentationService.initialize();
 
-      // Listen for meal availability toggles from the secondary display
       _presentationService.onMealAvailabilityToggle = (data) {
         final mealId = data['mealId']?.toString() ?? '';
         final isDisabled = data['isDisabled'] == true;
@@ -162,7 +161,7 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
   void _handleLanguageChanged() {
     final languageCode = _currentLanguageCode;
 
-    // Mirror to secondary display via Presentation API (works even if WebSocket disconnected)
+    // Mirror to secondary display via Presentation API (works even with WS disconnected).
     if (_presentationService.isPresentationShowing) {
       unawaited(_presentationService.setLanguage(languageCode));
     }
@@ -270,7 +269,6 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
         debugPrint('Already connected to this device, skipping...');
         return;
       } else {
-        // Different device, disconnect first
         disconnect();
       }
     }
@@ -285,7 +283,6 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
     notifyListeners();
     _onConnectionStateChanged?.call(_status);
 
-    // Save for next time
     await _saveConnection(ipAddress, port);
 
     try {
@@ -304,7 +301,6 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
       _channel = channel;
       _logWebSocketConnected(wsUrl.toString());
 
-      // Listen for messages with error handling
       channel.stream.listen(
         (message) => _handleMessage(message),
         onError: (error) {
@@ -321,7 +317,6 @@ extension DisplayAppServiceLifecycle on DisplayAppService {
         },
       );
 
-      // Timeout for authentication
       Future.delayed(const Duration(seconds: 5), () {
         if (_status == ConnectionStatus.connecting && _authToken == null) {
           _handleConnectionError(

@@ -1,20 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../locator.dart';
+import '../models.dart';
+import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
+import '../services/api/device_service.dart';
 import '../services/api/filter_service.dart';
 import '../services/api/report_service.dart';
-import '../services/api/device_service.dart';
-import '../services/api/api_constants.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/zatca_printer_service.dart';
+import '../utils/ui_feedback.dart';
 import '../widgets/daily_closing_report_html_template.dart';
-import '../models.dart';
-import '../locator.dart';
+
+part 'daily_closing_report_screen_parts/daily_closing_report_screen.print_preview.dart';
+part 'daily_closing_report_screen_parts/daily_closing_report_screen.cards.dart';
 
 class DailyClosingReportScreen extends StatefulWidget {
   const DailyClosingReportScreen({super.key});
@@ -42,13 +50,10 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
   bool _isPrinting = false;
   String? _preferredClosingPrinterId;
 
-  // Owner-only per-cashier filter. Web frontend mirrors this gate: the
-  // dropdown is fed by `/seller/filters/branches/{branchId}/allCashiers`
-  // and only owners get a meaningful selection — CASHIER role users are
-  // pinned to their own id by the backend.
+  // Owner-only per-employee filter (passed as `cashier_id`).
   late final bool _isOwner = _authService.isOwner();
-  List<Map<String, dynamic>> _cashiers = const [];
-  bool _cashiersLoading = false;
+  List<Map<String, dynamic>> _employees = const [];
+  bool _employeesLoading = false;
 
   Map<String, dynamic>? _salesPayReport;
   Map<String, dynamic>? _invoiceStatistics;
@@ -63,15 +68,15 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     translationService.addListener(_onLanguageChanged);
     _loadPreferredClosingPrinter();
     if (_isOwner) {
-      _loadCashiers();
+      _loadEmployees();
     }
     _loadData();
   }
 
-  Future<void> _loadCashiers() async {
-    setState(() => _cashiersLoading = true);
+  Future<void> _loadEmployees() async {
+    setState(() => _employeesLoading = true);
     try {
-      final response = await _filterService.getAllCashiers();
+      final response = await _filterService.getEmployees();
       final raw = response['data'];
       final list = <Map<String, dynamic>>[];
       if (raw is List) {
@@ -83,12 +88,13 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       }
       if (!mounted) return;
       setState(() {
-        _cashiers = list;
-        _cashiersLoading = false;
+        _employees = list;
+        _employeesLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (!mounted) return;
-      setState(() => _cashiersLoading = false);
+      setState(() => _employeesLoading = false);
     }
   }
 
@@ -111,7 +117,9 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       setState(() => _preferredClosingPrinterId = id?.trim().isNotEmpty == true
           ? id!.trim()
           : null);
-    } catch (_) {}
+    } catch (e) {
+      Log.d('DailyClosingReport', 'load preferred closing printer failed (non-fatal): $e');
+    }
   }
 
   Future<void> _savePreferredClosingPrinter(String? printerId) async {
@@ -122,7 +130,9 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       } else {
         await prefs.setString(_closingPrinterIdKey, printerId.trim());
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.d('DailyClosingReport', 'save preferred closing printer failed (non-fatal): $e');
+    }
   }
 
   Future<void> _loadData() async {
@@ -135,11 +145,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       final dateFromStr = DateFormat('yyyy-MM-dd').format(_dateFrom);
       final dateToStr = DateFormat('yyyy-MM-dd').format(_dateTo);
 
-      // Force Accept-Language to the printer language via explicit
-      // per-request headers. The fetches that emit category/meal labels
-      // (sales-pay + categories-sales) carry the override; statistics-only
-      // endpoints don't need it and keep using the default locale so other
-      // screens aren't affected.
+      // Force Accept-Language to printer language for category/meal label endpoints only.
       final printerLang = printerLanguageSettings.primary;
       final results = await Future.wait([
         _reportService.getDailyClosingSalesPayReport(
@@ -190,33 +196,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     }
   }
 
-  Future<void> _selectDateRange() async {
-    final picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-      initialDateRange: DateTimeRange(start: _dateFrom, end: _dateTo),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFFF58220),
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _dateFrom = picked.start;
-        _dateTo = picked.end;
-      });
-      _loadData();
-    }
-  }
-
   Future<void> _sendReportViaWhatsApp() async {
     try {
       final dateFromStr = DateFormat('yyyy-MM-dd').format(_dateFrom);
@@ -229,21 +208,11 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       );
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(translationService.t('closing_report_sent_via_whatsapp')),
-            backgroundColor: Color(0xFF10B981),
-          ),
-        );
+        UiFeedback.success(context, translationService.t('closing_report_sent_via_whatsapp'));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(translationService.t('report_send_failed', args: {'error': e.toString()})),
-            backgroundColor: Colors.red,
-          ),
-        );
+        UiFeedback.error(context, translationService.t('report_send_failed', args: {'error': e.toString()}));
       }
     }
   }
@@ -257,7 +226,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     if (_categoriesPayReport == null) return [];
     final lines = <DailyClosingReportLine>[];
 
-    void _extractFromList(List list) {
+    void extractFromList(List list) {
       for (final item in list) {
         if (item is! Map) continue;
         final name = _localizedChartLabel(item);
@@ -268,7 +237,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       }
     }
 
-    void _extractFromMap(Map map) {
+    void extractFromMap(Map map) {
       for (final entry in map.entries) {
         final key = entry.key.toString();
         if (key == 'maintenance' || key == 'status' || key == 'message' || key == 'errors' || key == 'today') continue;
@@ -283,37 +252,32 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       }
     }
 
-    // The response could be wrapped in 'data' or be root-level
     final raw = _categoriesPayReport!;
     final data = raw['data'];
 
-    // data is a List of categories
     if (data is List && data.isNotEmpty) {
-      _extractFromList(data);
-    }
-    // data is a Map with nested structure
-    else if (data is Map) {
+      extractFromList(data);
+    } else if (data is Map) {
       final nested = data['categories'] ?? data['data'] ?? data['statistics'];
       if (nested is List) {
-        _extractFromList(nested);
+        extractFromList(nested);
       } else if (nested is Map) {
-        _extractFromMap(nested);
+        extractFromMap(nested);
       } else {
-        _extractFromMap(data);
+        extractFromMap(data);
       }
     }
 
-    // Try root-level keys if data didn't yield results
     if (lines.isEmpty) {
       final rootCategories = raw['categories'] ?? raw['statistics'];
       if (rootCategories is List) {
-        _extractFromList(rootCategories);
+        extractFromList(rootCategories);
       } else if (rootCategories is Map) {
-        _extractFromMap(rootCategories);
+        extractFromMap(rootCategories);
       }
     }
 
-    // Try chart shape (pieCharts)
+    // Fallback: chart.pieCharts shape
     if (lines.isEmpty) {
       final chart = (data is Map ? data['chart'] : raw['chart']);
       final pieCharts = (chart is Map ? chart['pieCharts'] : null);
@@ -321,7 +285,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
         final first = pieCharts.first;
         if (first is Map) {
           final chartData = first['chartData'];
-          if (chartData is List) _extractFromList(chartData);
+          if (chartData is List) extractFromList(chartData);
         }
       }
     }
@@ -337,10 +301,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     final dateLabel = fromStr == toStr ? fromStr : '$fromStr - $toStr';
     final categoryLines = _buildCategoriesPayLines();
 
-    // Resolve primary + optional secondary invoice language for this print.
-    // Hardcoded Arabic-over-English labels used to force every branch onto
-    // the same layout; now the closing receipt mirrors whatever the cashier
-    // picked (es/tr/hi/ur all supported).
+    // Resolve primary/secondary print languages (es/tr/hi/ur supported).
     final primary = printerLanguageSettings.primary.trim().toLowerCase();
     final secondary = printerLanguageSettings.allowSecondary &&
             printerLanguageSettings.secondary != primary
@@ -443,7 +404,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
           const SizedBox(height: 12),
           const Divider(thickness: 3, color: Colors.black),
           const SizedBox(height: 12),
-          // Sales by payment method
           Text(
             byPaymentPrimary,
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
@@ -472,7 +432,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
                   ],
                 ),
               )),
-          // Categories pay section
           if (categoryLines.isNotEmpty) ...[
             const SizedBox(height: 8),
             const Divider(thickness: 3, color: Colors.black),
@@ -537,8 +496,9 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
     if (_salesPayReport == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد بيانات لطباعة الإقفالية.'),
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(translationService.t('no_data_for_closing')),
           backgroundColor: Colors.orange,
         ),
       );
@@ -552,8 +512,12 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       printers = devices.where(_isUsablePrinter).toList(growable: false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر تحميل الطابعات: $e'), backgroundColor: Colors.red),
+      UiFeedback.error(
+        context,
+        translationService.t(
+          'printers_load_failed',
+          args: {'reason': '$e'},
+        ),
       );
       return;
     }
@@ -562,7 +526,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
 
     final lines = _buildReportLines(_salesPayReport!);
 
-    // Pick best default printer
     DeviceConfig? defaultPrinter;
     if (_preferredClosingPrinterId != null) {
       for (final p in printers) {
@@ -582,7 +545,9 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
             break;
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        Log.d('DailyClosingReport', 'resolve cashier-receipt printer role failed (non-fatal): $e');
+      }
       defaultPrinter ??= printers.isNotEmpty ? printers.first : null;
     }
 
@@ -617,8 +582,9 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       if (lines.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('لا توجد بيانات قابلة للطباعة.'),
+          SnackBar(
+            duration: const Duration(seconds: 3),
+            content: Text(translationService.t('no_data_for_print')),
             backgroundColor: Colors.orange,
           ),
         );
@@ -634,17 +600,19 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ تم طباعة الإقفالية على $successCount طابعة'),
-            backgroundColor: Colors.green,
-          ),
+        UiFeedback.success(
+          context,
+          '✅ ${translationService.t('closing_printed_on_n_printers', args: {'count': successCount})}',
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل طباعة الإقفالية: $e'), backgroundColor: Colors.red),
+        UiFeedback.error(
+          context,
+          translationService.t(
+            'closing_print_failed_n',
+            args: {'error': '$e'},
+          ),
         );
       }
     } finally {
@@ -733,7 +701,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
                   children: [
                     Text(
                       translationService.t('daily_closing_report'),
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
                       ),
@@ -750,9 +718,9 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
                 ),
               ),
               ElevatedButton.icon(
-                onPressed: _selectDateRange,
-                icon: const Icon(Icons.calendar_today, size: 18),
-                label: Text(translationService.t('change_period')),
+                onPressed: _showFilterDialog,
+                icon: const Icon(LucideIcons.filter, size: 18),
+                label: Text(translationService.t('filter_options')),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFF58220),
                   foregroundColor: Colors.white,
@@ -795,7 +763,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
                             strokeWidth: 2, color: Colors.white),
                       )
                     : const Icon(Icons.print),
-                label: const Text('طباعة'),
+                label: Text(translationService.t('print')),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFF58220),
                   foregroundColor: Colors.white,
@@ -808,79 +776,216 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
               ),
             ],
           ),
-          if (_isOwner) ...[
-            const SizedBox(height: 16),
-            _buildCashierFilter(),
-          ],
         ],
       ),
     );
   }
 
-  /// Owner-only dropdown that scopes the closing report to a single cashier.
-  /// The web dashboard's CashierCheckout component drives the same backend
-  /// flag (`cashier_id` query param on `/salesPay`), so this surfaces the
-  /// existing capability inside the POS app.
-  Widget _buildCashierFilter() {
-    final items = <DropdownMenuItem<String?>>[
-      DropdownMenuItem<String?>(
-        value: null,
-        child: Text(translationService.t('all_cashiers')),
-      ),
-      ..._cashiers.map((c) {
-        final id = (c['value'] ?? c['id'])?.toString() ?? '';
-        final label = (c['label'] ??
-                c['fullname'] ??
-                c['name'] ??
-                c['username'] ??
-                id)
-            .toString();
-        return DropdownMenuItem<String?>(value: id, child: Text(label));
-      }),
-    ];
+  /// Mirrors the web dashboard's "خيارات الفلتر" dialog: a booking-date range
+  /// plus an owner-only employee picker (labelled "الكاشير" like the web, but
+  /// populated from `/seller/filters/branches/{id}/allEmployees` — staff whose
+  /// role is `employee`, not the cashier accounts). Nothing reloads until the
+  /// user taps "تطبيق الفلتر"; the picked employee id rides the same
+  /// `cashier_id` query param the report endpoints already expect.
+  Future<void> _showFilterDialog() async {
+    DateTime tempFrom = _dateFrom;
+    DateTime tempTo = _dateTo;
+    String? tempCashierId = _selectedCashierId;
+    final df = DateFormat('yyyy-MM-dd');
 
-    return Row(
-      children: [
-        Icon(LucideIcons.user, size: 18, color: Colors.grey.shade600),
-        const SizedBox(width: 8),
-        Expanded(
-          child: InputDecorator(
-            decoration: InputDecoration(
-              labelText: translationService.t('filter_by_cashier'),
-              isDense: true,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+    final applied = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setLocalState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String?>(
-                value: _selectedCashierId,
-                isExpanded: true,
-                hint: Text(translationService.t('all_cashiers')),
-                items: items,
-                onChanged: _cashiersLoading
-                    ? null
-                    : (value) {
-                        if (value == _selectedCashierId) return;
-                        setState(() => _selectedCashierId = value);
-                        _loadData();
+              titlePadding:
+                  const EdgeInsets.fromLTRB(8, 8, 8, 0),
+              title: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 22),
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                  ),
+                  Expanded(
+                    child: Text(
+                      translationService.t('filter_options'),
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      translationService.t('booking_date'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () async {
+                        final picked = await showDateRangePicker(
+                          context: dialogContext,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now(),
+                          initialDateRange:
+                              DateTimeRange(start: tempFrom, end: tempTo),
+                          builder: (context, child) {
+                            return Theme(
+                              data: Theme.of(context).copyWith(
+                                colorScheme: const ColorScheme.light(
+                                  primary: Color(0xFFF58220),
+                                ),
+                              ),
+                              child: child!,
+                            );
+                          },
+                        );
+                        if (picked != null) {
+                          setLocalState(() {
+                            tempFrom = picked.start;
+                            tempTo = picked.end;
+                          });
+                        }
                       },
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
+                          suffixIcon: const Icon(Icons.calendar_today, size: 18),
+                        ),
+                        child: Text(
+                          '${df.format(tempFrom)}    -    ${df.format(tempTo)}',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                    if (_isOwner) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        translationService.t('cashier'),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      InputDecorator(
+                        decoration: InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String?>(
+                            value: tempCashierId,
+                            isExpanded: true,
+                            hint: Text(translationService.t('select_cashier')),
+                            items: <DropdownMenuItem<String?>>[
+                              DropdownMenuItem<String?>(
+                                value: null,
+                                child: Text(
+                                    translationService.t('all_cashiers')),
+                              ),
+                              ..._employees.map((c) {
+                                final id =
+                                    (c['value'] ?? c['id'])?.toString() ?? '';
+                                final label = (c['label'] ??
+                                        c['fullname'] ??
+                                        c['name'] ??
+                                        c['username'] ??
+                                        id)
+                                    .toString();
+                                return DropdownMenuItem<String?>(
+                                    value: id, child: Text(label));
+                              }),
+                            ],
+                            onChanged: _employeesLoading
+                                ? null
+                                : (value) => setLocalState(
+                                    () => tempCashierId = value),
+                          ),
+                        ),
+                      ),
+                      if (_employeesLoading) ...[
+                        const SizedBox(height: 8),
+                        const LinearProgressIndicator(minHeight: 2),
+                      ],
+                    ],
+                  ],
+                ),
               ),
-            ),
-          ),
-        ),
-        if (_cashiersLoading) ...[
-          const SizedBox(width: 8),
-          const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ],
-      ],
+              actionsPadding:
+                  const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              actions: [
+                OutlinedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(translationService.t('cancel')),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  icon: const Icon(Icons.filter_alt, size: 18),
+                  label: Text(translationService.t('apply_filter')),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF58220),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
+
+    if (applied == true) {
+      final changed = tempFrom != _dateFrom ||
+          tempTo != _dateTo ||
+          tempCashierId != _selectedCashierId;
+      setState(() {
+        _dateFrom = tempFrom;
+        _dateTo = tempTo;
+        _selectedCashierId = tempCashierId;
+      });
+      if (changed) unawaited(_loadData());
+    }
   }
 
   bool _isUsablePrinter(DeviceConfig device) {
@@ -1110,7 +1215,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
-          // Total card
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -1134,7 +1238,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
             ),
           ),
           const SizedBox(height: 20),
-          // Category cards
           ...categoryLines.map((line) {
             final percent = total > 0 ? (line.amount / total * 100) : 0.0;
             return Container(
@@ -1156,7 +1259,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
                         ),
                         const SizedBox(height: 4),
-                        // Progress bar
                         ClipRRect(
                           borderRadius: BorderRadius.circular(4),
                           child: LinearProgressIndicator(
@@ -1193,11 +1295,9 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
 
     final report = _salesPayReport!;
     
-    // Extract statistics from API response
     final statistics = report['statistics'] as Map<String, dynamic>?;
-    
+
     if (statistics != null && statistics.isNotEmpty) {
-      // Display statistics as cards
       return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -1219,7 +1319,7 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       );
     }
 
-    // Fallback to old structure if statistics not available
+    // Fallback to old structure
     final totalSales = _parseDouble(report['total_sales']);
     final totalTax = _parseDouble(report['total_tax']);
     final netSales = _parseDouble(report['net_sales']);
@@ -1287,7 +1387,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
   Widget _buildStatisticsCards(Map<String, dynamic> statistics) {
     final cards = <Widget>[];
     
-    // Map of payment methods to their display info
     final paymentMethodsInfo = {
       'cash': {
         'label': translationService.t('cash_payment'),
@@ -1437,7 +1536,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       );
     });
 
-    // Display cards in a grid (2 columns)
     final rows = <Widget>[];
     for (var i = 0; i < cards.length; i += 2) {
       rows.add(
@@ -1562,601 +1660,6 @@ class _DailyClosingReportScreenState extends State<DailyClosingReportScreen>
       ),
     );
   }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.inbox, size: 64, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          Text(
-            translationService.t('no_data_available'),
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey.shade600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSummaryCard({
-    required String title,
-    required double value,
-    required IconData icon,
-    required Color color,
-    required Color bgColor,
-    bool isNegative = false,
-  }) {
-    final formatter = NumberFormat('#,##0.00', 'ar');
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
-      child: Row(
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 28),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${formatter.format(value)} ${ApiConstants.currency}',
-                  style: TextStyle(
-                    color: isNegative ? Colors.red : Colors.black87,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-    required Color bgColor,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
-      child: Row(
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 28),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    color: Colors.black87,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBranchInfo(Map<String, dynamic> report) {
-    final branchName = report['branch_name']?.toString() ?? '-';
-    final cashierName = report['cashier_name']?.toString() ?? '-';
-    final dateRange = report['date_range']?.toString() ?? '-';
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            translationService.t('report_info'),
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildInfoRow(translationService.t('branch'), branchName, LucideIcons.building),
-          const SizedBox(height: 12),
-          _buildInfoRow(translationService.t('cashier'), cashierName, LucideIcons.user),
-          const SizedBox(height: 12),
-          _buildInfoRow(translationService.t('period'), dateRange, LucideIcons.calendar),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value, IconData icon) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: const Color(0xFFF58220)),
-        const SizedBox(width: 12),
-        Text(
-          '$label: ',
-          style: TextStyle(
-            color: Colors.grey.shade600,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  BoxDecoration _cardDecoration() {
-    return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.05),
-          blurRadius: 10,
-          offset: const Offset(0, 2),
-        ),
-      ],
-    );
-  }
-
-  double _parseDouble(dynamic value) {
-    if (value == null) return 0.0;
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? 0.0;
-    return 0.0;
-  }
-
-  String _formatDate(DateTime date) {
-    return DateFormat('yyyy/MM/dd', 'ar').format(date);
-  }
 }
 
-// ─────────────────────────────────────────────────────────
-// Print Preview Dialog
-// ─────────────────────────────────────────────────────────
-
-class _ClosingPrintPreviewDialog extends StatefulWidget {
-  final List<DailyClosingReportLine> lines;
-  final List<DeviceConfig> printers;
-  final DeviceConfig? initialPrinter;
-  final DateTime dateFrom;
-  final DateTime dateTo;
-  final Future<void> Function(DeviceConfig printer, bool saveAsDefault) onPrint;
-
-  const _ClosingPrintPreviewDialog({
-    required this.lines,
-    required this.printers,
-    required this.initialPrinter,
-    required this.dateFrom,
-    required this.dateTo,
-    required this.onPrint,
-  });
-
-  @override
-  State<_ClosingPrintPreviewDialog> createState() =>
-      _ClosingPrintPreviewDialogState();
-}
-
-class _ClosingPrintPreviewDialogState
-    extends State<_ClosingPrintPreviewDialog> {
-  /// Resolve labels inside the preview dialog using the same invoice-language
-  /// rules as the printed receipt.
-  String _previewLangPick({
-    required String ar,
-    required String en,
-    String? hi,
-    String? ur,
-    String? tr,
-    String? es,
-  }) {
-    final code = printerLanguageSettings.primary.trim().toLowerCase();
-    switch (code) {
-      case 'ar':
-        return ar;
-      case 'hi':
-        return hi ?? en;
-      case 'ur':
-        return ur ?? en;
-      case 'tr':
-        return tr ?? en;
-      case 'es':
-        return es ?? en;
-      case 'en':
-      default:
-        return en;
-    }
-  }
-
-  DeviceConfig? _selectedPrinter;
-  bool _saveAsDefault = false;
-  bool _isPrinting = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedPrinter = widget.initialPrinter;
-  }
-
-  String _printerLabel(DeviceConfig p) {
-    if (p.connectionType == PrinterConnectionType.bluetooth) {
-      final mac = p.bluetoothAddress?.trim() ?? '';
-      return '${p.name}${mac.isNotEmpty ? ' ($mac)' : ''} • بلوتوث';
-    }
-    final port = p.port.trim().isEmpty ? '9100' : p.port.trim();
-    return '${p.name} • ${p.ip}:$port';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final formatter = NumberFormat('#,##0.00', 'ar');
-    final dateFormat = DateFormat('yyyy/MM/dd');
-
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 480,
-          maxHeight: MediaQuery.of(context).size.height * 0.88,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ── Header ──────────────────────────────────
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 20, 12, 20),
-              decoration: const BoxDecoration(
-                color: Color(0xFFF58220),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.print, color: Colors.white),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'معاينة وطباعة الإقفالية',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-            ),
-
-            // ── Scrollable body ──────────────────────────
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Receipt preview card
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border.all(color: Colors.grey.shade200),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: [
-                          // Receipt header
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 16, horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade50,
-                              borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(12)),
-                            ),
-                            child: Column(
-                              children: [
-                                // Preview title follows the same invoice
-                                // language as the actual printed receipt so
-                                // the cashier sees a faithful preview, not
-                                // hardcoded Arabic.
-                                Text(
-                                  _previewLangPick(
-                                    ar: 'إقفالية المبيعات',
-                                    en: 'Sales Closing',
-                                    hi: 'बिक्री समापन',
-                                    ur: 'سیلز کلوزنگ',
-                                    es: 'Cierre de Ventas',
-                                    tr: 'Satış Kapanışı',
-                                  ),
-                                  style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '${dateFormat.format(widget.dateFrom)} – ${dateFormat.format(widget.dateTo)}',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Divider(height: 1),
-
-                          // Lines
-                          if (widget.lines.isEmpty)
-                            Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Text(
-                                'لا توجد بيانات',
-                                style:
-                                    TextStyle(color: Colors.grey.shade500),
-                                textAlign: TextAlign.center,
-                              ),
-                            )
-                          else
-                            ...widget.lines.map((line) {
-                              final isTotal =
-                                  line.label.contains('الإجمالي') ||
-                                      line.label.contains('المجموع') ||
-                                      line.label.toLowerCase().contains('total');
-                              return Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: isTotal
-                                      ? const Color(0xFFFFF7ED)
-                                      : null,
-                                  border: Border(
-                                    bottom: BorderSide(
-                                        color: Colors.grey.shade100),
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        line.label,
-                                        style: TextStyle(
-                                          fontWeight: isTotal
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                          fontSize: isTotal ? 15 : 14,
-                                        ),
-                                      ),
-                                    ),
-                                    Text(
-                                      '${formatter.format(line.amount)} ${ApiConstants.currency}',
-                                      style: TextStyle(
-                                        fontWeight: isTotal
-                                            ? FontWeight.bold
-                                            : FontWeight.w500,
-                                        fontSize: isTotal ? 15 : 14,
-                                        color: isTotal
-                                            ? const Color(0xFFF58220)
-                                            : Colors.black87,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }),
-
-                          // Timestamp
-                          Padding(
-                            padding:
-                                const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                            child: Text(
-                              'وقت الإنشاء: ${DateFormat('yyyy/MM/dd hh:mm a').format(DateTime.now())}',
-                              style: TextStyle(
-                                  fontSize: 11, color: Colors.grey.shade400),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // ── Printer selection ─────────────────
-                    Text(
-                      'اختر الطابعة',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700),
-                    ),
-                    const SizedBox(height: 8),
-                    if (widget.printers.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.orange.shade200),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.warning_amber,
-                                color: Colors.orange, size: 20),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'لا توجد طابعات متاحة. يرجى إضافة طابعة من الإعدادات.',
-                                style: TextStyle(color: Colors.orange),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    else
-                      DropdownButtonFormField<DeviceConfig>(
-                        initialValue: _selectedPrinter,
-                        decoration: InputDecoration(
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide:
-                                BorderSide(color: Colors.grey.shade300),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 14),
-                          prefixIcon: const Icon(Icons.print),
-                        ),
-                        hint: const Text('اختر طابعة'),
-                        items: widget.printers
-                            .map((p) => DropdownMenuItem(
-                                  value: p,
-                                  child: Text(_printerLabel(p),
-                                      overflow: TextOverflow.ellipsis),
-                                ))
-                            .toList(),
-                        onChanged: (p) =>
-                            setState(() => _selectedPrinter = p),
-                      ),
-                    if (widget.printers.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Checkbox(
-                            value: _saveAsDefault,
-                            activeColor: const Color(0xFFF58220),
-                            onChanged: (v) =>
-                                setState(() => _saveAsDefault = v ?? false),
-                          ),
-                          const Text('حفظ كطابعة افتراضية للإقفالية'),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-
-            // ── Action buttons ───────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: const Text('إغلاق'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      onPressed: (widget.printers.isEmpty ||
-                              _selectedPrinter == null ||
-                              _isPrinting)
-                          ? null
-                          : () async {
-                              setState(() => _isPrinting = true);
-                              try {
-                                await widget.onPrint(
-                                    _selectedPrinter!, _saveAsDefault);
-                                if (mounted) Navigator.pop(context);
-                              } catch (_) {
-                                if (mounted) {
-                                  setState(() => _isPrinting = false);
-                                }
-                              }
-                            },
-                      icon: _isPrinting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.print),
-                      label:
-                          Text(_isPrinting ? 'جاري الطباعة...' : 'طباعة'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF58220),
-                        foregroundColor: Colors.white,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
+// `_ClosingPrintPreviewDialog` is in daily_closing_report_screen_parts/daily_closing_report_screen.print_preview.dart.

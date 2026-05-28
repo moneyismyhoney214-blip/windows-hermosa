@@ -1,10 +1,17 @@
-import '../../models/customer.dart';
-import '../../models/location.dart';
-import 'api_constants.dart';
-import 'base_client.dart';
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
+import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
-import 'package:hermosa_pos/services/offline/connectivity_service.dart';
+
+import '../../models/customer.dart';
+import '../../models/location.dart';
+import '../logger_service.dart';
+import 'api_constants.dart';
+import 'base_client.dart';
 
 class CustomerService {
   final BaseClient _client = BaseClient();
@@ -21,7 +28,6 @@ class CustomerService {
   }
 
   Future<List<Customer>> getCustomers({int page = 1, String? search}) async {
-    // OFFLINE MODE: Return from local database
     if (_connectivity.isOffline) {
       return _getCustomersOffline(search: search);
     }
@@ -49,7 +55,6 @@ class CustomerService {
         final response = await _client.get(endpoint, skipGlobalAuth: false);
         final customers = _parseCustomersResponse(response);
         if (customers.isNotEmpty) {
-          // Save to SQLite for offline
           if (response is Map && response['data'] is List) {
             await _offlineDb.saveCustomers(
               (response['data'] as List).cast<Map<String, dynamic>>(),
@@ -59,11 +64,10 @@ class CustomerService {
           return customers;
         }
       } catch (e) {
-        print('Error fetching customers from $endpoint: $e');
+        Log.w('customer', 'failed to fetch customers from $endpoint', error: e);
       }
     }
 
-    // Fallback to offline
     return _getCustomersOffline(search: search);
   }
 
@@ -80,8 +84,10 @@ class CustomerService {
         if (customer != null) customers.add(customer);
       }
       if (customers.isNotEmpty) return customers;
-    } catch (_) {}
-    // Try bundled POS database (synced via sync API)
+    } catch (e) {
+      // Log so a corrupted offline DB doesn't silently hide behind the bundled-POS fallback.
+      Log.w('customers', 'offline DB customer-list read failed', error: e);
+    }
     try {
       final posData = await _posDb.getCustomers(
         ApiConstants.sellerId,
@@ -117,9 +123,9 @@ class CustomerService {
     if (raw is! Map) return null;
     final json = Map<String, dynamic>.from(raw);
 
-    // allCustomers filter format: {label, value, ...}
+    // allCustomers filter format uses {label, value, ...}.
     if (json.containsKey('value') && json.containsKey('label')) {
-      final id = int.tryParse(json['value']?.toString() ?? '') ?? 0;
+      final id = json['value']?.toString() ?? '0';
       final label = json['label']?.toString() ?? '';
       final parts = label.split('|').map((e) => e.trim()).toList();
       final name = parts.isNotEmpty && parts.first.isNotEmpty
@@ -136,7 +142,6 @@ class CustomerService {
       );
     }
 
-    // Full customer format normalization
     if (json['country_id'] == null && json['country'] is Map) {
       json['country_id'] = (json['country'] as Map<String, dynamic>)['id'];
     }
@@ -174,13 +179,12 @@ class CustomerService {
     try {
       return Customer.fromJson(json);
     } catch (e) {
-      print('Skipping malformed customer payload: $e');
+      Log.w('customer', 'skipping malformed customer payload', error: e);
       return null;
     }
   }
 
   Future<Customer> createCustomer(Map<String, String> data) async {
-    // OFFLINE MODE: Save locally and queue for sync
     if (_connectivity.isOffline) {
       return _createCustomerOffline(data);
     }
@@ -188,11 +192,10 @@ class CustomerService {
     final endpoint = '/seller/sellers/${ApiConstants.sellerId}/customers';
     final customerType = _resolveCustomerType(data['type']);
 
-    // Ensure required fields are present if missing
     if (!data.containsKey('country_id')) data['country_id'] = '1';
     if (!data.containsKey('city_id')) data['city_id'] = '1';
 
-    // Add empty fields that the API expects (Laravel form-data)
+    // Laravel form-data expects all keys present even if empty.
     final allFields = <String, String>{
       'name': data['name'] ?? '',
       'email': data['email'] ?? '',
@@ -210,8 +213,7 @@ class CustomerService {
       'zatca_city_sub_division': data['zatca_city_sub_division'] ?? '',
     };
 
-    // Separate files from fields
-    Map<String, String> files = {};
+    final Map<String, String> files = {};
     if (data.containsKey('avatar') &&
         data['avatar'] != null &&
         data['avatar']!.isNotEmpty) {
@@ -219,7 +221,7 @@ class CustomerService {
     }
 
     try {
-      print('🔄 Creating customer at: $_baseUrl$endpoint');
+      Log.d('customer', 'creating customer via POST $endpoint');
       final response = await _client.postMultipart(endpoint, allFields,
           files: files, customBaseUrl: _baseUrl);
 
@@ -233,19 +235,18 @@ class CustomerService {
         }
       }
       throw Exception('فشل في إنشاء العميل: استجابة غير صالحة من الخادم');
-    } catch (e) {
-      print('❌ Create customer failed: $e');
+    } catch (e, st) {
+      Log.e('customer', 'create customer failed', error: e, stackTrace: st);
       rethrow;
     }
   }
 
   Future<Customer> updateCustomer(
-      int customerId, Map<String, String> data) async {
+      String customerId, Map<String, String> data) async {
     final endpoint =
         '/seller/sellers/${ApiConstants.sellerId}/customers/$customerId';
 
-    // Separate files from fields
-    Map<String, String> files = {};
+    final Map<String, String> files = {};
     if (data.containsKey('avatar') &&
         data['avatar'] != null &&
         data['avatar']!.isNotEmpty) {
@@ -256,7 +257,6 @@ class CustomerService {
     final Map<String, String> fields = Map.from(data);
     fields['_method'] = 'PATCH';
 
-    // Add empty fields expected by API
     fields.putIfAbsent('birthdate', () => '');
     fields['type'] = _resolveCustomerType(fields['type']);
     fields.putIfAbsent('tax_number', () => '');
@@ -289,7 +289,6 @@ class CustomerService {
       ApiConstants.sellerId,
     );
 
-    // Add to sync queue
     await _offlineDb.addToSyncQueue(
       operation: 'CREATE_CUSTOMER',
       endpoint: '/seller/sellers/${ApiConstants.sellerId}/customers',
@@ -300,7 +299,7 @@ class CustomerService {
     );
 
     return Customer(
-      id: localId.hashCode,
+      id: localId,
       name: data['name'] ?? '',
       mobile: data['mobile'],
       email: data['email'],
@@ -333,7 +332,8 @@ class CustomerService {
     try {
       final local = await _offlineDb.getCountries();
       return local.map((json) => Country.fromJson(json)).toList();
-    } catch (_) {
+    } catch (e) {
+      Log.d('customer', 'offline countries read failed (non-fatal): $e');
       return [];
     }
   }
@@ -363,7 +363,8 @@ class CustomerService {
     try {
       final local = await _offlineDb.getCities(countryId);
       return local.map((json) => City.fromJson(json)).toList();
-    } catch (_) {
+    } catch (e) {
+      Log.d('customer', 'offline cities read for $countryId failed (non-fatal): $e');
       return [];
     }
   }

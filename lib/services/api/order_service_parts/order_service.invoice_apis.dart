@@ -97,14 +97,16 @@ extension OrderServiceInvoiceApis on OrderService {
                   return invoice['invoice_number']?.toString();
                 }
               }
-            } catch (_) {}
+            } catch (e) {
+              Log.d('OrderServiceInvoiceApis', 'fetch refund detail for credit-note match failed (non-fatal): $e');
+            }
             // If we can't verify, return the first CN (most recent)
             return cnNumber;
           }
         }
       }
     } catch (e) {
-      print('⚠️ Failed to get CN number: $e');
+      Log.w('invoice', 'failed to get credit-note number', error: e);
     }
     return null;
   }

@@ -1,15 +1,18 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'base_client.dart';
-import 'api_constants.dart';
+import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/services/cache_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
+import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 import 'package:hermosa_pos/services/offline/offline_pos_database.dart';
-import 'package:hermosa_pos/services/offline/connectivity_service.dart';
-import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/services/whatsapp_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_constants.dart';
 import 'auth_service.dart';
+import 'base_client.dart';
 
 /// Service for branch-specific operations and settings
 class BranchService {
@@ -89,18 +92,14 @@ class BranchService {
   /// Call once at startup; subsequent access via [cachedBranchReceiptInfo].
   Future<Map<String, dynamic>> fetchAndCacheBranchReceiptInfo() async {
     if (_cachedBranchReceiptInfo != null) {
-      // Invalidate the in-memory cache when it was populated by an older
-      // build that didn't know about `branch_logo_url` — otherwise hot
-      // restarts keep returning an entry without the logo and the CDS
-      // mirror stays empty.
+      // Invalidate cache from older builds missing `branch_logo_url`.
       final hasLogoInfo =
           _cachedBranchReceiptInfo!.containsKey('branch_logo_url') ||
               _cachedBranchReceiptInfo!.containsKey('profile_branch_name');
       if (!hasLogoInfo) {
         _cachedBranchReceiptInfo = null;
       } else {
-        // Re-mirror on cache hits so a fresh session / hot-reload still
-        // refreshes the CDS prefs if they were cleared out-of-band.
+        // Re-mirror on cache hits so out-of-band CDS prefs wipes are refreshed.
         unawaited(
           _ensureProfileNameThenMirror(_cachedBranchReceiptInfo!),
         );
@@ -109,10 +108,7 @@ class BranchService {
     }
     if (ApiConstants.branchId <= 0) return {};
 
-    // Run both endpoints in parallel — `/seller/get_branches/<id>` currently
-    // 500s on some accounts, so we must not let its failure block the CDS
-    // mirror that `/seller/branches` depends on for the canonical
-    // restaurant name + logo.
+    // Parallel: /seller/get_branches/<id> 500s on some accounts and must not block /seller/branches.
     final arInfoFuture = () async {
       try {
         return _unwrapBranchData(
@@ -135,7 +131,7 @@ class BranchService {
       'branch': arInfo,
     };
 
-    // Extract English from bilingual fields (e.g. "تكانة | Takana")
+    // Extract English from bilingual fields (e.g. "تكانة | Takana").
     final sellerName = arInfo['seller_name']?.toString() ?? '';
     if (sellerName.contains('|')) {
       receiptInfo['seller_name_en'] = sellerName.split('|').last.trim();
@@ -143,8 +139,7 @@ class BranchService {
       receiptInfo['seller_name_en'] = sellerName.split(' - ').last.trim();
     }
 
-    // `/seller/branches` returns the canonical restaurant name + uploaded
-    // logo — the CDS welcome header prefers these over the brand fallback.
+    // /seller/branches returns canonical restaurant name + logo (CDS header).
     if (profileName.isNotEmpty) {
       receiptInfo['profile_branch_name'] = profileName;
     }
@@ -155,8 +150,7 @@ class BranchService {
     _cachedBranchReceiptInfo = receiptInfo;
     _branchReceiptInfoCacheTime = DateTime.now();
 
-    // Mirror seller name + logo to SharedPreferences so the CDS secondary
-    // Flutter engine (customer_display) can read it without a MethodChannel.
+    // Mirror to SharedPreferences so CDS secondary engine can read without MethodChannel.
     unawaited(_mirrorSellerNameToPrefs(arInfo, receiptInfo));
 
     debugPrint(
@@ -199,9 +193,7 @@ class BranchService {
   /// value may be empty if the entry is missing or the call fails.
   Future<Map<String, String>> _fetchBranchSummary(int branchId) async {
     try {
-      // WAITER role can't read `/seller/branches` (401). The official
-      // frontend uses `/seller/profile/branches` for that user — same
-      // shape, includes the canonical `name` and `logo`.
+      // WAITER role 401s on /seller/branches; official frontend uses /seller/profile/branches.
       final endpoint = _isWaiter()
           ? ApiConstants.profileBranchesEndpoint
           : ApiConstants.branchesEndpoint;
@@ -260,8 +252,7 @@ class BranchService {
     Map<String, dynamic> receiptInfo,
   ) async {
     try {
-      // Prefer the restaurant name from /seller/profile/branches when
-      // available — that's the canonical display name for the branch.
+      // Prefer /seller/profile/branches name — canonical branch display name.
       final profileName =
           receiptInfo['profile_branch_name']?.toString().trim() ?? '';
 
@@ -282,8 +273,7 @@ class BranchService {
       final logoUrl =
           receiptInfo['branch_logo_url']?.toString().trim() ?? '';
       final prefs = await SharedPreferences.getInstance();
-      // Never clobber a populated value with an empty one — a single failed
-      // fetch otherwise blanks the CDS welcome until the next cold restart.
+      // Never clobber populated values with empty — a failed fetch would blank CDS until cold restart.
       if (ar.isNotEmpty) {
         await prefs.setString('cds_seller_name_ar', ar);
       }
@@ -304,7 +294,7 @@ class BranchService {
       if (current is! Map) break;
       final map = current is Map<String, dynamic>
           ? current
-          : (current as Map<dynamic, dynamic>).map((k, v) => MapEntry(k.toString(), v));
+          : (current).map((k, v) => MapEntry(k.toString(), v));
       if (map.containsKey('seller') || map.containsKey('address') || map.containsKey('mobile')) {
         return Map<String, dynamic>.from(map);
       }
@@ -353,9 +343,7 @@ class BranchService {
       return offline;
     }
 
-    // Race all endpoints in parallel — first successful response wins.
-    // WAITER role only hits the canonical endpoint: the legacy fallbacks
-    // 404 noisily and the official frontend never tries them.
+    // Race endpoints in parallel; WAITER role skips legacy fallbacks (404 noise).
     final endpoints = _isWaiter()
         ? <String>['/seller/branches/${ApiConstants.branchId}/settings']
         : <String>[
@@ -369,7 +357,7 @@ class BranchService {
     var failCount = 0;
 
     for (final endpoint in endpoints) {
-      _client
+      unawaited(_client
           .get(endpoint, skipGlobalAuth: true)
           .timeout(const Duration(seconds: 8))
           .then((response) {
@@ -380,7 +368,6 @@ class BranchService {
           _branchSettingsCacheTime = DateTime.now();
           _seedWhatsAppCredsFromSettings(extracted);
           completer.complete(extracted);
-          // Save to SQLite for offline (fire-and-forget)
           _offlineDb.saveBranchSettings(ApiConstants.branchId, extracted);
         } else {
           failCount++;
@@ -402,7 +389,7 @@ class BranchService {
             if (!completer.isCompleted) completer.complete(offline);
           });
         }
-      });
+      }));
     }
 
     return completer.future;
@@ -554,12 +541,15 @@ class BranchService {
     try {
       final local = await _offlineDb.getBranchSettings(ApiConstants.branchId);
       if (local != null && local.isNotEmpty) return local;
-    } catch (_) {}
-    // Try bundled POS database
+    } catch (e) {
+      Log.w('branch', 'offline DB branch-settings read failed', error: e);
+    }
     try {
       final posBranch = await _posDb.getBranch(ApiConstants.branchId);
       if (posBranch != null && posBranch.isNotEmpty) return posBranch;
-    } catch (_) {}
+    } catch (e) {
+      Log.w('branch', 'POS DB branch read failed', error: e);
+    }
     return {};
   }
 
@@ -572,7 +562,8 @@ class BranchService {
   bool _isWaiter() {
     try {
       return AuthService().isWaiter();
-    } catch (_) {
+    } catch (e) {
+      Log.d('branch', 'AuthService.isWaiter() failed, defaulting to false (non-fatal): $e');
       return false;
     }
   }
@@ -597,9 +588,7 @@ class BranchService {
   }
 
   Future<Map<String, dynamic>> getBranchInfo(int branchId) async {
-    // WAITER role: `/seller/get_branches/{id}` returns 500 — the
-    // official frontend does not call it. Fall back to the branch
-    // summary derived from `/seller/profile/branches`.
+    // WAITER role: /seller/get_branches/{id} 500s — fall back to /seller/profile/branches.
     if (_isWaiter()) {
       try {
         final summary = await _fetchProfileBranchEntry(branchId);
@@ -629,10 +618,7 @@ class BranchService {
   Future<Map<String, dynamic>?> refreshTaxConfig({int? branchId}) async {
     final id = branchId ?? ApiConstants.branchId;
     if (id <= 0) return null;
-    // WAITER role: `/seller/filters/branches/{id}/getTax` is not in
-    // the official post-login flow — tax is already hydrated from the
-    // login payload's `taxObject`. Skip to avoid a needless round-trip
-    // (and the corresponding 401 risk on stricter deployments).
+    // WAITER role: skip — tax already hydrated from login's taxObject (avoids 401 risk).
     if (_isWaiter()) return null;
     try {
       final response =
@@ -729,7 +715,9 @@ class BranchService {
     if (cached is Map) {
       try {
         return cached.map((k, v) => MapEntry(k.toString(), v == true));
-      } catch (_) {}
+      } catch (e) {
+        Log.w('branch', 'pay-methods cache had unexpected shape', error: e);
+      }
     }
     return null;
   }
@@ -760,7 +748,7 @@ class BranchService {
   Future<Map<String, bool>> getEnabledPayMethods({bool forceRefresh = false}) async {
     _lastPayMethodsNotice = null;
 
-    // Return cached result if fresh (5 minutes TTL)
+    // 5-min TTL.
     if (!forceRefresh &&
         _cachedPayMethods != null &&
         _payMethodsCacheTime != null &&
@@ -769,7 +757,7 @@ class BranchService {
     }
 
     try {
-      // 1) Source of truth: dedicated payMethods endpoint used by POS Postman collection
+      // 1) Source of truth: dedicated payMethods endpoint.
       final typeCandidates = ['incomings', 'outgoings', 'online'];
       for (final type in typeCandidates) {
         try {
@@ -777,8 +765,10 @@ class BranchService {
           final payMethodsResponse = await _client.get(endpoint);
           final fromPayMethodsApi = _parseEnabledPayMethods(payMethodsResponse);
           if (fromPayMethodsApi.isNotEmpty) {
-            if (kDebugMode) debugPrint(
+            if (kDebugMode) {
+              debugPrint(
                 '✅ Payment methods loaded from payMethods endpoint (type=$type)');
+            }
             _cachedPayMethods = fromPayMethodsApi;
             _payMethodsCacheTime = DateTime.now();
             return fromPayMethodsApi;
@@ -789,13 +779,12 @@ class BranchService {
                 'طرق الدفع غير مُعدّة لهذا الفرع. يرجى تفعيل طريقة دفع من لوحة التحكم.';
             return Map<String, bool>.from(_noEnabledPayMethods);
           }
-          // Try next allowed type
-        } catch (_) {
-          // Try next allowed type
+        } catch (e) {
+          Log.d('branch', 'pay-method lookup attempt failed, trying next (non-fatal): $e');
         }
       }
 
-      // 2) Fallback: branch settings
+      // 2) Fallback: branch settings.
       final settings = await getBranchSettings();
       if (settings.containsKey('pay_methods')) {
         final fromSettings = _parseEnabledPayMethods(settings['pay_methods']);
@@ -807,8 +796,7 @@ class BranchService {
         }
       }
 
-      // Strict fallback: when backend methods are unavailable, don't
-      // assume enabled methods to avoid sending invalid payment payloads.
+      // Don't assume methods when backend is unavailable — would send invalid payloads.
       _lastPayMethodsNotice ??=
           'تعذر تحميل طرق الدفع المفعّلة. تحقق من إعدادات الفرع.';
       return Map<String, bool>.from(_noEnabledPayMethods);
@@ -921,7 +909,7 @@ class BranchService {
 
     if (!hasAnyMethod) return {};
 
-    // Keep strict behavior: if everything is disabled, respect backend config.
+    // Strict: respect backend "all disabled" config.
     if (!enabled.containsValue(true)) {
       return Map<String, bool>.from(_noEnabledPayMethods);
     }

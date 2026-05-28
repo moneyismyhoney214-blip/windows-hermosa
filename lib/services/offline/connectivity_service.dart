@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
+
+import '../logger_service.dart';
 
 /// Monitors network connectivity and provides online/offline status.
 ///
@@ -93,15 +96,16 @@ class ConnectivityService extends ChangeNotifier {
     } on TimeoutException {
       _updateStatus(false);
       return false;
-    } catch (_) {
-      // On any error, try a fallback host
+    } catch (e) {
+      Log.d('connectivity', 'primary host lookup failed, trying fallback (non-fatal): $e');
       try {
         final result = await InternetAddress.lookup('google.com')
             .timeout(const Duration(seconds: 3));
         final online = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
         _updateStatus(online);
         return online;
-      } catch (_) {
+      } catch (e2) {
+        Log.d('connectivity', 'fallback host lookup failed too (non-fatal): $e2');
         _updateStatus(false);
         return false;
       }

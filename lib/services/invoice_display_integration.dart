@@ -1,3 +1,8 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 import 'package:flutter/foundation.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/invoice_service.dart';

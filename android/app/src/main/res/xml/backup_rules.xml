@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Legacy (pre-Android-12) full-backup rules. Applies when
+    android:allowBackup is true OR a launcher elects to back up despite
+    the manifest hint. We currently disable backup outright via
+    android:allowBackup="false", but this file is still wired up as
+    defense-in-depth in case a future build flips the flag.
+
+    The intent is to exclude every credential-bearing SharedPreferences
+    file and the offline-orders SQLite database. The legacy
+    FlutterSharedPreferences XML (where the JWT used to live) is
+    excluded by name; secure-storage-resident data is already in
+    encrypted Keystore-backed prefs (handled by flutter_secure_storage).
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+    <exclude domain="sharedpref" path="FlutterSecureStorage" />
+    <exclude domain="database" path="offline_pos.db" />
+    <exclude domain="database" path="offline_database.db" />
+    <exclude domain="file" path="nearpay/" />
+</full-backup-content>

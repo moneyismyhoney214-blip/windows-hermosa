@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'logger_service.dart';
+
 /// Stores manual kitchen -> printer routing for kitchen ticket dispatch.
 ///
 /// - One kitchen can map to one or many printers
@@ -40,7 +42,7 @@ class KitchenPrinterRouteRegistry {
         }
       }
     } catch (e) {
-      print('⚠️ Failed to load kitchen printer routes: $e');
+      Log.w('kitchen-route', 'failed to load routes', error: e);
     } finally {
       _loaded = true;
     }
@@ -202,7 +204,7 @@ class KitchenPrinterRouteRegistry {
       }
       await prefs.setString(_storageKey, jsonEncode(payload));
     } catch (e) {
-      print('⚠️ Failed to persist kitchen printer routes: $e');
+      Log.w('kitchen-route', 'failed to persist routes', error: e);
     }
   }
 }

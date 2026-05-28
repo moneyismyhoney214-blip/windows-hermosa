@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import '../services/api/api_constants.dart';
-import '../services/api/base_client.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
 import '../dialogs/create_session_dialog.dart';
 import '../dialogs/session_details_dialog.dart';
+import '../services/api/api_constants.dart';
+import '../services/api/base_client.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
+import '../utils/ui_feedback.dart';
 
 /// Salon Review Tickets (تذاكر المراجعة) screen.
 ///
@@ -49,12 +51,6 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
   int? _statusFilter; // null = all
   String _searchQuery = '';
   Timer? _searchDebounce;
-
-  String get _langCode =>
-      translationService.currentLanguageCode.trim().toLowerCase();
-  bool get _useArabicUi =>
-      _langCode.startsWith('ar') || _langCode.startsWith('ur');
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   @override
   void initState() {
@@ -126,11 +122,11 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
     final id = int.tryParse(session['id']?.toString() ?? '');
     if (id == null) return;
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     Map<String, dynamic>? full;
     String? err;
@@ -149,12 +145,8 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
     Navigator.of(context, rootNavigator: true).pop();
 
     if (err != null || full == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(err ??
-                _tr('فشل تحميل تفاصيل التذكرة',
-                    'Failed to load session details'))),
-      );
+      UiFeedback.info(context, err ??
+                translationService.t('session_details_load_failed'));
       return;
     }
 
@@ -174,12 +166,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
     if (!mounted || result == null) return;
     final id = result['id']?.toString();
     if (id != null && id.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('تم إنشاء التذكرة #$id', 'Session #$id created')),
-          backgroundColor: const Color(0xFF22C55E),
-        ),
-      );
+      UiFeedback.success(context, translationService.t('session_created_n', args: {'id': id}));
 
       // Print the session to every salon turn-ticket printer. The session
       // response wraps the visit in `data.invoice.{items, client, ...}`,
@@ -223,12 +210,14 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
           unawaited(() async {
             try {
               await cb(id, synthetic);
-            } catch (_) {}
+            } catch (e) {
+              Log.d('ReviewTicketsScreen', 'post-session create callback failed (non-fatal): $e');
+            }
           }());
         }
       }
     }
-    _loadSessions();
+    unawaited(_loadSessions());
   }
 
   Color _statusColor(int status) {
@@ -246,12 +235,12 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
   String _statusFallbackLabel(int status) {
     switch (status) {
       case 2:
-        return _tr('انتهى', 'Completed');
+        return translationService.t('completed_label2');
       case 3:
-        return _tr('تم الإلغاء', 'Cancelled');
+        return translationService.t('cancelled_done');
       case 1:
       default:
-        return _tr('قيد الانتظار', 'Pending');
+        return translationService.t('pending');
     }
   }
 
@@ -272,11 +261,11 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
     final id = int.tryParse(session['id']?.toString() ?? '');
     if (id == null) return;
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       await _client.postMultipart(
@@ -289,24 +278,12 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('تم تعديل الحالة بنجاح', 'Status updated')),
-          backgroundColor: const Color(0xFF22C55E),
-        ),
-      );
-      _loadSessions();
+      UiFeedback.success(context, translationService.t('status_updated_msg'));
+      unawaited(_loadSessions());
     } catch (e) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _tr('فشل تعديل الحالة: $e', 'Failed to update status: $e'),
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+      UiFeedback.error(context, translationService.t('status_update_failed_n', args: {'error': '$e'}));
     }
   }
 
@@ -351,7 +328,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              _tr('تذاكر المراجعة', 'Review Tickets'),
+              translationService.t('review_tickets_label'),
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w900,
@@ -362,7 +339,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
           ElevatedButton.icon(
             onPressed: _openCreateDialog,
             icon: const Icon(LucideIcons.plus, size: 18),
-            label: Text(_tr('تذكرة جديدة', 'New Ticket')),
+            label: Text(translationService.t('new_ticket')),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFF58220),
               foregroundColor: Colors.white,
@@ -376,7 +353,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
           IconButton(
             onPressed: _isLoading ? null : _loadSessions,
             icon: const Icon(LucideIcons.refreshCw, size: 20),
-            tooltip: _tr('تحديث', 'Refresh'),
+            tooltip: translationService.t('refresh'),
           ),
         ],
       ),
@@ -392,17 +369,17 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          _statusChip(null, _tr('الكل', 'All')),
-          _statusChip(1, _tr('قيد الانتظار', 'Pending')),
-          _statusChip(2, _tr('انتهى', 'Completed')),
-          _statusChip(3, _tr('ملغية', 'Cancelled')),
+          _statusChip(null, translationService.t('all')),
+          _statusChip(1, translationService.t('pending')),
+          _statusChip(2, translationService.t('completed_label2')),
+          _statusChip(3, translationService.t('cancelled_done')),
           SizedBox(
             width: 220,
             child: TextField(
               controller: _searchController,
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
-                hintText: _tr('بحث', 'Search'),
+                hintText: translationService.t('search'),
                 isDense: true,
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -454,7 +431,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _loadSessions,
-              child: Text(_tr('إعادة المحاولة', 'Retry')),
+              child: Text(translationService.t('retry')),
             ),
           ],
         ),
@@ -472,7 +449,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
                 size: 48, color: Color(0xFF94A3B8)),
             const SizedBox(height: 12),
             Text(
-              _tr('لا توجد تذاكر مراجعة', 'No review tickets'),
+              translationService.t('no_review_tickets'),
               style: TextStyle(
                 color: context.appText.withValues(alpha: 0.7),
                 fontSize: 16,
@@ -582,7 +559,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
                   // the row's current state. Pending → can complete or
                   // cancel; completed/cancelled → can only reopen.
                   PopupMenuButton<int>(
-                    tooltip: _tr('تغيير الحالة', 'Change status'),
+                    tooltip: translationService.t('change_status_btn'),
                     icon: const Icon(LucideIcons.moreVertical, size: 18),
                     onSelected: (target) =>
                         _changeSessionStatus(s, target),
@@ -596,7 +573,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
                               const Icon(LucideIcons.checkCircle,
                                   size: 16, color: Color(0xFF22C55E)),
                               const SizedBox(width: 8),
-                              Text(_tr('تم الانتهاء', 'Mark complete')),
+                              Text(translationService.t('mark_complete')),
                             ],
                           ),
                         ));
@@ -609,7 +586,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
                               const Icon(LucideIcons.xCircle,
                                   size: 16, color: Color(0xFFEF4444)),
                               const SizedBox(width: 8),
-                              Text(_tr('إلغاء', 'Cancel')),
+                              Text(translationService.t('cancel')),
                             ],
                           ),
                         ));
@@ -622,7 +599,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
                               const Icon(LucideIcons.rotateCcw,
                                   size: 16, color: Color(0xFFF97316)),
                               const SizedBox(width: 8),
-                              Text(_tr('إعادة فتح', 'Reopen')),
+                              Text(translationService.t('reopen_btn')),
                             ],
                           ),
                         ));
@@ -681,7 +658,7 @@ class _ReviewTicketsScreenState extends State<ReviewTicketsScreen> {
                   const Spacer(),
                   if (bookingId.isNotEmpty)
                     Text(
-                      _tr('حجز #', 'BOK #') + bookingId,
+                      translationService.t('bok_prefix_v2') + bookingId,
                       style: const TextStyle(
                         fontSize: 11,
                         color: Color(0xFF94A3B8),

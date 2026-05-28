@@ -1,29 +1,32 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:hermosa_pos/locator.dart';
 import 'package:hermosa_pos/services/api/api_constants.dart';
 import 'package:hermosa_pos/services/api/branch_service.dart';
-import 'package:hermosa_pos/locator.dart';
-import '../services/language_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
 
 class BookingDetailsDialog extends StatelessWidget {
   final Map<String, dynamic> bookingData;
   final VoidCallback? onEditOrder;
+  /// Optional refund/return action; caller owns the refund dialog + reconciliation.
+  final VoidCallback? onRefund;
 
   const BookingDetailsDialog({
     super.key,
     required this.bookingData,
     this.onEditOrder,
+    this.onRefund,
   });
 
   bool get _useArabicUi {
     final code = translationService.currentLanguageCode.trim().toLowerCase();
     return code.startsWith('ar') || code.startsWith('ur');
   }
-
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   bool _isTruthy(dynamic value) {
     if (value == null) return false;
@@ -48,7 +51,6 @@ class BookingDetailsDialog extends StatelessWidget {
 
     final data = _asMap(bookingData['data']) ?? bookingData;
 
-    // Extract booking information
     final orderId = data['id']?.toString() ?? '';
     final rawOrderNumber = (data['order_number'] ??
                 data['booking_number'] ??
@@ -59,25 +61,22 @@ class BookingDetailsDialog extends StatelessWidget {
 
     final status = data['status']?.toString() ?? 'pending';
 
-    // Determine if this is a pay-later order
     final isPayLater = !_isTruthy(data['is_paid']) &&
         !_isTruthy(data['paid']) &&
         data['invoice_id'] == null &&
         data['invoice_number'] == null;
 
-    // Check if fully refunded (has refunded_meals and status indicates refund)
     final isRefunded = status == 'refunded' ||
         status == '4' ||
         _isTruthy(data['is_refunded']) ||
         _isTruthy(data['refunded']);
 
-    // Show invoice number for non-pay-later orders, booking number for pay-later
     final bookingNum = data['booking_number']?.toString().trim() ?? '';
     final dailyNum = data['daily_order_number']?.toString().trim() ?? '';
     final String displayNumber;
     if (isPayLater && !isRefunded) {
       if (bookingNum.isNotEmpty) {
-        // API returns e.g. "#BOK-442816" — use it as-is (strip leading #)
+        // API returns e.g. "#BOK-442816" — strip leading #.
         displayNumber = bookingNum.startsWith('#') ? bookingNum.substring(1) : bookingNum;
       } else if (dailyNum.isNotEmpty) {
         displayNumber = 'bok-$dailyNum';
@@ -101,11 +100,10 @@ class BookingDetailsDialog extends StatelessWidget {
         data['updated_at']?.toString() ??
         'N/A';
 
-    // Extract meals/items first so we can compute totals from them if needed
     final meals = _extractMeals(data);
     final refundedMeals = _extractRefundedMeals(data);
 
-    // Compute totals from items if API returns 0 (e.g. after full refund)
+    // Compute totals from items if API returns 0 (e.g. after full refund).
     var total = _parsePrice(
       data['total'] ?? data['total_price'] ?? data['invoice_total'],
     );
@@ -127,13 +125,12 @@ class BookingDetailsDialog extends StatelessWidget {
           data['total_price'],
     );
 
-    // Calculate refunded amount from separate refunded_meals list
     double refundedTotal = 0;
     for (final refund in refundedMeals) {
       refundedTotal += _parsePrice(refund['total'] ?? refund['price'] ?? refund['unit_price']);
     }
 
-    // Also count refunded items that were merged into meals list
+    // Also tally refunded items already merged into meals list.
     double mergedRefundTotal = 0;
     double activeMealsTotal = 0;
     for (final meal in meals) {
@@ -149,22 +146,18 @@ class BookingDetailsDialog extends StatelessWidget {
       }
     }
 
-    // Use the larger of the two refund totals (avoid double-counting)
+    // Use the larger of the two refund totals to avoid double-counting.
     final effectiveRefundTotal = refundedTotal > mergedRefundTotal
         ? refundedTotal
         : mergedRefundTotal;
 
-    // Resolve the active branch's tax configuration once — the old code
-    // baked in 15% VAT even when the branch was tax-free, so a 6 SAR order
-    // appeared as 6.90 in the orders list.
+    // Resolve active branch tax once; tax-free branches must not bake in 15% VAT.
     final branchService = getIt<BranchService>();
     final resolvedTaxRate =
         branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
     final taxMultiplier = 1.0 + resolvedTaxRate;
 
-    // Recalculate from items when totals are missing or tax is 0.
-    // API 'price' field is the PRE-TAX line total (confirmed from HAR:
-    // app sends price=26 with tax, API returns price=22.61 without tax).
+    // API 'price' field is PRE-TAX line total; recalc when totals missing/tax 0.
     if ((grandTotal == 0 || tax == 0) && (meals.isNotEmpty || refundedMeals.isNotEmpty)) {
       final originalPreTax = activeMealsTotal + effectiveRefundTotal;
       if (originalPreTax > 0) {
@@ -174,8 +167,7 @@ class BookingDetailsDialog extends StatelessWidget {
       }
     }
 
-    // Subtract refunded amount from totals to show actual remaining amount.
-    // effectiveRefundTotal is also pre-tax (from same API price field).
+    // Subtract refunded amount (also pre-tax) to show actual remaining.
     if (effectiveRefundTotal > 0 && grandTotal > 0) {
       final refundWithTax = effectiveRefundTotal * taxMultiplier;
       grandTotal = (grandTotal - refundWithTax).clamp(0.0, double.infinity);
@@ -183,9 +175,7 @@ class BookingDetailsDialog extends StatelessWidget {
       tax = grandTotal - total;
     }
 
-    // Extract customer info
     final customerName = _extractCustomerName(data);
-    // Extract table info
     final tableName = data['table_name']?.toString() ??
         data['table']?.toString() ??
         _asMap(data['type_extra'])?['table_name']?.toString();
@@ -198,40 +188,44 @@ class BookingDetailsDialog extends StatelessWidget {
         height: dialogHeight,
         child: Column(
           children: [
-            // Header
             Container(
-              padding: EdgeInsets.all(isCompact ? 16 : 24),
+              padding: EdgeInsets.fromLTRB(
+                isCompact ? 14 : 18,
+                isCompact ? 12 : 14,
+                isCompact ? 10 : 14,
+                isCompact ? 12 : 14,
+              ),
               decoration: const BoxDecoration(
                 color: Color(0xFFF58220),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
               ),
               child: Column(
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        child: Row(
                           children: [
-                            Text(
-                              translationService.t('order_details'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: isCompact ? 18 : 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
+                            Icon(
+                              LucideIcons.hash,
+                              size: isCompact ? 18 : 20,
+                              color: Colors.white.withValues(alpha: 0.95),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '#$displayNumber',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.white.withValues(alpha: 0.8),
+                            const SizedBox(width: 2),
+                            Flexible(
+                              child: Text(
+                                displayNumber,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: isCompact ? 18 : 20,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                  letterSpacing: 0.3,
+                                ),
                               ),
                             ),
                           ],
@@ -240,32 +234,80 @@ class BookingDetailsDialog extends StatelessWidget {
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
+                            horizontal: 10, vertical: 5),
                         decoration: BoxDecoration(
-                          color: _getStatusColor(status).withValues(alpha: 0.2),
+                          color: Colors.white,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: _getStatusColor(status)),
+                          boxShadow: [
+                            BoxShadow(
+                              color:
+                                  Colors.black.withValues(alpha: 0.10),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        child: Text(
-                          _getStatusText(status),
-                          style: TextStyle(
-                            color: _getStatusColor(status),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                color: _getStatusColor(status),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _getStatusText(status),
+                              style: TextStyle(
+                                color: _getStatusColor(status),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Material(
+                        color: Colors.transparent,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          onTap: () => Navigator.pop(context),
+                          customBorder: const CircleBorder(),
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.22),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color:
+                                    Colors.white.withValues(alpha: 0.32),
+                              ),
+                            ),
+                            child: const Icon(
+                              LucideIcons.x,
+                              color: Colors.white,
+                              size: 14,
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  const SizedBox(height: 10),
+                  Row(
                     children: [
-                      _buildInfoChip(LucideIcons.calendar, date),
-                      _buildInfoChip(LucideIcons.user, customerName),
+                      _buildMetaItem(LucideIcons.clock, date),
+                      _buildMetaSeparator(),
+                      Flexible(
+                        child: _buildMetaItem(LucideIcons.user, customerName),
+                      ),
                       if (tableName != null) ...[
-                        _buildInfoChip(LucideIcons.layout,
+                        _buildMetaSeparator(),
+                        _buildMetaItem(LucideIcons.layout,
                             '${translationService.t('table')} $tableName'),
                       ],
                     ],
@@ -274,36 +316,44 @@ class BookingDetailsDialog extends StatelessWidget {
               ),
             ),
 
-            // Meals List + Refunded Meals
             Expanded(
-              child: meals.isEmpty && refundedMeals.isEmpty
-                  ? Center(
-                      child: Text(
-                        translationService.t('no_items_in_order'),
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        ...meals.asMap().entries.map((entry) {
-                          return Column(
-                            children: [
-                              _buildMealItem(context, entry.value),
-                              if (entry.key < meals.length - 1)
-                                Divider(color: context.appDivider),
-                            ],
-                          );
-                        }),
-                        if (refundedMeals.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          _buildRefundedMealsSection(context, refundedMeals),
+              child: Container(
+                color: context.appSurfaceAlt,
+                child: meals.isEmpty && refundedMeals.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(LucideIcons.shoppingBag,
+                                size: 48,
+                                color: context.appTextMuted
+                                    .withValues(alpha: 0.5)),
+                            const SizedBox(height: 12),
+                            Text(
+                              translationService.t('no_items_in_order'),
+                              style: TextStyle(
+                                color: context.appTextMuted,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
+                        children: [
+                          ...meals.map((meal) =>
+                              _buildMealItem(context, meal)),
+                          if (refundedMeals.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            _buildRefundedMealsSection(
+                                context, refundedMeals),
+                          ],
                         ],
-                      ],
-                    ),
+                      ),
+              ),
             ),
 
-            // Summary
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -329,7 +379,7 @@ class BookingDetailsDialog extends StatelessWidget {
                   if (effectiveRefundTotal > 0) ...[
                     const SizedBox(height: 8),
                     _buildSummaryRow(context,
-                        _tr('المسترجع', 'Refunded'), -effectiveRefundTotal,
+                        translationService.t('refunded'), -effectiveRefundTotal,
                         isDiscount: true),
                   ],
                   Padding(
@@ -350,10 +400,32 @@ class BookingDetailsDialog extends StatelessWidget {
                           onEditOrder?.call();
                         },
                         icon: const Icon(LucideIcons.edit3, size: 18),
-                        label: Text(_tr('تعديل الطلب', 'Edit Order')),
+                        label: Text(translationService.t('edit_order')),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: const Color(0xFF2563EB),
                           side: const BorderSide(color: Color(0xFF2563EB)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (onRefund != null) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          onRefund?.call();
+                        },
+                        icon: const Icon(LucideIcons.undo2, size: 18),
+                        label: Text(translationService.t('refund_return')),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFEF4444),
+                          side: const BorderSide(color: Color(0xFFEF4444)),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -392,33 +464,36 @@ class BookingDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoChip(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 220),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: Colors.white.withValues(alpha: 0.8)),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: 0.9),
-                ),
-              ),
+  Widget _buildMetaItem(IconData icon, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: Colors.white.withValues(alpha: 0.85)),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w500,
             ),
-          ],
+          ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildMetaSeparator() {
+    return Container(
+      width: 3,
+      height: 3,
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.5),
+        shape: BoxShape.circle,
       ),
     );
   }
@@ -435,15 +510,16 @@ class BookingDetailsDialog extends StatelessWidget {
       }
       return '';
     }
-    var s = value.toString().trim();
-    // Handle JSON-encoded name strings like '{"ar":"...","en":"..."}'
+    final s = value.toString().trim();
     if (s.startsWith('{') && s.contains('"ar"')) {
       try {
         final parsed = Map<String, dynamic>.from(
           (const JsonCodec()).decode(s) as Map,
         );
         return _resolveLocalizedName(parsed);
-      } catch (_) {}
+      } catch (e) {
+        Log.d('BookingDetailsDialog', 'localized-name JSON decode failed (non-fatal): $e');
+      }
     }
     return s;
   }
@@ -454,28 +530,56 @@ class BookingDetailsDialog extends StatelessWidget {
         ? _resolveLocalizedName(rawName)
         : translationService.t('unknown_item');
     final quantity = int.tryParse(meal['quantity']?.toString() ?? '1') ?? 1;
-    var unitPrice = _parsePrice(meal['unit_price'] ?? meal['price']);
-    // Salon `booking_services` rows store the line total under
-    // `total_price` (which includes addons + qty) rather than `total`. If
-    // we only fall back to `meal['price']`, lines with addons under-report
-    // by the addon amount.
-    var totalPrice =
+    var unitPrice =
+        _parsePrice(meal['unit_price'] ?? meal['price'] ?? meal['meal_price']);
+    // Salon `booking_services` stores line total under `total_price` (includes addons + qty).
+    final rawTotal =
         _parsePrice(meal['total'] ?? meal['total_price'] ?? meal['price']);
+    var lineDiscount =
+        _parsePrice(meal['discount_amount'] ?? meal['discount']);
+    final explicitOriginal =
+        _parsePrice(meal['original_total'] ?? meal['price_before_discount']);
+    final explicitPct = _parsePrice(meal['discount_percentage']);
+
+    // Detect backend's pre-vs-post-discount convention for `total`,
+    // mirroring `_mapModelToReceiptData`. IN-831's restaurant rows store
+    // `total` as the *pre-discount* line price and `discount` separately;
+    // without this detection the displayed amount would overstate the
+    // line by the discount.
+    double originalPrice;
+    var actualLineTotal = rawTotal;
+    if (explicitOriginal > 0) {
+      originalPrice = explicitOriginal;
+      actualLineTotal = (explicitOriginal - lineDiscount)
+          .clamp(0.0, explicitOriginal)
+          .toDouble();
+    } else if (unitPrice > 0 && quantity > 0 && lineDiscount > 0) {
+      final baseline = unitPrice * quantity;
+      final preDiscountFit = (rawTotal - baseline).abs() < 0.01;
+      final postDiscountFit =
+          (rawTotal + lineDiscount - baseline).abs() < 0.01;
+      if (preDiscountFit && !postDiscountFit) {
+        originalPrice = rawTotal;
+        actualLineTotal =
+            (rawTotal - lineDiscount).clamp(0.0, rawTotal).toDouble();
+      } else {
+        originalPrice = rawTotal + lineDiscount;
+      }
+    } else if (lineDiscount > 0) {
+      originalPrice = rawTotal + lineDiscount;
+    } else {
+      originalPrice = (unitPrice > 0 && quantity > 0) ? unitPrice * quantity : 0;
+    }
+
+    var totalPrice = actualLineTotal;
     final extras = _extractMealExtras(meal);
     final rawStatus = meal['status']?.toString().trim().toLowerCase() ?? '';
-    // Salon services use a different numeric status enum than cashier meals,
-    // so the legacy `status == '3'` heuristic incorrectly tagged active
-    // services as cancelled. Trust the explicit boolean flags only for salon
-    // items (detected via `service_id` / `service_name` / `booking_service_id`),
-    // and keep the original heuristic for restaurant meals untouched.
+    // Salon services have a different status enum — trust explicit flags only for salon.
     final isSalonItem = meal.containsKey('service_id') ||
         meal.containsKey('service_name') ||
         meal.containsKey('booking_service_id') ||
         meal['service'] is Map;
-    // Salon API stores per-row prices pre-tax (e.g. 260.87 for a 300 SAR
-    // service at 15% VAT). The cashier wants to see the tax-inclusive
-    // amount on each line so the per-row totals add up to the grand total
-    // shown at the bottom of the dialog and on the order card.
+    // Salon API stores per-row prices pre-tax; gross up so lines add to grand total.
     if (isSalonItem) {
       final branchService = getIt<BranchService>();
       final taxRate =
@@ -484,6 +588,30 @@ class BookingDetailsDialog extends StatelessWidget {
         final mul = 1.0 + taxRate;
         unitPrice = unitPrice * mul;
         totalPrice = totalPrice * mul;
+        originalPrice = originalPrice * mul;
+        lineDiscount = lineDiscount * mul;
+      }
+    }
+
+    // Build the inline discount chip — same labels/decision tree as
+    // the receipt widget so the dialog matches the printed/WhatsApp
+    // copy line-for-line. "(مجاناً)" wins over a percentage chip when
+    // either the math or an explicit ≥100% indicates a fully-covered
+    // line.
+    final isFullyFreeLine = (originalPrice > 0 &&
+            actualLineTotal <= 0.001 &&
+            lineDiscount > 0) ||
+        explicitPct >= 99.99;
+    String? discountChip;
+    if (isFullyFreeLine) {
+      discountChip = '(${translationService.t('free_label')})';
+    } else if (lineDiscount > 0.01) {
+      final label = translationService.t('discount');
+      if (explicitPct > 0) {
+        discountChip = '($label ${explicitPct.toStringAsFixed(0)}%)';
+      } else {
+        discountChip =
+            '($label ${lineDiscount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency})';
       }
     }
     final isCancelled = rawStatus == 'cancelled' ||
@@ -502,10 +630,10 @@ class BookingDetailsDialog extends StatelessWidget {
     final hasInvoicedFlag = meal.containsKey('is_invoiced');
     final badgeLabel = isCancelled
         ? (hasInvoicedFlag && !_isTruthy(meal['is_invoiced'])
-            ? _tr('ملغي قبل الفوترة', 'Cancelled before invoice')
-            : _tr('ملغي', 'Cancelled'))
+            ? translationService.t('cancelled_before_invoice')
+            : translationService.t('cancelled'))
         : isRefunded
-            ? _tr('مسترجع', 'Refunded')
+            ? translationService.t('refunded')
             : null;
     final quantityColor = isCancelled
         ? const Color(0xFF94A3B8)
@@ -519,12 +647,7 @@ class BookingDetailsDialog extends StatelessWidget {
             : const Color(0xFFFFF7ED);
     final titleColor =
         isCancelled ? context.appTextSubtle : context.appText;
-    // Resolve the employee responsible for this service line. Salon API
-    // returns either a nested `employee.fullname` map or flat
-    // `employee_name` / `employee_fullname` fields. After an inline edit
-    // via `update-booking-data` the new name is written back to the same
-    // booking row, so reading the latest record here automatically
-    // reflects employee swaps.
+    // Resolve employee from nested `employee.fullname` or flat `employee_name`/`employee_fullname`.
     String? employeeName;
     if (isSalonItem) {
       final empRaw = meal['employee'];
@@ -548,170 +671,238 @@ class BookingDetailsDialog extends StatelessWidget {
             ? const Color(0xFFEF4444)
             : const Color(0xFFF58220);
 
+    final accentColor = quantityColor;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Row(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: context.appCardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: (isCancelled || isRefunded)
+              ? accentColor.withValues(alpha: 0.30)
+              : context.appDivider.withValues(alpha: 0.45),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(width: 4, color: accentColor),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: quantityBackground,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        'x$quantity',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: quantityColor,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: titleColor,
-                              decoration: isCancelled
-                                  ? TextDecoration.lineThrough
-                                  : TextDecoration.none,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 9, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: quantityBackground,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: accentColor.withValues(alpha: 0.30),
                             ),
                           ),
-                          if (employeeName != null) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(LucideIcons.user,
-                                    size: 12, color: context.appTextMuted),
-                                const SizedBox(width: 4),
-                                Flexible(
-                                  child: Text(
-                                    employeeName,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: context.appTextMuted,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                          child: Text(
+                            'x$quantity',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: quantityColor,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                name,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: titleColor,
+                                  decoration: isCancelled
+                                      ? TextDecoration.lineThrough
+                                      : TextDecoration.none,
+                                  height: 1.25,
+                                ),
+                              ),
+                              // Inline per-item discount/free chip — same
+                              // shape ("(مجاناً)" / "(خصم 10%)" /
+                              // "(خصم 5.00 ر.س)") used by the receipt
+                              // widget so this details dialog matches the
+                              // printed/WhatsApp copy line-for-line.
+                              if (discountChip != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  discountChip,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    fontStyle: FontStyle.italic,
+                                    color: context.appTextMuted,
                                   ),
                                 ),
                               ],
+                              if (employeeName != null) ...[
+                                const SizedBox(height: 5),
+                                Row(
+                                  children: [
+                                    Icon(LucideIcons.user,
+                                        size: 12,
+                                        color: context.appTextMuted),
+                                    const SizedBox(width: 4),
+                                    Flexible(
+                                      child: Text(
+                                        employeeName,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: context.appTextMuted,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                              if (badgeLabel != null) ...[
+                                const SizedBox(height: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isCancelled
+                                        ? const Color(0xFFF1F5F9)
+                                        : const Color(0xFFFEF2F2),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isCancelled
+                                          ? const Color(0xFFCBD5E1)
+                                          : const Color(0xFFFCA5A5),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    badgeLabel,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: isCancelled
+                                          ? const Color(0xFF64748B)
+                                          : const Color(0xFFDC2626),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              totalPrice
+                                  .toStringAsFixed(ApiConstants.digitsNumber),
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                color: amountColor,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              ApiConstants.currency,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: amountColor.withValues(alpha: 0.75),
+                                letterSpacing: 0.5,
+                              ),
                             ),
                           ],
-                          if (badgeLabel != null) ...[
-                            const SizedBox(height: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isCancelled
-                                    ? const Color(0xFFF1F5F9)
-                                    : const Color(0xFFFEF2F2),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                  color: isCancelled
-                                      ? const Color(0xFFCBD5E1)
-                                      : const Color(0xFFFCA5A5),
-                                ),
-                              ),
-                              child: Text(
-                                badgeLabel,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: isCancelled
-                                      ? const Color(0xFF64748B)
-                                      : const Color(0xFFDC2626),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
+                    if (extras.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Padding(
+                        padding: const EdgeInsetsDirectional.only(start: 38),
+                        child: Wrap(
+                          spacing: 5,
+                          runSpacing: 5,
+                          children: () {
+                            final grouped = <String, int>{};
+                            for (final extra in extras) {
+                              final name = extra['name']?.toString() ?? '';
+                              if (name.isNotEmpty) {
+                                grouped[name] =
+                                    (grouped[name] ?? 0) + 1;
+                              }
+                            }
+                            return grouped.entries.map((entry) {
+                              final label = entry.value > 1
+                                  ? '+ ${entry.key} x${entry.value}'
+                                  : '+ ${entry.key}';
+                              return Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEF3C7),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  label,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFFD97706),
+                                  ),
+                                ),
+                              );
+                            }).toList();
+                          }(),
+                        ),
+                      ),
+                    ],
+                    if (unitPrice > 0 && quantity > 1) ...[
+                      const SizedBox(height: 6),
+                      Padding(
+                        padding: const EdgeInsetsDirectional.only(start: 38),
+                        child: Text(
+                          '${unitPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency} / ${translationService.t('per_unit')}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: context.appTextMuted,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
-              Text(
-                '${totalPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: amountColor,
-                ),
-              ),
-            ],
-          ),
-          if (extras.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.only(right: 40),
-              child: Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: () {
-                  // Group duplicate extras and show count
-                  final grouped = <String, int>{};
-                  for (final extra in extras) {
-                    final name = extra['name']?.toString() ?? '';
-                    if (name.isNotEmpty) {
-                      grouped[name] = (grouped[name] ?? 0) + 1;
-                    }
-                  }
-                  return grouped.entries.map((entry) {
-                    final label = entry.value > 1
-                        ? '+ ${entry.key} x${entry.value}'
-                        : '+ ${entry.key}';
-                    return Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEF3C7),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        label,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFFD97706),
-                        ),
-                      ),
-                    );
-                  }).toList();
-                }(),
-              ),
             ),
           ],
-          if (unitPrice > 0 && quantity > 1) ...[
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.only(right: 40),
-              child: Text(
-                '${unitPrice.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency} / ${translationService.t('per_unit')}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -741,9 +932,7 @@ class BookingDetailsDialog extends StatelessWidget {
       add('id', item['id']);
       add('meal', item['meal_id']);
 
-      // Only use name-based matching when no ID signatures exist.
-      // This prevents re-added items from being merged with refunded items
-      // that share the same name but have different IDs.
+      // Name-based matching only when no ID signatures; prevents merging re-added items.
       if (signatures.isEmpty) {
         final name = (item['service_name'] ??
                 item['meal_name'] ??
@@ -766,9 +955,7 @@ class BookingDetailsDialog extends StatelessWidget {
     Map<String, dynamic> normalizeRefund(Map<String, dynamic> meal) {
       final normalized = Map<String, dynamic>.from(meal);
       final isInvoiced = _isTruthy(normalized['is_invoiced']);
-      // Salon refund preview rows carry `service_name`; restaurant ones
-      // carry `meal_name`. Without `service_name` here, salon services
-      // collapse to "Unknown item" in the booking-details refund section.
+      // Salon refund rows carry `service_name`; restaurant rows carry `meal_name`.
       normalized['meal_name'] = normalized['meal_name'] ??
           normalized['service_name'] ??
           normalized['name'] ??
@@ -820,8 +1007,7 @@ class BookingDetailsDialog extends StatelessWidget {
 
       if (matchedIndex != null) {
         final existing = merged[matchedIndex];
-        // If the existing item is ACTIVE (not refunded/cancelled),
-        // do NOT overwrite it. Add refund as separate row instead.
+        // Don't overwrite active items; add refund as separate row instead.
         final existingRefunded = _isTruthy(existing['is_refunded']) ||
             _isTruthy(existing['is_cancelled']) ||
             existing['status'] == 'refunded' ||
@@ -990,7 +1176,6 @@ class BookingDetailsDialog extends StatelessWidget {
   }
 
   String _extractCustomerName(Map<String, dynamic> data) {
-    // Try all possible locations for customer name
     final candidates = <dynamic>[
       data['customer_name'],
       data['client_name'],
@@ -999,11 +1184,9 @@ class BookingDetailsDialog extends StatelessWidget {
       _asMap(data['client'])?['name'],
       _asMap(data['user'])?['name'],
       _asMap(data['user'])?['fullname'],
-      // Nested booking structure
       _asMap(data['booking'])?['customer_name'],
       _asMap(_asMap(data['booking'])?['customer'])?['name'],
       _asMap(_asMap(data['booking'])?['user'])?['name'],
-      // Direct string fields
       data['client'],
     ];
 
@@ -1044,7 +1227,7 @@ class BookingDetailsDialog extends StatelessWidget {
                   size: 16, color: Color(0xFFDC2626)),
               const SizedBox(width: 8),
               Text(
-                _tr('المرتجعات', 'Refunded Items'),
+                translationService.t('refunded_items'),
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -1082,12 +1265,10 @@ class BookingDetailsDialog extends StatelessWidget {
         meal['meal_name']?.toString() ??
         meal['name']?.toString() ??
         meal['item_name']?.toString() ??
-        _tr('صنف غير معروف', 'Unknown item');
+        translationService.t('unknown_item');
     final quantity = int.tryParse(meal['quantity']?.toString() ?? '1') ?? 1;
     var total = _parsePrice(meal['total'] ?? meal['price']);
-    // Same with-tax convention as `_buildMealItem`: salon refunded rows
-    // store the pre-tax line total, but the cashier wants to see the
-    // amount that was actually charged to the customer.
+    // Same with-tax convention as `_buildMealItem`.
     final isSalonItem = meal.containsKey('service_id') ||
         meal.containsKey('service_name') ||
         meal.containsKey('booking_service_id') ||
@@ -1152,10 +1333,12 @@ class BookingDetailsDialog extends StatelessWidget {
                       child: Text(
                         isInvoiced
                             ? (invoiceId != null
-                                ? _tr('مسترجع - فاتورة #$invoiceId',
-                                    'Refunded - Invoice #$invoiceId')
-                                : _tr('مسترجع', 'Refunded'))
-                            : _tr('ملغي قبل الفوترة', 'Cancelled before invoice'),
+                                ? translationService.t(
+                                    'refunded_invoice_n',
+                                    args: {'id': invoiceId},
+                                  )
+                                : translationService.t('refunded'))
+                            : translationService.t('cancelled_before_invoice'),
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
@@ -1186,7 +1369,6 @@ class BookingDetailsDialog extends StatelessWidget {
                 spacing: 4,
                 runSpacing: 4,
                 children: () {
-                  // Group duplicate addons and show count
                   final grouped = <String, int>{};
                   for (final addon in addons) {
                     final addonText = addon is Map
@@ -1237,7 +1419,6 @@ class BookingDetailsDialog extends StatelessWidget {
           .toList();
     }
 
-    // Try different possible field names for meals
     final possibleKeys = [
       'meals',
       'booking_meals',
@@ -1254,7 +1435,6 @@ class BookingDetailsDialog extends StatelessWidget {
       'card',
     ];
 
-    // Build price lookup from booking_meals
     final priceLookup = <String, Map<String, dynamic>>{};
     for (final key in ['booking_meals', 'meals', 'items']) {
       final raw = data[key];
@@ -1286,12 +1466,14 @@ class BookingDetailsDialog extends StatelessWidget {
               }
               return null;
             }
-            var s = nameValue.toString().trim();
+            final s = nameValue.toString().trim();
             if (s.startsWith('{') && s.contains('"ar"')) {
               try {
                 final parsed = Map<String, dynamic>.from(jsonDecode(s) as Map);
                 return resolveName(parsed);
-              } catch (_) {}
+              } catch (e) {
+                Log.d('BookingDetailsDialog', 'meal-name JSON decode failed (non-fatal): $e');
+              }
             }
             return s.isNotEmpty ? s : null;
           }
@@ -1311,7 +1493,6 @@ class BookingDetailsDialog extends StatelessWidget {
           if (result['total'] == null && row['price'] != null) {
             result['total'] = row['price'];
           }
-          // Enrich with price from priceLookup if still missing
           if (result['price'] == null && result['unit_price'] == null) {
             final mealId = (result['meal_id'] ?? result['id'])?.toString();
             if (mealId != null && priceLookup.containsKey(mealId)) {
@@ -1320,7 +1501,6 @@ class BookingDetailsDialog extends StatelessWidget {
               result['unit_price'] ??= src['unit_price'] ?? src['price'];
               result['total'] ??= src['total'] ?? src['price'];
             }
-            // Also try nested meal object
             if (result['price'] == null && mealMap.isNotEmpty) {
               result['price'] ??= mealMap['price'];
               result['unit_price'] ??= mealMap['unit_price'] ?? mealMap['price'];
@@ -1334,7 +1514,6 @@ class BookingDetailsDialog extends StatelessWidget {
       }
     }
 
-    // Some APIs wrap line items inside nested nodes.
     final nestedCandidates = [
       data['data'],
       data['booking'],
@@ -1356,7 +1535,6 @@ class BookingDetailsDialog extends StatelessWidget {
   }
 
   List<Map<String, dynamic>> _extractMealExtras(Map<String, dynamic> meal) {
-    // Try different possible field names for extras
     final possibleKeys = [
       'extras',
       'add_ons',

@@ -11,23 +11,29 @@ import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:nfc_manager/nfc_manager.dart';
 import 'package:flutter_terminal_sdk/flutter_terminal_sdk.dart';
-import 'package:flutter_terminal_sdk/models/purchase_callbacks.dart';
 import 'package:flutter_terminal_sdk/models/card_reader_callbacks.dart';
 import 'package:flutter_terminal_sdk/models/data/payment_scheme.dart';
+import 'package:flutter_terminal_sdk/models/data/ui_dock_position.dart';
 import 'package:flutter_terminal_sdk/models/nearpay_user_response.dart';
+import 'package:flutter_terminal_sdk/models/purchase_callbacks.dart';
 import 'package:flutter_terminal_sdk/models/terminal_connection_response.dart';
 import 'package:flutter_terminal_sdk/models/terminal_response.dart';
 import 'package:flutter_terminal_sdk/models/terminal_sdk_initialization_listener.dart';
-import 'package:flutter_terminal_sdk/models/data/ui_dock_position.dart';
+import 'package:nfc_manager/nfc_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../services/logger_service.dart';
 import '../../services/presentation_service.dart';
-
 import 'app_logger.dart';
 import 'nearpay_backend_service.dart';
 import 'nearpay_config_service.dart';
+import 'nearpay_payment_result.dart';
+
+export 'nearpay_payment_result.dart';
+
+part 'nearpay_service_parts/nearpay_service.logging.dart';
+part 'nearpay_service_parts/nearpay_service.user_auth.dart';
 
 /// NearPay Service Singleton
 ///
@@ -42,20 +48,16 @@ class NearPayService {
   factory NearPayService() => _instance;
   NearPayService._internal();
 
-  // SDK instance
   FlutterTerminalSdk? _sdk;
   TerminalModel? _connectedTerminal;
 
-  // JWT token management
   DateTime? _jwtExpiresAt;
   bool _isReady = false;
 
-  // Configuration from Cashier
   String? _backendUrl;
   String? _authToken;
   int? _branchId;
 
-  // Terminal data
   String? _terminalUuid;
   String? _tid;
   String? _userUuid;
@@ -85,7 +87,6 @@ class NearPayService {
     if (normalizedForced == 'production') return Environment.production;
     if (normalizedForced == 'internal') return Environment.internal;
 
-    // Safety: release builds should default to production unless explicitly overridden.
     if (kReleaseMode) return Environment.production;
 
     final backend = (_backendUrl ?? '').toLowerCase();
@@ -101,130 +102,7 @@ class NearPayService {
     return looksSandbox ? Environment.sandbox : Environment.production;
   }
 
-  void _npLog(String message, {Object? error, StackTrace? stackTrace}) {
-    final timestamp = DateTime.now().toIso8601String();
-    final fullMessage = '[$timestamp] $message';
 
-    developer.log(
-      '[NearPay] $fullMessage',
-      name: 'NearPay',
-      error: error,
-      stackTrace: stackTrace,
-    );
-    AppLogger.logNearPay(fullMessage);
-
-    // Also print to console for immediate visibility
-    if (kDebugMode) {
-      print('🔷 NearPay: $fullMessage');
-      if (error != null) {
-        print('   Error: $error');
-        if (stackTrace != null) {
-          print('   Stack: $stackTrace');
-        }
-      }
-    }
-  }
-
-  void _npLogDetail(String title, Map<String, dynamic> details) {
-    final timestamp = DateTime.now().toIso8601String();
-    final detailsStr = details.entries
-        .map((e) => '   ${e.key}: ${e.value}')
-        .join('\n');
-    final fullMessage = '[$timestamp] 📋 $title\n$detailsStr';
-
-    developer.log('[NearPay] $fullMessage', name: 'NearPay');
-    AppLogger.logNearPay(fullMessage);
-
-    if (kDebugMode) {
-      debugPrint('📋 NearPay: $title');
-      details.forEach((key, value) {
-        debugPrint('   $key: $value');
-      });
-    }
-  }
-
-  Future<void> _logDeveloperCertLoaded() async {
-    try {
-      final cert = await rootBundle.load('assets/certs/developer_cert.pem');
-      developer.log(
-        '[NearPay] developer_cert.pem loaded — ${cert.lengthInBytes} bytes',
-        name: 'NearPay',
-      );
-      AppLogger.logNearPay(
-        'developer_cert.pem loaded — ${cert.lengthInBytes} bytes',
-      );
-    } catch (e, stackTrace) {
-      developer.log(
-        '[NearPay] developer_cert.pem load failed: $e',
-        name: 'NearPay',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      AppLogger.logNearPay('developer_cert.pem load failed: $e');
-      if (kDebugMode) {
-        FlutterError.reportError(
-          FlutterErrorDetails(
-            exception: e,
-            stack: stackTrace,
-            library: 'NearPay',
-            context: ErrorDescription('developer_cert.pem load failed'),
-          ),
-        );
-      }
-    }
-  }
-
-  String _mask(String? value, {int visible = 4}) {
-    if (value == null || value.isEmpty) return 'MISSING';
-    if (value.length <= visible) {
-      return '${value.substring(0, value.length)}***';
-    }
-    return '${value.substring(0, visible)}***';
-  }
-
-  String _maskId(String? value) => _mask(value, visible: 6);
-
-  /// Safely decode base64 JWT part (for logging header/payload structure)
-  String _safeBase64Decode(String part) {
-    try {
-      final normalized = base64Url.normalize(part);
-      final decoded = utf8.decode(base64Url.decode(normalized));
-      // Return max 200 chars
-      return decoded.length > 200 ? '${decoded.substring(0, 200)}...' : decoded;
-    } catch (e) {
-      return 'DECODE_ERROR: $e';
-    }
-  }
-
-  /// Extract only the keys from JWT payload (not values — no secrets)
-  String _safePayloadKeys(String part) {
-    try {
-      final normalized = base64Url.normalize(part);
-      final decoded = utf8.decode(base64Url.decode(normalized));
-      final map = jsonDecode(decoded);
-      if (map is Map) {
-        return _extractKeys(map).join(', ');
-      }
-      return 'NOT_A_MAP';
-    } catch (e) {
-      return 'DECODE_ERROR: $e';
-    }
-  }
-
-  /// Recursively extract keys from nested map
-  List<String> _extractKeys(Map map, [String prefix = '']) {
-    final keys = <String>[];
-    for (final entry in map.entries) {
-      final key = prefix.isEmpty ? '${entry.key}' : '$prefix.${entry.key}';
-      keys.add(key);
-      if (entry.value is Map) {
-        keys.addAll(_extractKeys(entry.value as Map, key));
-      }
-    }
-    return keys;
-  }
-
-  // Getters
   bool get isReady => _isReady;
   TerminalModel? get connectedTerminal => _connectedTerminal;
   bool get isInitialized => _sdk != null;
@@ -265,89 +143,6 @@ class NearPayService {
         _jwtLoginInFlight = null;
       }
     }
-  }
-
-  Future<void> _persistUserUuid(String? userUuid) async {
-    final normalized = userUuid?.trim();
-    if (normalized == null || normalized.isEmpty) {
-      return;
-    }
-    _userUuid = normalized;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('np_terminal_user_uuid', normalized);
-  }
-
-  Future<String?> _loadSavedUserUuid() async {
-    final current = _userUuid?.trim();
-    if (current != null && current.isNotEmpty) {
-      return current;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('np_terminal_user_uuid')?.trim();
-    if (saved != null && saved.isNotEmpty) {
-      _userUuid = saved;
-      return saved;
-    }
-    return null;
-  }
-
-  // Reserved fallback for the full documented SDK flow.
-  // ignore: unused_element
-  Future<NearpayUser> _resolveActiveUser() async {
-    if (_sdk == null) {
-      throw Exception('NearPay SDK not initialized');
-    }
-
-    final savedUserUuid = await _loadSavedUserUuid();
-    if (savedUserUuid != null && savedUserUuid.isNotEmpty) {
-      _npLog('🔄 Resolving active user via getUser(uuid)...');
-      _npLogDetail('User Resolution Params', {
-        'user_uuid': _maskId(savedUserUuid),
-      });
-      try {
-        final user = await _sdk!.getUser(uuid: savedUserUuid);
-        await _persistUserUuid(user.userUUID);
-        _npLog('✅ Active user resolved from saved userUUID');
-        return user;
-      } catch (e) {
-        _npLog('⚠️ getUser(saved userUUID) failed: $e');
-      }
-    }
-
-    _npLog('🔄 Falling back to SDK getUsers()...');
-    final sdkUsers = await _sdk!.getUsers();
-    final validUsers = sdkUsers.where((u) {
-      final uuid = u.userUUID?.trim();
-      return uuid != null && uuid.isNotEmpty;
-    }).toList();
-
-    if (validUsers.isEmpty) {
-      throw Exception('No authenticated SDK users found after jwtLogin');
-    }
-
-    final resolvedUser = validUsers.first;
-    await _persistUserUuid(resolvedUser.userUUID);
-    _npLog('✅ Active user resolved from getUsers() fallback');
-    return resolvedUser;
-  }
-
-  TerminalConnectionModel? _selectTerminalConnection(
-    List<TerminalConnectionModel> terminals,
-  ) {
-    if (terminals.isEmpty) return null;
-
-    for (final terminal in terminals) {
-      if (_terminalUuid != null &&
-          _terminalUuid!.isNotEmpty &&
-          terminal.uuid == _terminalUuid) {
-        return terminal;
-      }
-      if (_tid != null && _tid!.isNotEmpty && terminal.tid == _tid) {
-        return terminal;
-      }
-    }
-
-    return terminals.first;
   }
 
   Future<List<TerminalConnectionModel>> _listUserTerminals(
@@ -471,7 +266,6 @@ class NearPayService {
       _authToken = data['auth_token']?.toString();
       final environment = _resolveSdkEnvironment();
       final environmentLabel = environment.name;
-      // Accept terminal data if provided by Cashier
       _tid =
           readString(data['terminal_tid']) ??
           readString(data['terminalTid']) ??
@@ -502,8 +296,7 @@ class NearPayService {
       }
       _apiService = null;
 
-      // If Cashier payload doesn't include terminal IDs, fetch once from backend now.
-      // This avoids NOT_SET/MISSING state before the full initialization flow starts.
+      // Fetch terminal IDs from backend if Cashier didn't include them — avoids NOT_SET state.
       if ((_tid == null || _terminalUuid == null) &&
           _branchId != null &&
           _backendUrl != null &&
@@ -527,7 +320,6 @@ class NearPayService {
         }
       }
 
-      // Persist to storage for recovery
       if (_branchId != null) {
         await prefs.setInt('np_branch_id', _branchId!);
       }
@@ -654,10 +446,7 @@ class NearPayService {
       },
     );
 
-    // Mirror the NearPay reader UI onto the customer-facing secondary
-    // screen when one is attached (e.g. Sunmi D2s / D3 mini). When no
-    // secondary display is present we keep the SDK single-display so the
-    // customer dock doesn't sit on the wrong screen.
+    // Mirror NearPay reader UI to customer-facing secondary screen when attached.
     final hasSecondDisplay = PresentationService().hasSecondaryDisplay;
     final supportSecond = hasSecondDisplay
         ? SupportSecondDisplay.enable
@@ -682,7 +471,6 @@ class NearPayService {
         huaweiSafetyDetectApiKey: huaweiSafetyDetectApiKey,
         country: Country.sa, // ✅ Saudi Arabia (NOT Turkey)
         initializationListener: initListener,
-        // UI Dock Position - NearPay Reader UI will appear at bottom center
         uiDockPosition: UiDockPosition.BOTTOM_CENTER,
         secondDisplayDockPosition: secondDock,
         supportSecondDisplay: supportSecond,
@@ -711,7 +499,6 @@ class NearPayService {
 
       _npLog('❌ SDK initialize failed: $e', error: e, stackTrace: stackTrace);
 
-      // Provide detailed network error information
       if (e.toString().contains('SocketTimeoutException')) {
         _npLog('🔴 NETWORK TIMEOUT - Cannot reach NearPay servers');
         _npLogDetail('Network Error Details', {
@@ -791,8 +578,7 @@ class NearPayService {
       if (expiresAt != null) {
         _jwtExpiresAt = DateTime.fromMillisecondsSinceEpoch(expiresAt * 1000);
       } else if (payload.expiresIn != null) {
-        // Store the actual expiry time; _ensureFreshJwt() already subtracts
-        // a 5-minute safety buffer when checking.
+        // _ensureFreshJwt subtracts 5-min safety buffer; store actual expiry here.
         _jwtExpiresAt = DateTime.now().add(
           Duration(seconds: payload.expiresIn!),
         );
@@ -894,7 +680,6 @@ class NearPayService {
         );
       }
 
-      // Save to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('np_terminal_tid', _tid!);
       await prefs.setString('np_terminal_uuid', _terminalUuid!);
@@ -917,7 +702,7 @@ class NearPayService {
       _npLog('⚠️ Terminal config fetch failed: $e — trying saved data');
     }
 
-    // Fallback: use saved terminal data from SharedPreferences
+    // Fallback to saved SharedPreferences terminal data.
     final prefs = await SharedPreferences.getInstance();
     final savedTid = _tid ?? prefs.getString('np_terminal_tid');
     final savedUuid = _terminalUuid ?? prefs.getString('np_terminal_uuid');
@@ -1001,7 +786,6 @@ class NearPayService {
     });
 
     try {
-      // Step 1: Initialize SDK
       _npLog('📍 STEP 1/5: Initializing NearPay SDK...');
       final step1StartTime = DateTime.now();
       await _initializeSdkIfNeeded();
@@ -1011,7 +795,6 @@ class NearPayService {
         'sdk_initialized': '${_sdk != null}',
       });
 
-      // Step 2: Fetch terminal data from backend (needed for JWT request)
       _npLog('📍 STEP 2/5: Fetching terminal data from backend...');
       final step2StartTime = DateTime.now();
       final terminalData = await _fetchTerminalData();
@@ -1023,7 +806,6 @@ class NearPayService {
         'result': '✅',
       });
 
-      // Step 3: Fetch JWT token (now includes terminal_tid & terminal_id)
       _npLog('📍 STEP 3/5: Fetching JWT token from backend...');
       final step3StartTime = DateTime.now();
       final jwtPayload = await _fetchJwtPayload();
@@ -1034,11 +816,10 @@ class NearPayService {
         'jwt_obtained': '✅',
       });
 
-      // Step 4: Login with JWT
       _npLog('📍 STEP 4/5: Logging in with JWT token...');
       final step4StartTime = DateTime.now();
 
-      // Log JWT details for debugging (first/last chars only — no secrets)
+      // Log JWT preview only (first/last chars, no secrets).
       final jwtPreview = jwt.length > 20
           ? '${jwt.substring(0, 10)}...${jwt.substring(jwt.length - 10)}'
           : '(too short!)';
@@ -1131,7 +912,6 @@ class NearPayService {
         );
       }
 
-      // Probe: call getUsers() from Dart side to confirm SDK user state
       try {
         final sdkUsers = await _sdk!.getUsers();
         _npLogDetail('Step 4 - SDK getUsers() Probe (Dart side)', {
@@ -1152,8 +932,7 @@ class NearPayService {
         _npLog('⚠️ getUsers() probe failed: $e');
       }
 
-      // Keep backend terminal IDs authoritative. jwtLogin can return a dynamic
-      // UUID that does not match /terminal/config terminal_id.
+      // Keep backend terminal IDs authoritative — jwtLogin may return a dynamic UUID.
       if (terminalModel.tid != null) _tid = terminalModel.tid;
       if (_terminalUuid == null && terminalModel.terminalUUID != null) {
         _terminalUuid = terminalModel.terminalUUID;
@@ -1175,15 +954,10 @@ class NearPayService {
         await prefs.setString('np_terminal_user_uuid', _userUuid!);
       }
 
-      // Step 5: Use the terminal returned by jwtLogin directly.
-      // jwtLogin already returns a ready Terminal — no need to resolve a
-      // User or call connectTerminal (the SDK does not register a User
-      // during JWT auth, so getUserByUUID would always fail).
+      // Use jwtLogin's returned Terminal directly — SDK doesn't register a User during JWT auth.
       _npLog('📍 STEP 5/5: Using terminal from jwtLogin...');
       _connectedTerminal = terminalModel;
 
-      // Wait for the terminal to finish its internal initialization
-      // (key loading, server handshake, etc.).
       _npLog('⏳ Waiting for terminal to become ready...');
       const maxWait = Duration(seconds: 60);
       const pollInterval = Duration(seconds: 2);
@@ -1258,7 +1032,6 @@ class NearPayService {
         stackTrace: stackTrace,
       );
 
-      // Provide helpful troubleshooting info
       if (e.toString().contains('SocketTimeout') ||
           e.toString().contains('No network')) {
         _npLog('');
@@ -1330,14 +1103,15 @@ class NearPayService {
 
     _connectedTerminal = terminalModel;
 
-    // Wait for terminal readiness after JWT refresh
     const maxWait = Duration(seconds: 30);
     const pollInterval = Duration(seconds: 2);
     final waitStart = DateTime.now();
     while (DateTime.now().difference(waitStart) < maxWait) {
       try {
         if (await terminalModel.isTerminalReady()) break;
-      } catch (_) {}
+      } catch (e) {
+        Log.d('nearpay', 'isTerminalReady poll attempt failed (non-fatal): $e');
+      }
       await Future<void>.delayed(pollInterval);
     }
     _isReady = _connectedTerminal != null;
@@ -1529,12 +1303,7 @@ class NearPayService {
     bool terminalOutcomeFired = false;
     bool purchaseResolved = false;
     Timer? noCallbackTimer;
-    // Watchdog that runs after the user dismisses the NearPay reader UI. When
-    // the user presses Cancel the native SDK fires onReaderDismissed /
-    // onReaderClosed but NEVER fires onTransactionPurchaseCompleted or
-    // onSendTransactionFailure. Without this watchdog the outer Completer
-    // would sit idle until its 120s timeout, keeping _paymentInFlight=true
-    // and blocking every new payment attempt with "عملية دفع أخرى قيد التنفيذ".
+    // Watchdog for user cancel: SDK fires onReaderDismissed but never onTransactionPurchaseCompleted, would otherwise hang _paymentInFlight.
     Timer? cancelWatchdog;
     void flagCallback() {
       if (!anyCallback) {
@@ -1606,7 +1375,6 @@ class NearPayService {
             ? reference
             : transactionUuid,
         callbacks: PurchaseCallbacks(
-          // Card reader callbacks
           cardReaderCallbacks: CardReaderCallbacks(
             onReaderDisplayed: () {
               flagCallback();
@@ -1617,9 +1385,7 @@ class NearPayService {
               flagCallback();
               _npLog('callback.onReaderDismissed');
               onStatusUpdate('تم إغلاق شاشة الدفع');
-              // Start a short watchdog. If no terminal outcome callback
-              // arrives within 2s, treat the dismissal as a user cancel and
-              // fail the purchase so the _paymentInFlight flag can reset.
+              // 2s watchdog: dismissal without outcome = user cancel.
               if (!terminalOutcomeFired && !purchaseResolved) {
                 cancelWatchdog?.cancel();
                 cancelWatchdog = Timer(const Duration(seconds: 2), () {
@@ -1695,19 +1461,11 @@ class NearPayService {
               onStatusUpdate('فشل القراءة: $msg');
             },
           ),
-          // Transaction callbacks. NB: this callback fires on BOTH approved
-          // and declined cards — NearPay treats "the transaction completed
-          // its lifecycle" as completion, not "the card was charged". Gate
-          // the success path on the SDK's `status` field (it uses 'success'
-          // for approval everywhere else in the wrapper, see
-          // terminal_response.dart) so a declined card surfaces as a real
-          // failure and the cashier skips invoice/print.
+          // Fires on approved AND declined — gate success on SDK status='success' to handle declines.
           onTransactionPurchaseCompleted: (response) {
             flagCallback();
             terminalOutcomeFired = true;
             cancelWatchdog?.cancel();
-            // Extract transaction ID from response
-            // Structure: PurchaseResponse -> details -> transactions -> last -> id
             String transactionId = transactionUuid; // Fallback
 
             String? topStatus;
@@ -1739,10 +1497,7 @@ class NearPayService {
               );
             }
 
-            // Approved iff a status field reads 'success'/'approved' and
-            // there's no cancel reason. Mirrors the rest of the wrapper
-            // (terminal_response.dart treats 'success' as the canonical
-            // approval token).
+            // Approved = status 'success'/'approved' with no cancel reason.
             const approvedTokens = {'success', 'approved'};
             final approved = (cancelReason == null || cancelReason.isEmpty) &&
                 (approvedTokens.contains(topStatus) ||
@@ -1774,9 +1529,7 @@ class NearPayService {
     }
   }
 
-  // ═════════════════════════════════════════════════════════════════════════
-  //  RECONCILIATION (per NearPay TerminalSDK documentation)
-  // ═════════════════════════════════════════════════════════════════════════
+  // --- Reconciliation ---
 
   /// End-of-day reconciliation (تقارير الإقفالية اليومية)
   Future<void> reconcile() async {
@@ -1796,18 +1549,14 @@ class NearPayService {
     }
   }
 
-  // ═════════════════════════════════════════════════════════════════════════
-  //  LOGOUT & RESET (per NearPay TerminalSDK documentation)
-  // ═════════════════════════════════════════════════════════════════════════
+  // --- Logout & Reset ---
 
-  /// Reset service state (on logout)
-  /// Calls SDK logout per documentation before clearing local state.
+  /// Reset service state (on logout). Calls SDK logout before clearing local state.
   Future<void> reset() async {
-    // Call SDK logout if we have a user UUID (per documentation)
     if (_sdk != null && _userUuid != null && _userUuid!.isNotEmpty) {
       try {
         _npLog('🔄 Calling SDK logout for user: ${_maskId(_userUuid)}');
-        await _sdk!.logout(uuid: _userUuid!);
+        await _sdk!.logout(uuid: _userUuid);
         _npLog('✅ SDK logout successful');
       } catch (e) {
         _npLog('⚠️ SDK logout failed (continuing with local reset): $e');
@@ -1855,45 +1604,5 @@ class NearPayService {
       'tid': _tid,
       'terminalUuid': _terminalUuid,
     };
-  }
-}
-
-class NearPayPaymentResult {
-  final bool success;
-  final String referenceId;
-  final String? transactionId;
-  final double? amount;
-  final String? errorMessage;
-
-  const NearPayPaymentResult._({
-    required this.success,
-    required this.referenceId,
-    this.transactionId,
-    this.amount,
-    this.errorMessage,
-  });
-
-  factory NearPayPaymentResult.success({
-    required String referenceId,
-    required String transactionId,
-    required double amount,
-  }) {
-    return NearPayPaymentResult._(
-      success: true,
-      referenceId: referenceId,
-      transactionId: transactionId,
-      amount: amount,
-    );
-  }
-
-  factory NearPayPaymentResult.failure({
-    required String referenceId,
-    required String message,
-  }) {
-    return NearPayPaymentResult._(
-      success: false,
-      referenceId: referenceId,
-      errorMessage: message,
-    );
   }
 }

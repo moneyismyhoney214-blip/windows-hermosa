@@ -5,10 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'cds_page.dart';
-import 'models.dart';
 import '../services/api/api_constants.dart';
 import '../services/app_themes.dart';
+import '../services/logger_service.dart';
+import 'cds_page.dart';
+import 'models.dart';
 
 /// Secondary entry point for the customer-facing display.
 ///
@@ -25,9 +26,7 @@ import '../services/app_themes.dart';
 void customerDisplayMain() {
   WidgetsFlutterBinding.ensureInitialized();
   debugPrint('[CDS] customerDisplayMain booted on secondary Flutter engine');
-  // Log to the Sunmi diagnostic file using the same MethodChannel the
-  // engine was spawned with — this gives us a single file with events
-  // from BOTH engines, interleaved with timestamps.
+  // Log to Sunmi diagnostic file via the spawning MethodChannel for interleaved cross-engine events.
   const channel = MethodChannel('com.hermosaapp.presentation');
   channel.invokeMethod('logSunmi', {
     'level': 'I',
@@ -46,30 +45,24 @@ class CustomerDisplayApp extends StatefulWidget {
 class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   static const _channel = MethodChannel('com.hermosaapp.presentation');
 
-  // Display state
   Map<String, dynamic> _cartData = {};
   Map<String, dynamic> _catalogContext = {};
   String _languageCode = 'ar';
 
-  // Merchant branding (mirrored from BranchService via SharedPreferences).
+  // Merchant branding mirrored from BranchService via SharedPreferences.
   String _sellerNameAr = '';
   String _sellerNameEn = '';
   String _sellerLogoUrl = '';
   Timer? _sellerNamePoll;
 
-  // Invoice/printer language settings mirrored from
-  // `printer_language_settings_v1` so the CDS meal names respect the same
-  // primary/secondary language pair the user picked for receipts.
+  // Invoice language mirrored from `printer_language_settings_v1` so CDS meal names match receipts.
   String _invoicePrimaryLang = 'ar';
   String _invoiceSecondaryLang = 'en';
   bool _invoiceAllowSecondary = true;
 
-  // Payment state
   String? _paymentStatus;
   String? _paymentMessage;
 
-
-  // Status overlay
   Map<String, dynamic>? _statusOverlay;
 
   @override
@@ -80,15 +73,9 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       'level': 'I',
       'message': 'CustomerDisplayApp.initState — about to send secondaryDisplayReady',
     }).catchError((_) {});
-    // Notify the main app that we're ready
     _channel.invokeMethod('secondaryDisplayReady', null);
     _loadSellerName();
-    // Prefs may be populated slightly after the CDS boots (branch fetch runs
-    // on the cashier side). Poll a few times so the name snaps in once it
-    // lands, then stop to avoid idle work.
-    // Poll SharedPreferences continuously so branding + invoice language
-    // changes on the cashier side reflect on the CDS within ~2s without a
-    // cold restart.
+    // Poll prefs so cashier-side branding/invoice-language edits reflect on CDS within ~2s without restart.
     _sellerNamePoll = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (!mounted) {
         timer.cancel();
@@ -107,21 +94,18 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Future<void> _loadSellerName() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // Force a disk re-read so cross-engine writes from the cashier land
-      // here on the next tick. Without this, SharedPreferences keeps the
-      // in-memory cache from first load.
+      // Force disk re-read so cross-engine cashier writes are visible next tick (bypass in-memory cache).
       try {
         await prefs.reload();
-      } catch (_) {}
+      } catch (e) {
+        Log.d('CustomerDisplay', 'prefs reload before seller name read failed (non-fatal): $e');
+      }
       final ar = prefs.getString('cds_seller_name_ar') ?? '';
       final en = prefs.getString('cds_seller_name_en') ?? '';
       final logo = prefs.getString('cds_seller_logo_url') ?? '';
       if (!mounted) return;
-      // NOTE: invoice language settings are *not* pulled from prefs here —
-      // the cart payload (`UPDATE_CART`) carries them and
-      // [_syncInvoiceLanguageFromPayload] keeps the state in sync. Reading
-      // prefs on every poll tick would race with a stale disk cache and
-      // revert the live value a few seconds after the user applied it.
+      // Invoice language is intentionally NOT pulled from prefs here — the cart payload carries it
+      // and prefs polling would race with stale disk cache and revert the live value.
       final same = ar == _sellerNameAr &&
           en == _sellerNameEn &&
           logo == _sellerLogoUrl;
@@ -132,7 +116,6 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
         _sellerLogoUrl = logo;
       });
     } catch (_) {
-      // Fall back to default brand rendering.
     }
   }
 
@@ -166,19 +149,22 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
         });
         break;
       case 'SET_MODE':
-        // Secondary display is always CDS mode
         break;
       case 'START_PAYMENT':
-        setState(() {
-          _paymentStatus = 'processing';
-          _paymentMessage = null;
-        });
+        // No-op: CDS never shows a "processing payment" screen; cart stays until terminal result.
         break;
       case 'PAYMENT_STATUS':
         setState(() {
-          _paymentStatus = data['status']?.toString();
+          final status = data['status']?.toString();
+          // Only surface terminal results; ignore intermediate states to avoid flashing a processing overlay.
+          const terminal = {'success', 'failed', 'cancelled'};
+          if (status == null || !terminal.contains(status)) {
+            _paymentStatus = null;
+            _paymentMessage = null;
+            return;
+          }
+          _paymentStatus = status;
           _paymentMessage = data['message']?.toString();
-          // Auto-clear after failed/cancelled (success clears when GIF finishes)
           if (_paymentStatus == 'failed' ||
               _paymentStatus == 'cancelled') {
             Future.delayed(const Duration(seconds: 3), () {
@@ -226,11 +212,11 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Force light theme: CustomerFacingScreen reads context.appBg/appText; dark theme inverts them.
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: Colors.black,
-        textTheme: ThemeData.dark().textTheme,
+      theme: ThemeData.light().copyWith(
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
       ),
       home: _buildDisplay(),
     );
@@ -251,6 +237,9 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       languageCode: _languageCode,
       currencySymbol: currencySymbol,
       orderNumber: _cartData['orderNumber']?.toString(),
+      orderNote: _cartData['note']?.toString().trim().isNotEmpty == true
+          ? _cartData['note'].toString().trim()
+          : null,
       promoCode: _extractPromoCode(_cartData),
       discountAmount: _extractDouble(_cartData['discount_amount'] ?? _cartData['discountAmount']),
       originalTotal: _extractDouble(_cartData['original_total'] ?? _cartData['originalTotal']),
@@ -279,7 +268,6 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
             product['product_id']?.toString() ??
             '';
         if (mealId.isEmpty) return;
-        // Send back to main app
         _channel.invokeMethod('onMealAvailabilityToggle', {
           'mealId': mealId,
           'productId': mealId,
@@ -357,6 +345,11 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     final isFailed = _paymentStatus == 'failed';
     final isCancelled = _paymentStatus == 'cancelled';
 
+    // Only render for terminal results; unexpected status shows nothing rather than a stale spinner.
+    if (!isSuccess && !isFailed && !isCancelled) {
+      return const SizedBox.shrink();
+    }
+
     String title;
     String subtitle;
     Color accent;
@@ -372,16 +365,11 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       subtitle = _paymentMessage ?? (isArabic ? 'يرجى المحاولة مرة أخرى' : 'Please try again');
       accent = const Color(0xFFEF4444);
       icon = Icons.error_rounded;
-    } else if (isCancelled) {
+    } else {
       title = isArabic ? 'تم إلغاء الدفع' : 'Payment Cancelled';
       subtitle = isArabic ? 'يمكنك المحاولة مرة أخرى' : 'You can try again';
       accent = const Color(0xFF94A3B8);
       icon = Icons.cancel_rounded;
-    } else {
-      title = isArabic ? 'جاري معالجة الدفع' : 'Processing Payment';
-      subtitle = isArabic ? 'يرجى الانتظار...' : 'Please wait...';
-      accent = const Color(0xFF0EA5E9);
-      icon = Icons.sync_rounded;
     }
 
     return Container(
@@ -430,8 +418,6 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       ),
     );
   }
-
-  // ─── Data conversion helpers (same as CdsPageWrapper) ───
 
   List<CartItem> _convertCartData(Map<String, dynamic> cartData) {
     if (cartData.isEmpty) return [];
@@ -506,6 +492,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
         originalUnitPrice: originalUnitPrice > 0 ? originalUnitPrice : null,
         originalTotal: originalTotal > 0 ? originalTotal : null,
         finalTotal: finalTotal > 0 ? finalTotal : null,
+        notes: itemMap['notes']?.toString().trim() ?? '',
       );
     }).toList();
   }
@@ -687,14 +674,6 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     return 0.0;
   }
 
-  int _toInt(dynamic value) {
-    if (value == null) return 1;
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 1;
-    return 1;
-  }
-
   double _extractDouble(dynamic value) {
     if (value == null) return 0.0;
     if (value is num) return value.toDouble();
@@ -754,7 +733,6 @@ class _SuccessCheckAnimationState extends State<_SuccessCheckAnimation>
       curve: Curves.easeOutBack,
     );
 
-    // Sequence: circle pops in -> check fades in -> hold -> dismiss
     _startAnimation();
   }
 

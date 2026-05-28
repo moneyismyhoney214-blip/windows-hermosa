@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../invoices_screen.dart';
 
 extension InvoicesScreenInvoiceState on _InvoicesScreenState {
@@ -29,19 +29,10 @@ extension InvoicesScreenInvoiceState on _InvoicesScreenState {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            ErrorHandler.toUserMessage(
+      UiFeedback.info(context, ErrorHandler.toUserMessage(
               e,
-              fallback: _tr(
-                'تعذر توليد الفاتورة حالياً.',
-                'Unable to generate invoice right now.',
-              ),
-            ),
-          ),
-        ),
-      );
+              fallback: translationService.t('invoice_generate_unavailable'),
+            ));
     }
   }
 
@@ -101,7 +92,9 @@ extension InvoicesScreenInvoiceState on _InvoicesScreenState {
 
     final normalizedStatus = invoice.status.trim().toLowerCase();
     if (normalizedStatus == 'partially_refunded' ||
-        normalizedStatus == 'partial_refund') return true;
+        normalizedStatus == 'partial_refund') {
+      return true;
+    }
 
     return false;
   }

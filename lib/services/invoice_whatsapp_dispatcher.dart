@@ -35,7 +35,8 @@ enum WhatsAppDispatchOutcome {
   /// produce a non-empty file (HTML→PDF plugin failure, disk full, etc.).
   pdfUrlUnavailable,
 
-  /// WAWP (or the deep-link fallback) failed.
+  /// WAWP API call failed (HTTP error, timeout, or body-level error).
+  /// There is no deep-link fallback — the host gets a failure snackbar.
   failure,
 }
 
@@ -75,8 +76,10 @@ class WhatsAppDispatchResult {
 ///      upload endpoint we could host on).
 ///   3. Hand the bytes + caption to `WhatsAppService.sendInvoicePdf`,
 ///      which base64-encodes them inline and calls
-///      `https://api.wawp.net/v2/send/pdf`. Falls back to a `wa.me`
-///      deep link with the caption only if the API leg fails.
+///      `https://api.wawp.net/v2/send/pdf`. **No `wa.me` fallback** —
+///      if the API leg fails, the dispatcher surfaces a failure to the
+///      caller. Opening `wa.me` is banned because a wrong stored phone
+///      would silently route the host to the wrong customer's chat.
 ///
 /// THIS IS A CREDIT-SENSITIVE FEATURE: every successful WAWP call burns
 /// a credit on the merchant's balance. The dispatcher therefore runs
@@ -341,20 +344,42 @@ class InvoiceWhatsAppDispatcher extends ChangeNotifier {
     }
   }
 
-  /// Render the invoice PDF locally via [InvoiceHtmlPdfService] (the same
-  /// pipeline the print preview screen uses) and return the raw bytes
-  /// so [WhatsAppService.sendInvoicePdf] can inline them as base64.
+  /// Render the invoice PDF locally and return raw bytes for
+  /// [WhatsAppService.sendInvoicePdf] to inline as base64.
+  ///
+  /// The primary path uses [InvoiceHtmlPdfService.generateTightPdfBytesForWhatsApp]
+  /// — a dedicated, content-tight renderer that produces a single PDF
+  /// page sized to the actual receipt height (no trailing A4 whitespace
+  /// or blank second page). When that pipeline can't run (e.g. an
+  /// off-screen capture failure), we fall back to the standard print
+  /// preview pipeline.
   ///
   /// `generatePdfFromInvoice` silently falls back to writing raw HTML when
-  /// the `flutter_html_to_pdf_plus` plugin throws — that path is fine for
-  /// the print preview but would surface on WhatsApp as a "broken PDF"
-  /// because we'd inline HTML bytes labelled as `application/pdf`. Guard
-  /// against that by validating the PDF magic header (`%PDF-`) and bailing
-  /// when it's missing, so the dispatcher returns `pdfUrlUnavailable`
-  /// instead of shipping garbage to WAWP.
+  /// the `flutter_html_to_pdf_plus` plugin throws — that's fine for print
+  /// preview but would surface on WhatsApp as a "broken PDF" because we'd
+  /// inline HTML bytes labelled as `application/pdf`. Guard against that
+  /// by validating the PDF magic header (`%PDF-`) and bailing when it's
+  /// missing, so the dispatcher returns `pdfUrlUnavailable` instead of
+  /// shipping garbage to WAWP.
   Future<Uint8List?> _renderPdfBytes(String invoiceId) async {
+    final pdfService = getIt<InvoiceHtmlPdfService>();
+
     try {
-      final pdfService = getIt<InvoiceHtmlPdfService>();
+      final tightBytes =
+          await pdfService.generateTightPdfBytesForWhatsApp(invoiceId);
+      if (tightBytes != null &&
+          tightBytes.isNotEmpty &&
+          _looksLikePdf(tightBytes)) {
+        debugPrint('🧾 [WA-Invoice] tight PDF rendered (${tightBytes.length} bytes)');
+        return tightBytes;
+      }
+      debugPrint('🧾 [WA-Invoice] tight PDF unavailable — '
+          'falling back to standard print pipeline');
+    } catch (e, st) {
+      debugPrint('🧾 [WA-Invoice] tight PDF threw: $e\n$st');
+    }
+
+    try {
       final path = await pdfService.generatePdfFromInvoice(invoiceId);
       if (path.isEmpty) return null;
       final file = File(path);

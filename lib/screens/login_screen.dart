@@ -1,16 +1,26 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../services/api/auth_service.dart';
-import '../services/api/base_client.dart';
-import '../services/language_service.dart';
-import '../services/app_themes.dart';
+
 import '../locator.dart';
 import '../models/branch.dart';
+import '../services/api/auth_service.dart';
+import '../services/api/base_client.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
+import '../services/security/secure_token_store.dart';
+import '../waiter_module/waiter_module_entry.dart';
 import 'branch_selection_screen.dart';
 import 'forgot_password_screen.dart';
 import 'legal_page_screen.dart';
 import 'main_screen.dart';
-import '../waiter_module/waiter_module_entry.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -23,9 +33,12 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  final _emailFocusNode = FocusNode();
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
+  bool _rememberMe = true;
+  List<SavedAccount> _savedAccounts = const [];
 
   /// Toggles the "Forgot password?" link under the password field. Kept as
   /// a named flag (instead of deleting the code) so we can re-enable the
@@ -36,6 +49,214 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     translationService.addListener(_onLanguageChanged);
+    unawaited(_loadSavedAccounts());
+  }
+
+  Future<void> _loadSavedAccounts() async {
+    final accounts = await secureTokenStore.readAccounts();
+    if (!mounted) return;
+    setState(() {
+      _savedAccounts = accounts;
+    });
+    // Fields stay blank on purpose — after logout the user expects an
+    // empty form. Picking a row from the dropdown is the only thing that
+    // fills both email + password.
+  }
+
+  void _applySavedAccount(SavedAccount account) {
+    _emailController.text = account.email;
+    _passwordController.text = account.password;
+    _emailFocusNode.unfocus();
+    setState(() {});
+  }
+
+  Future<void> _forgetAccount(SavedAccount account) async {
+    await secureTokenStore.deleteAccount(account.email);
+    if (!mounted) return;
+    setState(() {
+      _savedAccounts = _savedAccounts
+          .where((a) => a.email.toLowerCase() != account.email.toLowerCase())
+          .toList();
+    });
+  }
+
+  Future<void> _clearAllSavedAccounts() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(translationService.t('clear_all_accounts')),
+        content: Text(translationService.t('clear_all_accounts_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(translationService.t('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(foregroundColor: context.appDanger),
+            child: Text(translationService.t('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await secureTokenStore.clearAccounts();
+    if (!mounted) return;
+    setState(() => _savedAccounts = const []);
+  }
+
+  void _openManageAccountsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: context.appCardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            Future<void> removeOne(SavedAccount account) async {
+              await secureTokenStore.deleteAccount(account.email);
+              if (!mounted) return;
+              setState(() {
+                _savedAccounts = _savedAccounts
+                    .where((a) =>
+                        a.email.toLowerCase() != account.email.toLowerCase())
+                    .toList();
+              });
+              // The bottom sheet keeps its own snapshot; refresh it too.
+              setSheetState(() {});
+              if (sheetContext.mounted) {
+                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                  SnackBar(
+                    content:
+                        Text(translationService.t('account_deleted')),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 20, vertical: 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.manage_accounts_outlined,
+                            color: context.appPrimary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            translationService.t('saved_accounts'),
+                            style: GoogleFonts.tajawal(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: context.appText,
+                            ),
+                          ),
+                        ),
+                        if (_savedAccounts.isNotEmpty)
+                          TextButton.icon(
+                            onPressed: () async {
+                              Navigator.of(sheetContext).pop();
+                              await _clearAllSavedAccounts();
+                            },
+                            icon: Icon(Icons.delete_sweep_outlined,
+                                size: 18, color: context.appDanger),
+                            label: Text(
+                              translationService.t('clear_all_accounts'),
+                              style: GoogleFonts.tajawal(
+                                fontSize: 12,
+                                color: context.appDanger,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              minimumSize: const Size(0, 32),
+                              tapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (_savedAccounts.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Center(
+                          child: Text(
+                            translationService.t('no_saved_accounts'),
+                            style: TextStyle(color: context.appTextMuted),
+                          ),
+                        ),
+                      )
+                    else
+                      ConstrainedBox(
+                        constraints:
+                            const BoxConstraints(maxHeight: 360),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: _savedAccounts.length,
+                          separatorBuilder: (_, __) => Divider(
+                            height: 1,
+                            color: context.appBorder,
+                          ),
+                          itemBuilder: (context, index) {
+                            final account = _savedAccounts[index];
+                            return ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 4),
+                              leading: CircleAvatar(
+                                backgroundColor:
+                                    context.appPrimary.withValues(alpha: 0.12),
+                                child: Icon(Icons.person_outline,
+                                    color: context.appPrimary),
+                              ),
+                              title: Text(
+                                account.email,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: context.appText,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                '••••••••',
+                                style: TextStyle(
+                                  color: context.appTextMuted,
+                                  letterSpacing: 1.5,
+                                ),
+                              ),
+                              trailing: IconButton(
+                                tooltip: translationService.t('delete'),
+                                icon: Icon(Icons.delete_outline,
+                                    color: context.appDanger),
+                                onPressed: () => removeOne(account),
+                              ),
+                              onTap: () {
+                                Navigator.of(sheetContext).pop();
+                                _applySavedAccount(account);
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -43,6 +264,7 @@ class _LoginScreenState extends State<LoginScreen> {
     translationService.removeListener(_onLanguageChanged);
     _emailController.dispose();
     _passwordController.dispose();
+    _emailFocusNode.dispose();
     super.dispose();
   }
 
@@ -71,29 +293,32 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final authService = getIt<AuthService>();
-      print('🔐 Attempting login for: ${_emailController.text.trim()}');
-      print('🔐 AuthService instance: ${authService.hashCode}');
+      // No PII/token material in breadcrumbs.
+      Log.d('login', 'attempting authentication');
 
-      // Use loginWithEmail which maps email to username for the JWT API
       final result = await authService.loginWithEmail(
         email: _emailController.text.trim(),
         password: _passwordController.text,
         rememberMe: 0,
       );
 
-      print('🔐 Login API call completed');
-      print('🔐 Login result: $result');
-
-      // Verify token was set
       final token = BaseClient().getToken();
-      print('🔐 Token after login: ${token != null ? "EXISTS" : "NULL"}');
       if (token == null || token.isEmpty) {
         throw Exception('Token not set after login');
       }
+      Log.d('login', 'token verified after login');
 
-      print('✅ Login successful, token verified');
+      // Persist credentials only after the server confirms they're valid,
+      // so the autocomplete dropdown has a verified entry next time.
+      if (_rememberMe) {
+        await secureTokenStore.upsertAccount(
+          _emailController.text.trim(),
+          _passwordController.text,
+        );
+      } else {
+        await secureTokenStore.deleteAccount(_emailController.text.trim());
+      }
 
-      // Extract branches from result
       List<Branch> branchesFromLogin = [];
       if (result['data'] != null && result['data']['branches'] is List) {
         branchesFromLogin = (result['data']['branches'] as List)
@@ -103,48 +328,40 @@ class _LoginScreenState extends State<LoginScreen> {
             .toList();
       }
 
-      // WAITER accounts have no permission on /seller/branches — hitting
-      // that endpoint returns 401, which fires BaseClient's global
-      // onUnauthorized hook and signs the freshly-logged-in waiter out
-      // again. The login payload already embeds every branch the
-      // waiter belongs to, so we skip the extra fetch for them and
-      // only merge/enrich for owner/manager roles.
+      // WAITERs lack /seller/branches permission — hitting it 401s and BaseClient's onUnauthorized signs them out. Login payload already embeds their branches; skip the fetch.
       final isWaiter = authService.isWaiter();
       List<Branch> branches = branchesFromLogin;
       if (!isWaiter) {
         try {
           final fetched = await authService.getBranches();
           branches = _mergeUniqueBranches([...fetched, ...branchesFromLogin]);
-        } catch (_) {
-          // Keep flow resilient; main screen bootstrap handles final fallback.
+        } catch (e) {
+          Log.d('catch', 'non-fatal: $e');
           branches = branchesFromLogin;
         }
       }
 
       if (mounted) {
-        // Waiter accounts (role=WAITER on /seller/employees) skip the cashier
-        // POS and land in the dedicated waiter module. With a single branch,
-        // jump straight in; otherwise still show branch selection — that
-        // screen will route waiters to WaiterModuleEntry on selection.
+        // Waiters skip the cashier POS for the dedicated waiter module (single branch jumps straight in).
 
         if (isWaiter && branches.length <= 1) {
-          Navigator.of(context).pushReplacement(
+          unawaited(Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const WaiterModuleEntry()),
-          );
+          ));
         } else if (branches.isNotEmpty) {
-          Navigator.of(context).pushReplacement(
+          unawaited(Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (_) => BranchSelectionScreen(branches: branches),
             ),
-          );
+          ));
         } else {
-          Navigator.of(context).pushReplacement(
+          unawaited(Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MainScreen()),
-          );
+          ));
         }
       }
-    } catch (e) {
-      print('❌ Login error: $e');
+    } catch (e, st) {
+      Log.e('login', 'authentication failed', error: e, stackTrace: st);
       if (mounted) {
         setState(() {
           _errorMessage =
@@ -186,7 +403,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: IntrinsicHeight(
                     child: Column(
                       children: [
-                        // Top Language Selector (Collapsed)
                         Align(
                           alignment: AlignmentDirectional.topEnd,
                           child: _buildLanguageDropdown(),
@@ -283,59 +499,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                               ],
                                             ),
                                           ),
-                                        TextFormField(
-                                          controller: _emailController,
-                                          keyboardType:
-                                              TextInputType.emailAddress,
-                                          textDirection: TextDirection.ltr,
-                                          style: TextStyle(
-                                              color: context.appText),
-                                          decoration: InputDecoration(
-                                            labelText:
-                                                translationService.t('email'),
-                                            hintText: 'example@email.com',
-                                            filled: true,
-                                            fillColor: context.appSurfaceAlt,
-                                            prefixIcon: Icon(
-                                                Icons.email_outlined,
-                                                color: context.appTextMuted),
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              borderSide: BorderSide(
-                                                  color: context.appBorder),
-                                            ),
-                                            enabledBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              borderSide: BorderSide(
-                                                  color: context.appBorder),
-                                            ),
-                                            focusedBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              borderSide: BorderSide(
-                                                  color: context.appPrimary,
-                                                  width: 1.5),
-                                            ),
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                    vertical: 14),
-                                          ),
-                                          validator: (value) {
-                                            if (value == null ||
-                                                value.isEmpty) {
-                                              return translationService
-                                                  .t('required');
-                                            }
-                                            if (!value.contains('@')) {
-                                              return translationService
-                                                  .t('invalid_email');
-                                            }
-                                            return null;
-                                          },
-                                        ),
+                                        _buildEmailAutocompleteField(
+                                            isDark: isDark),
                                         const SizedBox(height: 16),
                                         TextFormField(
                                           controller: _passwordController,
@@ -390,47 +555,123 @@ class _LoginScreenState extends State<LoginScreen> {
                                               : null,
                                           onFieldSubmitted: (_) => _login(),
                                         ),
-                                        // "Forgot password?" link is hidden
-                                        // temporarily while the backend
-                                        // wires up the full flow. Flip
-                                        // `_showForgotPassword` to true (or
-                                        // delete this guard) to restore the
-                                        // button — the navigation target and
-                                        // screen are still in place.
-                                        if (_showForgotPassword)
-                                          Align(
-                                            alignment: AlignmentDirectional
-                                                .centerStart,
-                                            child: TextButton(
-                                              onPressed: _isLoading
-                                                  ? null
-                                                  : () {
-                                                      Navigator.of(context).push(
-                                                        MaterialPageRoute(
-                                                          builder: (_) =>
-                                                              const ForgotPasswordScreen(),
-                                                        ),
-                                                      );
-                                                    },
-                                              style: TextButton.styleFrom(
-                                                padding: EdgeInsets.zero,
-                                                minimumSize: const Size(0, 32),
-                                                tapTargetSize:
-                                                    MaterialTapTargetSize
-                                                        .shrinkWrap,
-                                                foregroundColor:
-                                                    context.appPrimary,
-                                              ),
-                                              child: Text(
-                                                translationService
-                                                    .t('forgot_password'),
-                                                style: GoogleFonts.tajawal(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w600,
+                                        const SizedBox(height: 4),
+                                        InkWell(
+                                          onTap: _isLoading
+                                              ? null
+                                              : () => setState(() =>
+                                                  _rememberMe = !_rememberMe),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 6),
+                                            child: Row(
+                                              children: [
+                                                SizedBox(
+                                                  width: 22,
+                                                  height: 22,
+                                                  child: Checkbox(
+                                                    value: _rememberMe,
+                                                    onChanged: _isLoading
+                                                        ? null
+                                                        : (v) => setState(() =>
+                                                            _rememberMe =
+                                                                v ?? false),
+                                                    activeColor:
+                                                        context.appPrimary,
+                                                    materialTapTargetSize:
+                                                        MaterialTapTargetSize
+                                                            .shrinkWrap,
+                                                  ),
                                                 ),
-                                              ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  translationService
+                                                      .t('remember_me'),
+                                                  style: GoogleFonts.tajawal(
+                                                    fontSize: 13,
+                                                    color: context.appText,
+                                                    fontWeight:
+                                                        FontWeight.w500,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
+                                        ),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            // Forgot-password is hidden pending backend wiring; flip `_showForgotPassword` to restore.
+                                            if (_showForgotPassword)
+                                              TextButton(
+                                                onPressed: _isLoading
+                                                    ? null
+                                                    : () {
+                                                        Navigator.of(context)
+                                                            .push(
+                                                          MaterialPageRoute(
+                                                            builder: (_) =>
+                                                                const ForgotPasswordScreen(),
+                                                          ),
+                                                        );
+                                                      },
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize:
+                                                      const Size(0, 32),
+                                                  tapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                  foregroundColor:
+                                                      context.appPrimary,
+                                                ),
+                                                child: Text(
+                                                  translationService
+                                                      .t('forgot_password'),
+                                                  style: GoogleFonts.tajawal(
+                                                    fontSize: 13,
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                  ),
+                                                ),
+                                              )
+                                            else
+                                              const SizedBox.shrink(),
+                                            if (_savedAccounts.isNotEmpty)
+                                              TextButton.icon(
+                                                onPressed: _isLoading
+                                                    ? null
+                                                    : _openManageAccountsSheet,
+                                                icon: Icon(
+                                                  Icons.manage_accounts_outlined,
+                                                  size: 16,
+                                                  color: context.appTextMuted,
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize:
+                                                      const Size(0, 32),
+                                                  tapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                  foregroundColor:
+                                                      context.appTextMuted,
+                                                ),
+                                                label: Text(
+                                                  translationService.t(
+                                                      'manage_saved_accounts'),
+                                                  style: GoogleFonts.tajawal(
+                                                    fontSize: 12,
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
                                         SizedBox(
                                             height: isSmallScreen ? 16 : 24),
                                         SizedBox(
@@ -489,6 +730,150 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Email input with a Google-style autocomplete dropdown of previously
+  /// saved accounts. Filters by case-insensitive prefix or substring on
+  /// the email. Selecting an entry auto-fills the password field too.
+  Widget _buildEmailAutocompleteField({required bool isDark}) {
+    return RawAutocomplete<SavedAccount>(
+      textEditingController: _emailController,
+      focusNode: _emailFocusNode,
+      displayStringForOption: (account) => account.email,
+      optionsBuilder: (textEditingValue) {
+        if (_savedAccounts.isEmpty) {
+          return const Iterable<SavedAccount>.empty();
+        }
+        final q = textEditingValue.text.trim().toLowerCase();
+        // Empty field → show every saved account (full list on first focus).
+        if (q.isEmpty) return _savedAccounts;
+        // One exact match means "you've already picked this one" → hide the
+        // dropdown so it doesn't cover the password field.
+        final lowered =
+            _savedAccounts.map((a) => a.email.toLowerCase()).toList();
+        if (lowered.length == 1 && lowered.first == q) {
+          return const Iterable<SavedAccount>.empty();
+        }
+        return _savedAccounts
+            .where((a) => a.email.toLowerCase().contains(q))
+            .toList();
+      },
+      onSelected: _applySavedAccount,
+      fieldViewBuilder:
+          (context, controller, focusNode, onFieldSubmitted) {
+        return TextFormField(
+          controller: controller,
+          focusNode: focusNode,
+          keyboardType: TextInputType.emailAddress,
+          textDirection: TextDirection.ltr,
+          style: TextStyle(color: context.appText),
+          decoration: InputDecoration(
+            labelText: translationService.t('email'),
+            hintText: 'example@email.com',
+            filled: true,
+            fillColor: context.appSurfaceAlt,
+            prefixIcon:
+                Icon(Icons.email_outlined, color: context.appTextMuted),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: context.appBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: context.appBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide:
+                  BorderSide(color: context.appPrimary, width: 1.5),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 14),
+          ),
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return translationService.t('required');
+            }
+            if (!value.contains('@')) {
+              return translationService.t('invalid_email');
+            }
+            return null;
+          },
+        );
+      },
+      optionsViewBuilder: (context, onSelected, options) {
+        return Align(
+          alignment: AlignmentDirectional.topStart,
+          child: Material(
+            elevation: 8,
+            borderRadius: BorderRadius.circular(12),
+            color: context.appCardBg,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240, maxWidth: 400),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemCount: options.length,
+                separatorBuilder: (_, __) => Divider(
+                  height: 1,
+                  color: context.appBorder,
+                ),
+                itemBuilder: (context, index) {
+                  final account = options.elementAt(index);
+                  return InkWell(
+                    onTap: () => onSelected(account),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      child: Row(
+                        children: [
+                          Icon(Icons.key_outlined,
+                              size: 18, color: context.appPrimary),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  account.email,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: context.appText,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '••••••••',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: context.appTextMuted,
+                                    letterSpacing: 1.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: translationService.t('delete'),
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(Icons.close,
+                                size: 18, color: context.appTextMuted),
+                            onPressed: () => _forgetAccount(account),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

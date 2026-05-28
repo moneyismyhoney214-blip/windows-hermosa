@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
@@ -8,6 +10,8 @@ import '../../services/api/product_service.dart';
 import '../../services/app_themes.dart';
 import '../../services/category_printer_route_registry.dart';
 import '../../services/kitchen_printer_route_registry.dart';
+import '../../services/language_service.dart';
+import '../../services/logger_service.dart';
 import '../../services/print_orchestrator_service.dart';
 import '../../services/printer_role_registry.dart';
 import '../../widgets/printer_language_settings_view.dart';
@@ -60,7 +64,9 @@ class _WaiterPrinterSettingsScreenState
       try {
         final cached = await _deviceService.getCachedDevices();
         if (cached.isNotEmpty) devices = cached;
-      } catch (_) {}
+      } catch (e) {
+        Log.d('WaiterPrinterSettings', 'cached devices load failed (non-fatal): $e');
+      }
       try {
         devices = await _deviceService.getDevices();
       } catch (e) {
@@ -114,17 +120,25 @@ class _WaiterPrinterSettingsScreenState
   Future<void> _removeDevice(String id) async {
     await _deviceService.deleteDevice(id);
     try {
-      getIt<PrinterRoleRegistry>().clearRole(id);
-    } catch (_) {}
+      unawaited(getIt<PrinterRoleRegistry>().clearRole(id));
+    } catch (e) {
+      Log.d('WaiterPrinterSettings', 'clear printer role on remove failed (non-fatal): $e');
+    }
     try {
-      getIt<CategoryPrinterRouteRegistry>().clearPrinterAssignments(id);
-    } catch (_) {}
+      unawaited(getIt<CategoryPrinterRouteRegistry>().clearPrinterAssignments(id));
+    } catch (e) {
+      Log.d('WaiterPrinterSettings', 'clear category routes on remove failed (non-fatal): $e');
+    }
     try {
-      getIt<KitchenPrinterRouteRegistry>().clearPrinterAssignments(id);
-    } catch (_) {}
+      unawaited(getIt<KitchenPrinterRouteRegistry>().clearPrinterAssignments(id));
+    } catch (e) {
+      Log.d('WaiterPrinterSettings', 'clear kitchen routes on remove failed (non-fatal): $e');
+    }
     try {
       getIt<PrintOrchestratorService>().updatePrinterStatus(id, false);
-    } catch (_) {}
+    } catch (e) {
+      Log.d('WaiterPrinterSettings', 'mark printer offline on remove failed (non-fatal): $e');
+    }
     if (!mounted) return;
     setState(() => _devices.removeWhere((d) => d.id == id));
   }
@@ -139,10 +153,10 @@ class _WaiterPrinterSettingsScreenState
           backgroundColor: context.appHeaderBg,
           foregroundColor: context.appText,
           elevation: 0,
-          title: const Text('إعدادات الأجهزة'),
+          title: Text(translationService.t('waiter_device_settings_title')),
           actions: [
             IconButton(
-              tooltip: 'تحديث',
+              tooltip: translationService.t('refresh'),
               onPressed: _loading ? null : _loadAll,
               icon: const Icon(LucideIcons.rotateCcw),
             ),
@@ -151,14 +165,14 @@ class _WaiterPrinterSettingsScreenState
             labelColor: context.appPrimary,
             unselectedLabelColor: context.appTextMuted,
             indicatorColor: context.appPrimary,
-            tabs: const [
+            tabs: [
               Tab(
-                icon: Icon(LucideIcons.settings, size: 18),
-                text: 'الإعدادات',
+                icon: const Icon(LucideIcons.settings, size: 18),
+                text: translationService.t('settings'),
               ),
               Tab(
-                icon: Icon(LucideIcons.languages, size: 18),
-                text: 'اللغة',
+                icon: const Icon(LucideIcons.languages, size: 18),
+                text: translationService.t('language'),
               ),
             ],
           ),

@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+
+import '../locator.dart';
 import '../models.dart';
 import '../services/bluetooth_print_channel.dart';
 import '../services/network_print_helper.dart';
@@ -11,7 +13,6 @@ import '../services/printer_language_settings_service.dart';
 import '../services/printer_service.dart';
 import '../services/q7_printer_channel.dart';
 import '../widgets/invoice_print_widget.dart';
-import '../locator.dart';
 
 /// Listens for print requests and dispatches them to either the Bluetooth or
 /// the network transport.

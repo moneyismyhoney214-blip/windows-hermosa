@@ -4,13 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../locator.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/base_client.dart';
 import '../services/api/error_handler.dart';
 import '../services/api/salon_employee_service.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
-import '../locator.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
+import '../utils/ui_feedback.dart';
 
 /// Wizard for creating a booking session (تذكرة مراجعة).
 ///
@@ -34,24 +36,20 @@ class CreateSessionDialog extends StatefulWidget {
 class _CreateSessionDialogState extends State<CreateSessionDialog> {
   final BaseClient _client = BaseClient();
 
-  // Step 1 — customer
   bool _isLoadingCustomers = false;
   List<Map<String, dynamic>> _customers = [];
   Map<String, dynamic>? _selectedCustomer;
   final TextEditingController _customerSearch = TextEditingController();
   Timer? _customerDebounce;
 
-  // Step 2 — booking
   bool _isLoadingBookings = false;
   List<Map<String, dynamic>> _bookings = [];
   Map<String, dynamic>? _selectedBooking;
 
-  // Step 3 — service
   bool _isLoadingServices = false;
   List<Map<String, dynamic>> _services = [];
   Map<String, dynamic>? _selectedService;
 
-  // Step 4 — employee + date + time
   bool _isLoadingEmployees = false;
   List<Map<String, dynamic>> _employees = [];
   Map<String, dynamic>? _selectedEmployee;
@@ -62,15 +60,9 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
 
   DateTime _date = DateTime.now();
 
-  // Submit
   bool _isSubmitting = false;
   String? _submitError;
 
-  String get _langCode =>
-      translationService.currentLanguageCode.trim().toLowerCase();
-  bool get _useArabicUi =>
-      _langCode.startsWith('ar') || _langCode.startsWith('ur');
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   @override
   void initState() {
@@ -85,7 +77,6 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
     super.dispose();
   }
 
-  // ── Customers ────────────────────────────────────────────────────────
   Future<void> _loadCustomers({String? search}) async {
     setState(() => _isLoadingCustomers = true);
     try {
@@ -108,7 +99,8 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
         _customers = list;
         _isLoadingCustomers = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (mounted) setState(() => _isLoadingCustomers = false);
     }
   }
@@ -120,7 +112,6 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
     });
   }
 
-  // ── Bookings ─────────────────────────────────────────────────────────
   Future<void> _loadBookingsForCustomer(int customerId) async {
     setState(() {
       _isLoadingBookings = true;
@@ -143,12 +134,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
         _bookings = list;
         _isLoadingBookings = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (mounted) setState(() => _isLoadingBookings = false);
     }
   }
 
-  // ── Services ─────────────────────────────────────────────────────────
   Future<void> _loadServicesForBooking(int bookingId) async {
     setState(() {
       _isLoadingServices = true;
@@ -170,12 +161,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
         _services = list;
         _isLoadingServices = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (mounted) setState(() => _isLoadingServices = false);
     }
   }
 
-  // ── Employees ────────────────────────────────────────────────────────
   Future<void> _loadEmployeesForService(int serviceId) async {
     setState(() {
       _isLoadingEmployees = true;
@@ -210,12 +201,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
         _employees = employees;
         _isLoadingEmployees = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (mounted) setState(() => _isLoadingEmployees = false);
     }
   }
 
-  // ── Slots ────────────────────────────────────────────────────────────
   Future<void> _loadSlots() async {
     final empId = (_selectedEmployee?['id'] ??
             _selectedEmployee?['value'])
@@ -227,10 +218,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
       _selectedSlot = null;
     });
     try {
-      // Backend wants PATCH (not GET) with `{date, service_id}` in the
-      // JSON body — this is what makes booked slots disappear from the
-      // returned list. Using GET silently returns 405 and we end up
-      // showing every 5-minute interval as available.
+      // Backend wants PATCH with `{date, service_id}` body — GET silently 405s and shows every slot as available.
       final empIdNum = int.tryParse(empId) ?? 0;
       final endpoint =
           ApiConstants.salonEmployeeAvailableTimesEndpoint(empIdNum);
@@ -253,12 +241,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
         _slots = list;
         _isLoadingSlots = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (mounted) setState(() => _isLoadingSlots = false);
     }
   }
 
-  // ── Submit ───────────────────────────────────────────────────────────
   bool get _canSubmit =>
       _selectedCustomer != null &&
       _selectedBooking != null &&
@@ -287,11 +275,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
       };
       final response = await _client
           .postMultipart(ApiConstants.bookingSessionsEndpoint, fields);
-      // Drop the slot cache so a follow-up session for a different
-      // customer doesn't re-offer the time we just consumed.
+      // Drop slot cache so a follow-up session can't re-offer the consumed time.
       try {
         getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-      } catch (_) {}
+      } catch (e) {
+        Log.d('CreateSessionDialog', 'invalidate salon slot cache after create failed (non-fatal): $e');
+      }
       if (!mounted) return;
       String? id;
       if (response is Map<String, dynamic>) {
@@ -305,14 +294,10 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
       Navigator.of(context).pop({'id': id ?? '', 'data': response});
     } catch (e) {
       if (!mounted) return;
-      // Friendly message instead of `Exception: ApiException: …` —
-      // ErrorHandler.toUserMessage already strips the stack-trace prefix
-      // and prefers `userMessage` from ApiException when available, so
-      // the cashier sees the backend's Arabic line directly (e.g.
-      // "الحد الأقصى لعدد الجلسات لهذه الخدمة في ذلك الحجز.").
+      // ErrorHandler.toUserMessage surfaces the backend's userMessage (e.g. Arabic max-sessions line).
       final friendly = ErrorHandler.toUserMessage(
         e,
-        fallback: _tr('فشل إنشاء التذكرة', 'Failed to create session'),
+        fallback: translationService.t('session_create_failed'),
       );
       setState(() {
         _submitError = friendly;
@@ -321,7 +306,6 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
     }
   }
 
-  // ── UI ───────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
@@ -388,7 +372,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              _tr('إنشاء تذكرة مراجعة', 'New Review Ticket'),
+              translationService.t('new_review_ticket'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
@@ -407,7 +391,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
 
   Widget _buildCustomerStep() {
     return _stepCard(
-      title: _tr('1. العميل', '1. Customer'),
+      title: translationService.t('step_1_customer'),
       child: Column(
         children: [
           if (_selectedCustomer != null)
@@ -430,7 +414,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
               controller: _customerSearch,
               onChanged: _onCustomerSearch,
               decoration: InputDecoration(
-                hintText: _tr('ابحث عن عميل...', 'Search customer...'),
+                hintText: translationService.t('search_customer_dots'),
                 isDense: true,
                 prefixIcon: const Icon(LucideIcons.search, size: 16),
                 border: OutlineInputBorder(
@@ -454,7 +438,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
                         ? Padding(
                             padding: const EdgeInsets.all(16),
                             child: Text(
-                              _tr('لا يوجد عملاء', 'No customers'),
+                              translationService.t('no_customers'),
                               style: TextStyle(
                                 color: context.appText.withValues(alpha: 0.6),
                               ),
@@ -489,13 +473,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
 
   Widget _buildBookingStep() {
     return _stepCard(
-      title: _tr('2. الحجز', '2. Booking'),
+      title: translationService.t('step_2_booking'),
       child: _isLoadingBookings
           ? const Center(child: CircularProgressIndicator())
           : _bookings.isEmpty
               ? Text(
-                  _tr('لا توجد حجوزات لهذا العميل',
-                      'No bookings for this customer'),
+                  translationService.t('no_bookings_for_customer'),
                   style: TextStyle(
                       color: context.appText.withValues(alpha: 0.6)),
                 )
@@ -539,13 +522,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
 
   Widget _buildServiceStep() {
     return _stepCard(
-      title: _tr('3. الخدمة', '3. Service'),
+      title: translationService.t('step_3_service'),
       child: _isLoadingServices
           ? const Center(child: CircularProgressIndicator())
           : _services.isEmpty
               ? Text(
-                  _tr('لا توجد خدمات في هذا الحجز',
-                      'No services in this booking'),
+                  translationService.t('no_services_in_booking'),
                   style: TextStyle(
                       color: context.appText.withValues(alpha: 0.6)),
                 )
@@ -555,10 +537,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
                   children: _services.map((s) {
                     final label = s['label']?.toString() ?? '';
                     final remaining = _remainingSessionsFromLabel(label);
-                    // 0 سيشن متبقي → الـ backend بيرفض الإنشاء بـ 422
-                    // ("الحد الأقصى لعدد الجلسات لهذه الخدمة في ذلك الحجز").
-                    // نمنع الاختيار من البداية بدل ما المستخدم يدوس الكل
-                    // ثم يلاقي رسالة في النهاية.
+                    // 0 جلسات متبقية: نمنع الاختيار لأن الـ backend يرفض الإنشاء بـ 422.
                     final exhausted = remaining == 0;
                     final selected =
                         _selectedService?['value'] == s['value'];
@@ -573,14 +552,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
                     return InkWell(
                       onTap: exhausted
                           ? () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(_tr(
-                                      'لا توجد جلسات متبقية لهذه الخدمة',
-                                      'No sessions remaining for this service')),
-                                  backgroundColor: Colors.orange,
-                                ),
-                              );
+                              UiFeedback.warning(context, translationService.t('no_sessions_remaining'));
                             }
                           : () {
                               setState(() => _selectedService = s);
@@ -637,12 +609,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
 
   Widget _buildEmployeeStep() {
     return _stepCard(
-      title: _tr('4. الموظفة', '4. Employee'),
+      title: translationService.t('step_4_employee'),
       child: _isLoadingEmployees
           ? const Center(child: CircularProgressIndicator())
           : _employees.isEmpty
               ? Text(
-                  _tr('لا يوجد موظفين متاحين', 'No available employees'),
+                  translationService.t('no_available_employees'),
                   style: TextStyle(
                       color: context.appText.withValues(alpha: 0.6)),
                 )
@@ -683,7 +655,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
 
   Widget _buildDateAndSlotStep() {
     return _stepCard(
-      title: _tr('5. التاريخ والوقت', '5. Date & Time'),
+      title: translationService.t('step_5_date_time'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -697,12 +669,12 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
               );
               if (picked != null) {
                 setState(() => _date = picked);
-                _loadSlots();
+                unawaited(_loadSlots());
               }
             },
             child: InputDecorator(
               decoration: InputDecoration(
-                labelText: _tr('التاريخ', 'Date'),
+                labelText: translationService.t('date'),
                 isDense: true,
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -720,7 +692,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
             const Center(child: CircularProgressIndicator())
           else if (_slots.isEmpty)
             Text(
-              _tr('لا توجد أوقات متاحة', 'No available time slots'),
+              translationService.t('no_available_time_slots'),
               style: TextStyle(color: context.appText.withValues(alpha: 0.6)),
             )
           else
@@ -836,7 +808,7 @@ class _CreateSessionDialogState extends State<CreateSessionDialog> {
                         ),
                       )
                     : const Icon(LucideIcons.check, size: 16),
-                label: Text(_tr('إنشاء التذكرة', 'Create Ticket')),
+                label: Text(translationService.t('create_ticket')),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFF58220),
                   foregroundColor: Colors.white,

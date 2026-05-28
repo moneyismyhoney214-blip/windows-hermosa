@@ -1,55 +1,80 @@
+import 'dart:async';
 import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
 import 'Splash/splash_screen.dart';
+// Keeps customer_display_main.dart in the kernel snapshot — MainActivity.kt boots it on a secondary engine.
+// ignore: unused_import
+import 'customer_display/customer_display_main.dart';
+import 'locator.dart';
 import 'screens/login_screen.dart';
 import 'services/api/auth_service.dart';
 import 'services/api/base_client.dart';
 import 'services/api/device_service.dart';
-import 'services/language_service.dart';
-import 'services/theme_service.dart';
-import 'services/printer_language_settings_service.dart';
 import 'services/api/product_service.dart';
 import 'services/app_themes.dart';
 import 'services/cashier_sound_service.dart';
-import 'services/presentation_service.dart';
+import 'services/language_service.dart';
+import 'services/logger_service.dart';
+import 'services/observability/crash_reporter.dart';
+import 'services/observability/sentry_crash_reporter.dart';
+import 'services/offline/connectivity_service.dart';
 import 'services/offline/offline_database_service.dart';
 import 'services/offline/offline_pos_database.dart';
-import 'services/offline/connectivity_service.dart';
 import 'services/offline/sync_service.dart';
+import 'services/presentation_service.dart';
+import 'services/printer_language_settings_service.dart';
+import 'services/theme_service.dart';
 import 'widgets/print_listener.dart';
-// Imported so the Flutter CLI keeps `customer_display_main.dart` in the
-// kernel snapshot. The `customerDisplayMain` function itself is not called
-// from here — it's invoked by MainActivity.kt on the secondary engine via
-// a dedicated DartEntrypoint. Without this import the AOT tree-shaker may
-// drop the file entirely before `@pragma('vm:entry-point')` can save it.
-// ignore: unused_import
-import 'customer_display/customer_display_main.dart';
-
-import 'locator.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// The secondary display boots into `customerDisplayMain` (see
-// lib/customer_display/customer_display_main.dart) via a dedicated
-// DartEntrypoint in MainActivity.kt, so `main` here only runs on the
-// primary cashier engine.
-void main() async {
+// `main` here runs on primary cashier engine only; secondary display boots customerDisplayMain.
+void main() {
+  // Guarded zone funnels uncaught async exceptions through the logger.
+  runZonedGuarded<Future<void>>(_bootstrap, (error, stackTrace) {
+    Log.e('zone', 'uncaught async exception', error: error, stackTrace: stackTrace);
+  });
+}
+
+Future<void> _bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize sqflite FFI for desktop platforms (Linux, Windows, macOS)
+  // File reporter by default; Sentry fans out when --dart-define=SENTRY_DSN was set at build.
+  if (SentryCrashReporter.isEnabled) {
+    await SentryCrashReporter.bootstrap(existing: FileCrashReporter());
+  } else {
+    CrashReporter.wireUp();
+  }
+
+  FlutterError.onError = (FlutterErrorDetails details) {
+    Log.e('flutter',
+        details.exceptionAsString(),
+        error: details.exception, stackTrace: details.stack);
+    FlutterError.presentError(details);
+  };
+
+  // Engine/platform errors — returning true tells engine we handled it.
+  WidgetsBinding.instance.platformDispatcher.onError = (error, stackTrace) {
+    Log.e('platform', 'unhandled platform error',
+        error: error, stackTrace: stackTrace);
+    return true;
+  };
+
   if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
     try {
       final sqfliteFfi = await _initSqfliteFfi();
-      if (sqfliteFfi) debugPrint('✅ sqflite FFI initialized for desktop');
-    } catch (e) {
-      debugPrint('⚠️ sqflite FFI init failed (non-fatal): $e');
+      if (sqfliteFfi) Log.i('boot', 'sqflite FFI initialized for desktop');
+    } catch (e, st) {
+      Log.w('boot', 'sqflite FFI init failed (non-fatal)', error: e);
+      Log.e('boot', 'sqflite FFI init stack', error: e, stackTrace: st);
     }
   }
 
-  // Primary display — run the full cashier app.
   var isAuthenticated = false;
   var locatorReady = false;
 
@@ -57,82 +82,57 @@ void main() async {
     setupLocator();
     locatorReady = true;
   } catch (e, stackTrace) {
-    debugPrint('❌ Locator setup failed: $e');
-    debugPrintStack(stackTrace: stackTrace);
+    Log.e('boot', 'locator setup failed', error: e, stackTrace: stackTrace);
   }
 
-  // Initialize offline services (non-critical — may fail on Linux)
-  try {
-    await OfflineDatabaseService().initialize();
-    debugPrint('Offline database initialized');
-  } catch (e) {
-    debugPrint('⚠️ Offline database init (non-fatal): $e');
+  // Run independent inits in parallel; connectivity→sync stays sequential.
+  Future<void> guarded(String tag, Future<void> Function() init) async {
+    try {
+      await init();
+    } catch (e, st) {
+      Log.w('boot', '$tag init failed (non-fatal)', error: e);
+      if (kDebugMode) {
+        Log.e('boot', '$tag init stack', error: e, stackTrace: st);
+      }
+    }
   }
 
-  // Initialize the bundled POS database (copies from assets on first run)
-  try {
-    await OfflinePosDatabase().initialize();
-    debugPrint('Offline POS database initialized');
-  } catch (e) {
-    debugPrint('⚠️ Offline POS database init (non-fatal): $e');
-  }
+  await Future.wait<void>([
+    guarded('offline-db', () => OfflineDatabaseService().initialize()),
+    guarded('offline-pos-db', () => OfflinePosDatabase().initialize()),
+    guarded('translation', () => translationService.initialize()),
+    guarded('theme', () => themeService.initialize()),
+    // Sync depends on connectivity — run in order, rest runs alongside.
+    () async {
+      await guarded(
+          'connectivity', () => ConnectivityService().initialize());
+      await guarded('sync', () => SyncService().initialize());
+    }(),
+  ]);
 
-  try {
-    await ConnectivityService().initialize();
-    debugPrint('Connectivity service initialized');
-  } catch (e) {
-    debugPrint('⚠️ Connectivity service init (non-fatal): $e');
-  }
-
-  try {
-    await SyncService().initialize();
-    debugPrint('Sync service initialized');
-  } catch (e) {
-    debugPrint('⚠️ Sync service init (non-fatal): $e');
-  }
-
-  // Critical: language must always load
-  try {
-    await translationService.initialize();
-  } catch (e) {
-    debugPrint('⚠️ Translation init failed: $e');
-  }
-
-  // Load persisted theme preference (non-critical — defaults to light)
-  try {
-    await themeService.initialize();
-  } catch (e) {
-    debugPrint('⚠️ Theme init (non-fatal): $e');
-  }
-
-  // Load persisted printer language preference (non-critical — defaults to ar/en)
   try {
     await printerLanguageSettings.initialize();
-    // On every boot, wipe any stale translation cache left over from a
-    // previous build (static state survives Flutter hot-restart and would
-    // otherwise resurface an older build's pollution). Subsequent
-    // [primeLanguages] calls re-fetch fresh data.
+    // Wipe stale translation cache from previous build — static state survives hot-restart.
     ProductService().invalidateTranslationsCache();
 
-    // Prime the meal-name cache for whichever pair the cashier chose, then
-    // keep it in sync whenever the user flips the setting live.
-    void _syncPrinterLangsToProducts() {
+    void syncPrinterLangsToProducts() {
       try {
         ProductService().primeLanguages([
           printerLanguageSettings.primary,
           if (printerLanguageSettings.allowSecondary)
             printerLanguageSettings.secondary,
         ]);
-      } catch (_) {}
+      } catch (e) {
+        Log.d('Bootstrap', 'primeLanguages on printer-lang change failed (non-fatal): $e');
+      }
     }
 
-    _syncPrinterLangsToProducts();
-    printerLanguageSettings.addListener(_syncPrinterLangsToProducts);
+    syncPrinterLangsToProducts();
+    printerLanguageSettings.addListener(syncPrinterLangsToProducts);
   } catch (e) {
     debugPrint('⚠️ Printer language init (non-fatal): $e');
   }
 
-  // Critical: auth must always load to restore login state
   try {
     if (locatorReady) {
       if (!getIt.isRegistered<CashierSoundService>()) {
@@ -156,11 +156,7 @@ void main() async {
     debugPrint('⚠️ Auth service init failed: $e');
   }
 
-  // Auto-register the Centerm Q7 built-in printer on first boot. No-op
-  // on every device that isn't a Q7 (the channel returns false). The
-  // registered entry is wired to the cashier-receipt role only — kitchen
-  // tickets continue to flow through whichever bluetooth/network printer
-  // the user adds manually.
+  // Auto-register Q7 built-in printer (cashier-receipt role only). No-op on non-Q7 devices.
   try {
     if (locatorReady) {
       final device = await getIt<DeviceService>()
@@ -200,19 +196,19 @@ void main() async {
   }
 
   BaseClient.onUnauthorized = () async {
-    print('🚫 onUnauthorized callback triggered - logging out');
+    Log.w('auth', '401 received — invalidating session and routing to login');
     try {
       if (!locatorReady || !getIt.isRegistered<AuthService>()) return;
       final authService = getIt<AuthService>();
       await authService.logout();
       if (navigatorKey.currentState != null) {
-        navigatorKey.currentState!.pushAndRemoveUntil(
+        unawaited(navigatorKey.currentState!.pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginScreen()),
           (route) => false,
-        );
+        ));
       }
-    } catch (e) {
-      debugPrint('⚠️ onUnauthorized handling failed: $e');
+    } catch (e, st) {
+      Log.e('auth', 'onUnauthorized handling failed', error: e, stackTrace: st);
     }
   };
 

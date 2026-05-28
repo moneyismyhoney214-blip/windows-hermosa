@@ -415,12 +415,12 @@ class _BookingCard extends StatelessWidget {
       case 'confirmed':
       case 'new':
       case 'pending':
-        return _tr('حجز مؤكد', 'Confirmed');
+        return translationService.t('confirmed_booking_label');
       case '2':
       case 'started':
-        return _tr('بدأ', 'Started');
+        return translationService.t('started_label');
       case '3':
-        return _tr('انتهي', 'Ended');
+        return translationService.t('ended_label');
       case '4':
       case 'preparing':
       case 'processing':
@@ -428,7 +428,7 @@ class _BookingCard extends StatelessWidget {
       case '5':
       case 'ready':
       case 'ready_for_delivery':
-        return _tr('جاهز للتوصيل', 'Ready for delivery');
+        return translationService.t('ready_for_delivery');
       case '6':
       case 'on_the_way':
       case 'out_for_delivery':
@@ -588,7 +588,7 @@ class _BookingCard extends StatelessWidget {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                _tr('دفع لاحقاً', 'Pay Later'),
+                                translationService.t('pay_later_label'),
                                 style: const TextStyle(
                                   color: Color(0xFFF59E0B),
                                   fontWeight: FontWeight.bold,
@@ -627,8 +627,8 @@ class _BookingCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      _tr('طاولة: ${booking.tableName}',
-                          'Table: ${booking.tableName}'),
+                      translationService.t('table_colon_n',
+                          args: {'name': booking.tableName ?? ''}),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: Colors.grey.shade600),
@@ -644,7 +644,7 @@ class _BookingCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _tr('الإجمالي', 'Total'),
+                      translationService.t('total'),
                       style:
                           TextStyle(color: Colors.grey.shade500, fontSize: 12),
                     ),
@@ -722,8 +722,8 @@ class _BookingCard extends StatelessWidget {
                             : const Icon(Icons.receipt, size: 16),
                         label: Text(
                           isPaying
-                              ? _tr('جارٍ الإنشاء...', 'Creating...')
-                              : _tr('إنشاء فاتورة', 'Create Invoice'),
+                              ? translationService.t('creating_dots_label')
+                              : translationService.t('create_invoice_btn'),
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor:
@@ -736,12 +736,12 @@ class _BookingCard extends StatelessWidget {
                       OutlinedButton.icon(
                         onPressed: onViewInvoice,
                         icon: const Icon(Icons.receipt_long, size: 16),
-                        label: Text(_tr('الفاتورة', 'Invoice')),
+                        label: Text(translationService.t('invoice_label')),
                       ),
                     OutlinedButton.icon(
                       onPressed: onUpdateStatus,
                       icon: const Icon(Icons.sync_alt, size: 16),
-                      label: Text(_tr('تحديث الحالة', 'Update Status')),
+                      label: Text(translationService.t('update_status_label')),
                     ),
                     OutlinedButton.icon(
                       onPressed: onSendWhatsApp,

@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../invoices_screen.dart';
 
 extension InvoicesScreenWidgets on _InvoicesScreenState {
@@ -12,10 +12,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
       onChanged: (value) => setState(() => _searchQuery = value.trim()),
       onSubmitted: (_) => _loadInvoices(reset: true),
       decoration: InputDecoration(
-        hintText: _tr(
-          'بحث برقم الفاتورة أو رقم الطلب',
-          'Search by invoice or order number',
-        ),
+        hintText: translationService.t('search_invoice_or_order'),
         isDense: true,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -132,7 +129,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
           Icon(LucideIcons.alertCircle, size: 40, color: Colors.red.shade400),
           const SizedBox(height: 8),
           Text(
-            _tr('تعذر تحميل الفواتير', 'Unable to load invoices'),
+            translationService.t('invoices_load_failed'),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           if (_error != null) ...[
@@ -147,7 +144,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
           ElevatedButton.icon(
             onPressed: () => _loadInvoices(reset: true),
             icon: const Icon(Icons.refresh),
-            label: Text(_tr('إعادة المحاولة', 'Retry')),
+            label: Text(translationService.t('retry')),
           ),
         ],
       ),
@@ -163,7 +160,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
     if (displayItems.isEmpty) {
       return Center(
         child: Text(
-          _tr('لا توجد فواتير', 'No invoices found'),
+          translationService.t('no_invoices_found'),
           style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
         ),
       );
@@ -276,7 +273,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _tr('الإجمالي', 'Total'),
+                            translationService.t('total'),
                             style: TextStyle(
                               color: Colors.grey.shade500,
                               fontSize: 12,
@@ -304,20 +301,11 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                     TextButton.icon(
                       onPressed: () => _showBookingDetailsForInvoice(invoice),
                       icon: const Icon(LucideIcons.fileText, size: 16),
-                      label: Text(_tr('عرض التفاصيل', 'View details')),
+                      label: Text(translationService.t('view_details_btn')),
                       style: TextButton.styleFrom(
                         foregroundColor: context.isDark
                             ? const Color(0xFF60A5FA)
                             : const Color(0xFF2563EB),
-                      ),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _openInvoicePreview(invoice),
-                      icon: const Icon(LucideIcons.eye, size: 16),
-                      label: Text(_tr('معاينة الفاتورة', 'Invoice preview')),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF0EA5E9),
-                        side: const BorderSide(color: Color(0xFF0EA5E9)),
                       ),
                     ),
                     SendInvoiceWhatsAppButton(
@@ -344,7 +332,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                                 size: 14, color: Color(0xFFDC2626)),
                             const SizedBox(width: 4),
                             Text(
-                              _tr('مسترجع بالكامل', 'Fully Refunded'),
+                              translationService.t('fully_refunded'),
                               style: const TextStyle(
                                 color: Color(0xFFDC2626),
                                 fontWeight: FontWeight.bold,
@@ -355,7 +343,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                         ),
                       ),
                     PopupMenuButton<String>(
-                      tooltip: _tr('المزيد', 'More'),
+                      tooltip: translationService.t('more_label'),
                       icon: isRefunding
                           ? const SizedBox(
                               width: 18,
@@ -386,8 +374,8 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                                 const SizedBox(width: 8),
                                 Text(
                                   hasPartialRefund
-                                      ? _tr('استرجاع إضافي', 'Refund More')
-                                      : _tr('استرجاع', 'Refund'),
+                                      ? translationService.t('refund_more')
+                                      : translationService.t('refund'),
                                   style: const TextStyle(
                                       color: Color(0xFFEF4444),
                                       fontWeight: FontWeight.w600),
@@ -403,7 +391,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                                   size: 16, color: Color(0xFFB45309)),
                               const SizedBox(width: 8),
                               Text(
-                                _tr('المرتجعات', 'Refunds'),
+                                translationService.t('refunds_label'),
                                 style: const TextStyle(
                                     color: Color(0xFFB45309),
                                     fontWeight: FontWeight.w600),
@@ -419,7 +407,7 @@ extension InvoicesScreenWidgets on _InvoicesScreenState {
                                   size: 16, color: Color(0xFF0EA5E9)),
                               const SizedBox(width: 8),
                               Text(
-                                _tr('تعديل التاريخ', 'Update Date'),
+                                translationService.t('update_date_label'),
                                 style: const TextStyle(
                                     color: Color(0xFF0EA5E9),
                                     fontWeight: FontWeight.w600),

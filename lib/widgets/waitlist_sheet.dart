@@ -4,13 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../dialogs/waitlist_entry_dialog.dart';
-import '../dialogs/whatsapp_settings_dialog.dart';
+import '../locator.dart';
 import '../models/waitlist_entry.dart';
 import '../screens/waitlist_history_screen.dart';
 import '../services/app_themes.dart';
 import '../services/language_service.dart';
 import '../services/waitlist_assign_controller.dart';
 import '../services/waitlist_service.dart';
+import '../utils/ui_feedback.dart';
+import '../waiter_module/services/waiter_table_registry.dart';
 
 /// The full waitlist management sheet.
 ///
@@ -119,11 +121,32 @@ class _WaitlistSheetState extends State<WaitlistSheet> {
     Navigator.of(context).pop(true);
   }
 
-  Future<void> _openSettings() async {
-    await showDialog<bool>(
-      context: context,
-      builder: (_) => const WhatsAppSettingsDialog(),
-    );
+  /// Move a notified party back to plain "waiting" (frees the table they
+  /// were holding). Refused once an order has been started for them — at
+  /// that point the booking is live and "un-holding" would orphan it.
+  Future<void> _revertToWaiting(WaitlistEntry e) async {
+    final tableId = e.assignedTableId;
+    if (tableId != null && tableId.isNotEmpty) {
+      final reg = getIt<WaiterTableRegistry>();
+      final snap = reg.lookup(tableId);
+      final hasOrder = reg.bookingIdFor(tableId) != null ||
+          reg.paymentPendingFor(tableId) ||
+          reg.paidFor(tableId) ||
+          ((snap?.itemCount ?? 0) > 0);
+      if (hasOrder) {
+        if (!mounted) return;
+        UiFeedback.error(context, translationService.t('waitlist_cannot_revert_has_order'));
+        return;
+      }
+    }
+    await waitlistService.releaseHold(e.id);
+  }
+
+  /// "Seat now" — pick a table, then jump straight into taking the
+  /// party's order (no waiting message). Same table-picker UX as assign.
+  void _beginSeat(WaitlistEntry entry) {
+    waitlistAssignController.beginSeat(entry);
+    Navigator.of(context).pop(true);
   }
 
   Future<void> _openHistory() async {
@@ -233,11 +256,6 @@ class _WaitlistSheetState extends State<WaitlistSheet> {
             tooltip: translationService.t('waitlist_history_title'),
             onPressed: _openHistory,
             icon: Icon(LucideIcons.history, color: context.appTextMuted),
-          ),
-          IconButton(
-            tooltip: translationService.t('whatsapp_settings_title'),
-            onPressed: _openSettings,
-            icon: Icon(LucideIcons.settings, color: context.appTextMuted),
           ),
           IconButton(
             tooltip: translationService.t('close'),
@@ -371,8 +389,8 @@ class _WaitlistSheetState extends State<WaitlistSheet> {
                         case 'edit':
                           await _editEntry(e);
                           break;
-                        case 'cancel':
-                          await waitlistService.cancel(e.id);
+                        case 'revert':
+                          await _revertToWaiting(e);
                           break;
                         case 'remove':
                           await _confirmRemove(e);
@@ -390,7 +408,7 @@ class _WaitlistSheetState extends State<WaitlistSheet> {
                       ),
                       if (isNotified)
                         PopupMenuItem(
-                          value: 'cancel',
+                          value: 'revert',
                           child: _menuRow(
                             icon: LucideIcons.undo2,
                             label: translationService.t(
@@ -441,6 +459,26 @@ class _WaitlistSheetState extends State<WaitlistSheet> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
+                  onPressed: () => _beginSeat(e),
+                  icon: const Icon(LucideIcons.userCheck, size: 16),
+                  label: Text(
+                    isNotified && (e.assignedTableNumber ?? '').isNotEmpty
+                        ? translationService.t(
+                            'waitlist_seat_at_table',
+                            args: {'table': e.assignedTableNumber},
+                          )
+                        : translationService.t('waitlist_seat_now_cta'),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
                   onPressed: () => _beginAssign(e),
                   icon: Icon(
                     isNotified
@@ -488,7 +526,7 @@ class _WaitlistSheetState extends State<WaitlistSheet> {
               e.assignedTableNumber != null
                   ? translationService.t(
                       'waitlist_notified_to',
-                      args: {'table': e.assignedTableNumber!},
+                      args: {'table': e.assignedTableNumber},
                     )
                   : translationService.t('waitlist_status_notified'),
               style: const TextStyle(

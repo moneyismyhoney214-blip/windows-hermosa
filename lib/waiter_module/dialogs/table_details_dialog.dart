@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -9,6 +10,8 @@ import '../../models.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../../services/waitlist_service.dart';
+import '../../utils/ui_feedback.dart';
 import '../models/waiter_table_event.dart';
 import '../services/waiter_billing_service.dart';
 import '../services/waiter_controller.dart';
@@ -51,11 +54,8 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
   @override
   void initState() {
     super.initState();
-    // Rebuild when the waiter adds/edits items or the payment status
-    // flips — otherwise the cashier stares at a frozen snapshot.
     _registry.addListener(_onRegistry);
-    // Pull the branch tax config so per-line totals render tax-inclusive
-    // (matches the cashier tables screen UX and what the waiter sees).
+    // Hydrate tax config so per-line totals are tax-inclusive.
     unawaited(_hydrateTaxConfig());
   }
 
@@ -92,9 +92,7 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
   Widget build(BuildContext context) {
     final items = snapshot.items;
     final size = MediaQuery.sizeOf(context);
-    // Cap dialog to 90% of the viewport on small screens so the rounded
-    // corners and padding stay visible on phones while keeping a comfy
-    // reading width on tablets.
+    // Cap dialog to 90% viewport on small screens; fixed 520×680 on tablets.
     final maxW = size.width < 560 ? size.width * 0.92 : 520.0;
     final maxH = size.height < 720 ? size.height * 0.92 : 680.0;
     return Dialog(
@@ -310,23 +308,15 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
   }
 
   Future<void> _createInvoice() async {
-    // Re-entrancy guard — without this, a double-tap on the "Create
-    // Invoice" button while we're awaiting refreshPayMethods or while
-    // the tender dialog is mounted spawns two parallel `_createInvoice`
-    // runs, both of which call `processBill` once the user confirms
-    // tender → two invoices on the backend, customer charged twice.
-    // The button itself is disabled when `_working == true` but only
-    // AFTER `setState(() => _working = true)` runs, which used to be
-    // post-tender. Guard the entry point too.
+    // Entry-point re-entrancy guard — double-tap on Create Invoice would otherwise produce 2 invoices.
     if (_working) return;
     if (snapshot.items.isEmpty) return;
     setState(() => _working = true);
-    // Pull the latest enabled pay methods + tax config from branch
-    // settings — mirrors the cashier's behavior on opening the tender dialog.
+    // Refresh pay methods + tax config (mirrors cashier tender dialog).
     await _billing.refreshPayMethods();
     if (!mounted) return;
     final subtotal = snapshot.total ?? _computedTotal();
-    // Send tax-inclusive total so pays match invoice total on first try.
+    // Tax-inclusive total so pays match invoice total on first try.
     final total = _billing.applyTax(subtotal);
     final pays = await showDialog<List<Map<String, dynamic>>>(
       context: context,
@@ -348,27 +338,20 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
       waiterName: snapshot.waiterName,
       pays: pays,
       existingBookingId: _pendingBookingId,
+      // Attribute to the waitlist party's customer when present.
+      customerId: waitlistService.customerIdForTable(widget.table.id),
     );
-    if (!mounted) return;
-    setState(() => _working = false);
-    // Remember a partial booking so the next retry doesn't dup it; clear
-    // when the flow completes successfully.
+    // Remember the partial booking so retries don't dup it (backend may already hold it).
     _pendingBookingId = result.success ? null : result.bookingId;
 
     if (!result.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: context.appDanger,
-          content: Text(
-            '${translationService.t('waiter_bill_failed')}: ${result.errorMessage ?? ''}',
-            style: const TextStyle(color: Colors.white),
-          ),
-        ),
-      );
+      if (!mounted) return;
+      setState(() => _working = false);
+      UiFeedback.info(context, '${translationService.t('waiter_bill_failed')}: ${result.errorMessage ?? ''}');
       return;
     }
 
-    // Broadcast lifecycle so the waiter's card also updates to "paid".
+    // Broadcast lifecycle so registry converges even if this dialog was dismissed mid-flow (prevents double-invoice; see WAITER_MODULE_QA_FINDINGS.md B-1).
     final payLater = result.paymentMethod == 'pay_later';
     final me = _controller.session.self;
     if (me != null) {
@@ -386,10 +369,7 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
         items: snapshot.items,
         orderId: result.bookingId,
       ));
-      // After a fully paid invoice we also release the table so the
-      // registry entry goes back to "free" — otherwise the row sits at
-      // `paid=true` forever and blocks the next customer. Pay-later keeps
-      // the table open because money hasn't been collected yet.
+      // Fully-paid invoices release the table; pay-later keeps it open until cash lands.
       if (!payLater) {
         _controller.broadcastTableEvent(TableLifecycleEvent(
           kind: TableLifecycleKind.released,
@@ -402,17 +382,10 @@ class _TableDetailsDialogState extends State<TableDetailsDialog> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: context.appSuccess,
-        content: Text(
-          payLater
+    setState(() => _working = false);
+    UiFeedback.info(context, payLater
               ? translationService.t('waiter_bill_pending')
-              : translationService.t('waiter_bill_done'),
-          style: const TextStyle(color: Colors.white),
-        ),
-      ),
-    );
+              : translationService.t('waiter_bill_done'));
     Navigator.of(context).pop();
   }
 

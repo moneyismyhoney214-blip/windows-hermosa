@@ -4,8 +4,8 @@ import '../../locator.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/api/base_client.dart';
 import 'app_logger.dart';
-import 'nearpay_service.dart';
 import 'nearpay_config_service.dart';
+import 'nearpay_service.dart';
 
 /// NearPay Bootstrap — centralized initialization entrypoint.
 ///

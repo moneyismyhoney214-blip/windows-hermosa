@@ -1,3 +1,8 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 import 'dart:async';
 import 'dart:io';
 
@@ -6,6 +11,8 @@ import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../services/bluetooth_print_channel.dart';
+import '../../services/language_service.dart';
+import '../../services/logger_service.dart';
 
 class BluetoothSelection {
   final String name;
@@ -48,7 +55,9 @@ class BluetoothDevicePicker {
                 if (state != null) {
                   try {
                     discovered.addAll(state.devices as Iterable<BluetoothDevice>);
-                  } catch (_) {}
+                  } catch (e) {
+                    Log.d('BluetoothDevicePicker', 'discovery snapshot parse failed (non-fatal): $e');
+                  }
                 }
                 final bool isScanning = state?.isDiscovering ?? false;
 
@@ -168,14 +177,14 @@ class BluetoothDevicePicker {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('إدخال MAC يدوي'),
+          title: Text(translationService.t('bt_manual_mac_title')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'اسم الطابعة (اختياري)',
+                decoration: InputDecoration(
+                  labelText: translationService.t('bt_printer_name_optional'),
                 ),
               ),
               const SizedBox(height: 12),
@@ -191,7 +200,7 @@ class BluetoothDevicePicker {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('إلغاء'),
+              child: Text(translationService.t('cancel')),
             ),
             ElevatedButton(
               onPressed: () {
@@ -204,7 +213,7 @@ class BluetoothDevicePicker {
                 );
                 Navigator.pop(dialogContext);
               },
-              child: const Text('حفظ'),
+              child: Text(translationService.t('save')),
             ),
           ],
         );
@@ -229,28 +238,27 @@ class BluetoothDevicePicker {
     // Visual cue that pairing is in flight — bondDevice() blocks up to 30s
     // waiting on ACTION_BOND_STATE_CHANGED, and we don't want the cashier
     // tapping again while the system dialog is still up.
-    showDialog<void>(
+    unawaited(showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const AlertDialog(
+      builder: (_) => AlertDialog(
         content: Row(
           children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 16),
+            const CircularProgressIndicator(),
+            const SizedBox(width: 16),
             Expanded(
-              child: Text(
-                'جاري إقران الطابعة... أدخل رمز PIN عند الطلب',
-              ),
+              child: Text(translationService.t('bt_pairing_in_progress')),
             ),
           ],
         ),
       ),
-    );
+    ));
 
     bool ok = false;
     try {
       ok = await BluetoothPrintChannel.bondDevice(selection.address);
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       ok = false;
     }
 
@@ -260,10 +268,9 @@ class BluetoothDevicePicker {
 
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'تعذر إقران الطابعة. أعد المحاولة أو أقرن الجهاز يدوياً من إعدادات البلوتوث.',
-          ),
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(translationService.t('bt_pairing_failed')),
           backgroundColor: Colors.red,
         ),
       );
@@ -283,8 +290,9 @@ class BluetoothDevicePicker {
     final ok = statuses.values.every((status) => status.isGranted);
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('صلاحيات البلوتوث مطلوبة لاستخدام الطابعة'),
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(translationService.t('bt_permission_required')),
           backgroundColor: Colors.red,
         ),
       );

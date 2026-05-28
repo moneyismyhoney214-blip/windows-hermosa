@@ -59,9 +59,45 @@ codemagic.keystore
 assets/sounds/backend.env.txt
 *.env
 .env
+# HAR files (contain sensitive API tokens/cookies)
+*.har
+
+# Backup files
+*.backup
+*.bak
+*.old
+
 # macOS metadata
 .DS_Store
 .AppleDouble
 .LSOverride
 __MACOSX/
 ._*
+
+# Repo hygiene — keep these patterns out of the tree.
+# Auditor / scratch analysis output
+/analysis_*.txt
+/final_scan.txt
+/full_analysis.txt
+/QA_*.txt
+
+# Postman / API collection exports — belong in docs/, not repo root
+/*.postman_collection.json
+/price-list-api-collection.json
+/robo_script.json
+/BOOKING_SETTINGS_RAW_RESPONSE.json
+
+# Raw screenshots / WhatsApp drops dumped into the repo root
+/WhatsApp*
+/screen.png
+# UUID-named jpegs from ad-hoc bug-report dumps (UUID v4 pattern)
+/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*.jpeg
+/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*.jpg
+/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*.png
+
+# Test report outputs — regenerated on each run
+/test_reports/
+
+# NearPay SDK runtime logs
+/nearpay_*.log
+/nearpay_sdk_*.log

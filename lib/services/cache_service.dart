@@ -15,7 +15,7 @@ class CacheService {
   /// Save data to cache with expiration
   Future<void> set(String key, dynamic data, {Duration? expiry}) async {
     final prefs = await _instance;
-    final cacheData = {
+    final cacheData = <String, dynamic>{
       'data': data,
       'expiry': expiry != null
           ? DateTime.now().add(expiry).toIso8601String()
@@ -32,8 +32,10 @@ class CacheService {
     if (cachedString == null) return null;
 
     try {
-      final cacheData = jsonDecode(cachedString);
-      final expiryStr = cacheData['expiry'];
+      final decoded = jsonDecode(cachedString);
+      if (decoded is! Map) return null;
+      final cacheData = Map<String, dynamic>.from(decoded);
+      final expiryStr = cacheData['expiry'] as String?;
 
       if (expiryStr != null) {
         final expiry = DateTime.parse(expiryStr);

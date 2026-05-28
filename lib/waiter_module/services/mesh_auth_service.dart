@@ -28,13 +28,26 @@ import '../models/network_message.dart';
 /// top — but that needs certificate management on private LAN IPs and
 /// isn't viable on Sunmi devices without a provisioning pipeline.
 class MeshAuthService {
-  /// Hardcoded application pepper. Decompiling the APK reveals this;
-  /// it raises the bar against opportunistic LAN attackers, not against
-  /// a determined adversary with the binary. Bumped on protocol
-  /// changes so older builds don't accidentally talk to newer ones
-  /// after a key-derivation tweak.
-  static const String _pepper =
-      'hermosa-mesh-v1-7c5e1f2a8b3d4e6f9a0b1c2d3e4f5a6b';
+  /// Application pepper, injected at compile time via
+  /// `--dart-define=MESH_AUTH_PEPPER=<random-32-byte-hex>`. CI plumbs
+  /// this through the Codemagic secure env var `MESH_AUTH_PEPPER` so
+  /// the value never lives in source. The fallback `dev-only-…` value
+  /// is intentionally weak so a forgotten `--dart-define` doesn't
+  /// silently ship a known constant into production — any release build
+  /// without the env var will still authenticate among itself but won't
+  /// share a pepper with other releases. Bump the version prefix on
+  /// protocol changes so older builds don't accidentally talk to newer
+  /// ones after a key-derivation tweak.
+  ///
+  /// Decompiling the APK still reveals whatever pepper the build was
+  /// stamped with — that's a property of compile-time constants in any
+  /// AOT-compiled language, not of this design. The defense remains
+  /// "raise the bar against opportunistic LAN attackers"; for stronger
+  /// guarantees layer `wss://` on top.
+  static const String _pepper = String.fromEnvironment(
+    'MESH_AUTH_PEPPER',
+    defaultValue: 'dev-only-mesh-v1-DO-NOT-USE-IN-PRODUCTION',
+  );
 
   Uint8List? _key;
   String? _scope;

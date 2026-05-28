@@ -1,20 +1,28 @@
+// ignore_for_file: avoid_dynamic_calls
+// JSON wire-boundary / message-dispatch layer — dynamic accesses accepted pending typed-model refactor.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:lucide_icons/lucide_icons.dart';
+
+import '../locator.dart';
 import '../models.dart';
+import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
+import '../services/api/device_service.dart';
 import '../services/api/filter_service.dart';
 import '../services/api/report_service.dart';
-import '../services/api/device_service.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
-import '../services/api/api_constants.dart';
-import '../services/zatca_printer_service.dart';
-import '../services/printer_role_registry.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/printer_language_settings_service.dart';
+import '../services/printer_role_registry.dart';
+import '../services/zatca_printer_service.dart';
+import '../utils/ui_feedback.dart';
 import '../widgets/daily_closing_report_html_template.dart';
-import '../locator.dart';
-import 'closing_report_preview_screen.dart';
+
+part 'reports_screen_parts/reports_screen.cards.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
@@ -23,26 +31,23 @@ class ReportsScreen extends StatefulWidget {
   State<ReportsScreen> createState() => _ReportsScreenState();
 }
 
-class _ReportsScreenState extends State<ReportsScreen>
-    with SingleTickerProviderStateMixin {
+class _ReportsScreenState extends State<ReportsScreen> {
   final ReportService _reportService = getIt<ReportService>();
   final FilterService _filterService = getIt<FilterService>();
   final AuthService _authService = AuthService();
-  late TabController _tabController;
   final NumberFormat _formatter = NumberFormat('#,##0.00', 'ar');
+
+  static const Color _accent = Color(0xFFF58220);
 
   DateTime _dateFrom = DateTime.now();
   DateTime _dateTo = DateTime.now();
 
-  // Report type filter
-  String _selectedReportType = 'salesPay'; // Default to sales report
+  String _selectedReportType = 'salesPay';
 
-  // Owner-only per-cashier filter. The web frontend exposes the same
-  // dropdown fed by `/seller/filters/branches/{branchId}/allCashiers`,
-  // and only owners get a meaningful selection — CASHIER role users are
-  // pinned to their own id by the backend, so we hide the control for
-  // them to match the web behavior.
+  // Owner-only per-cashier filter (mirrors web /allCashiers dropdown).
   late final bool _isOwner = _authService.isOwner();
+  // "دخل الموظفين" is salon-only.
+  bool get _isSalon => ApiConstants.branchModule == 'salons';
   List<Map<String, dynamic>> _cashiers = const [];
   bool _cashiersLoading = false;
   String? _selectedCashierId;
@@ -53,16 +58,12 @@ class _ReportsScreenState extends State<ReportsScreen>
 
   Map<String, dynamic>? _currentReport;
 
-  // Per-cashier employee income, populated when the user picks the
-  // "Employees income" report type. Keyed by cashier id; each entry is
-  // the raw `data` block from `/categories?type=employees&cashier_id=X`,
-  // i.e. `chartCount` + `chartTotal` already aggregated by the backend.
+  // Per-cashier employee income keyed by cashier id; raw `data` block from /categories.
   final Map<String, Map<String, dynamic>> _employeesIncome = {};
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 1, vsync: this);
     translationService.addListener(_onLanguageChanged);
     if (_isOwner) {
       _loadCashiers();
@@ -88,7 +89,8 @@ class _ReportsScreenState extends State<ReportsScreen>
         _cashiers = list;
         _cashiersLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (!mounted) return;
       setState(() => _cashiersLoading = false);
     }
@@ -96,7 +98,6 @@ class _ReportsScreenState extends State<ReportsScreen>
 
   @override
   void dispose() {
-    _tabController.dispose();
     translationService.removeListener(_onLanguageChanged);
     super.dispose();
   }
@@ -105,15 +106,15 @@ class _ReportsScreenState extends State<ReportsScreen>
     if (mounted) setState(() {});
   }
 
-  /// Fans out one `categories?type=employees&cashier_id=X` request per
-  /// cashier in the owner's list. Returns a synthetic report shaped like
-  /// the single-cashier responses so `_buildReportLines` and the rest of
-  /// the existing renderer pipeline pick it up unchanged.
+  /// Fans out one `/categories?type=employees&cashier_id=X` per cashier; returns a synthetic single-cashier-shaped report.
   Future<Map<String, dynamic>> _loadEmployeesIncome({
     required String dateFromStr,
     required String dateToStr,
     String? acceptLanguage,
   }) async {
+    // Salon-only backstop in case future caller bypasses the gated chip (see CLAUDE.md).
+    assert(_isSalon,
+        'employees-income is salon-only; branchModule=${ApiConstants.branchModule}');
     _employeesIncome.clear();
     if (_cashiers.isEmpty) {
       return {
@@ -150,7 +151,9 @@ class _ReportsScreenState extends State<ReportsScreen>
             return MapEntry(
                 id, data.map((k, v) => MapEntry(k.toString(), v)));
           }
-        } catch (_) {}
+        } catch (e) {
+          Log.d('ReportsScreen', 'per-cashier employees-sales report fetch failed (non-fatal): $e');
+        }
         return null;
       }());
     }
@@ -179,14 +182,17 @@ class _ReportsScreenState extends State<ReportsScreen>
           : int.tryParse(data?['chartCount']?.toString() ?? '') ?? 0;
       grandTotal += total;
       grandCount += count;
-      // The existing pieChart renderer reads `label` + `value`. We tack on
-      // `count` so a custom branch can surface the invoice-count too.
+      // Tack on `count` alongside label/value for custom invoice-count branches.
       chartData.add({
         'label': label,
         'value': total,
         'count': count,
       });
     }
+
+    // Rank employees by revenue (top earner first); consumed in order by renderer + buildReportLines.
+    chartData.sort(
+        (a, b) => _parseDouble(b['value']).compareTo(_parseDouble(a['value'])));
 
     return {
       'data': {
@@ -215,12 +221,7 @@ class _ReportsScreenState extends State<ReportsScreen>
       final dateFromStr = DateFormat('yyyy-MM-dd').format(_dateFrom);
       final dateToStr = DateFormat('yyyy-MM-dd').format(_dateTo);
 
-      // Force the fetch's Accept-Language to the printer language via an
-      // explicit per-request header. This guarantees the backend returns
-      // category / meal names in the language the receipt will actually
-      // print, regardless of the app's current UI language. The scoped
-      // cache bucket inside `_offlineGet` keeps per-language responses
-      // separate so a reprint never gets served the wrong-language reply.
+      // Force Accept-Language to printer language so backend returns receipt-matching names.
       final printerLang = printerLanguageSettings.primary;
       Map<String, dynamic> result;
       switch (_selectedReportType) {
@@ -241,11 +242,7 @@ class _ReportsScreenState extends State<ReportsScreen>
           );
           break;
         case 'employeesIncome':
-          // Per-cashier fan-out: the backend takes one cashier_id per
-          // request, so we fire one in parallel for every cashier the
-          // owner has visible. The branch-level aggregate is built from
-          // the responses and stuffed into a synthetic `chart` block so
-          // the existing `_buildReportLines` renderer picks it up.
+          // Per-cashier fan-out aggregated into synthetic chart block for buildReportLines.
           result = await _loadEmployeesIncome(
             dateFromStr: dateFromStr,
             dateToStr: dateToStr,
@@ -277,143 +274,35 @@ class _ReportsScreenState extends State<ReportsScreen>
     }
   }
 
-  Future<void> _selectDateRange() async {
-    final picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-      initialDateRange: DateTimeRange(start: _dateFrom, end: _dateTo),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFFF58220),
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _dateFrom = picked.start;
-        _dateTo = picked.end;
-      });
-      _loadData();
-    }
-  }
-
-  Future<void> _sendReportViaWhatsApp() async {
-    final phoneController = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(translationService.t('send_report_via_whatsapp')),
-        content: TextField(
-          controller: phoneController,
-          keyboardType: TextInputType.phone,
-          decoration: InputDecoration(
-            labelText: translationService.t('phone_number_label'),
-            hintText: '9665XXXXXXXX',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(translationService.t('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, phoneController.text),
-            child: Text(translationService.t('send')),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      try {
-        final dateFromStr = DateFormat('yyyy-MM-dd').format(_dateFrom);
-        final dateToStr = DateFormat('yyyy-MM-dd').format(_dateTo);
-        await _reportService.sendReportViaWhatsApp(
-          dateFrom: dateFromStr,
-          dateTo: dateToStr,
-          phoneNumber: result,
-        );
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(translationService.t('report_sent_successfully'))),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(translationService.t('report_send_failed', args: {'error': e.toString()}))),
-          );
-        }
-      }
-    }
-  }
-
-  void _openReportPreview() {
-    if (_currentReport == null) {
+  Future<void> _printReport() async {
+    // Snapshot report + type so a mid-print async refresh can't swap data under us.
+    final reportType = _selectedReportType;
+    final report = _currentReport;
+    if (report == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(translationService.t('no_data_for_preview')),
+          duration: const Duration(seconds: 3),
+          content: Text(translationService.t('no_data_for_closing')),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
-    final lines = _buildReportLines(_currentReport!);
-    if (lines.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد بيانات قابلة للطباعة.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ClosingReportPreviewScreen(
-          lines: lines,
-          dateFrom: _dateFrom,
-          dateTo: _dateTo,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _printReport() async {
-    if (_currentReport == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد بيانات لطباعة الإقفالية.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    final lines = _buildReportLines(_currentReport!);
+    final lines = _buildReportLines(report);
     if (lines.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد بيانات قابلة للطباعة.'),
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(translationService.t('no_data_for_print')),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
-    // Fetch printers
     List<DeviceConfig> printers = [];
     try {
       final deviceService = getIt<DeviceService>();
@@ -429,8 +318,12 @@ class _ReportsScreenState extends State<ReportsScreen>
       }).toList(growable: false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر تحميل الطابعات: $e'), backgroundColor: Colors.red),
+      UiFeedback.error(
+        context,
+        translationService.t(
+          'printers_load_failed',
+          args: {'reason': '$e'},
+        ),
       );
       return;
     }
@@ -438,35 +331,33 @@ class _ReportsScreenState extends State<ReportsScreen>
     if (printers.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('⚠️ لا توجد طابعات مضافة'),
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text('⚠️ ${translationService.t('no_printers_added')}'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
-    // Pick printer
-    DeviceConfig? selected;
+    DeviceConfig selected;
     if (printers.length == 1) {
       selected = printers.first;
     } else {
+      DeviceConfig? preferred;
       try {
         final roleRegistry = getIt<PrinterRoleRegistry>();
         await roleRegistry.initialize();
         for (final p in printers) {
           if (roleRegistry.resolveRole(p) == PrinterRole.cashierReceipt) {
-            selected = p;
+            preferred = p;
             break;
           }
         }
       } catch (_) {}
-      selected ??= printers.first;
+      selected = preferred ?? printers.first;
     }
 
-    if (selected == null) return;
-
-    // Print
     setState(() => _isPrinting = true);
     try {
       final fmt = NumberFormat('0.00', 'en');
@@ -475,16 +366,7 @@ class _ReportsScreenState extends State<ReportsScreen>
       final toStr = df.format(_dateTo);
 
 
-      // Resolve report metadata from API
-      final report = _currentReport ?? {};
-      final branch = report['branch'] is Map
-          ? (report['branch'] as Map).map((k, v) => MapEntry(k.toString(), v))
-          : <String, dynamic>{};
-      // Resolve the printer-language trio so every report label follows the
-      // same locale rules as the invoice/kitchen tickets instead of hardcoded
-      // Arabic. `_reportPick` returns the primary value; `_reportSec` returns
-      // an empty string when no distinct secondary is configured, letting
-      // callers render a bilingual header only when it makes sense.
+      // Resolve printer-language trio so labels follow invoice/kitchen locale rules.
       final lang = printerLanguageSettings.primary;
       final langSec = printerLanguageSettings.allowSecondary &&
               printerLanguageSettings.secondary != lang
@@ -523,11 +405,7 @@ class _ReportsScreenState extends State<ReportsScreen>
               String? es}) =>
           reportPickLang(lang,
               ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
-      // Secondary-language resolver kept alive for future bilingual layouts.
-      // Today's 2-column report table has no room for a stacked translation,
-      // so we only call `reportPick` (primary) — this helper stays under an
-      // analyzer opt-out so adding a third header column later stays a
-      // one-liner instead of plumbing the locals in again.
+      // Secondary-language resolver kept for future bilingual layouts.
       // ignore: unused_element
       String reportPickSecondary(
           {required String ar,
@@ -541,36 +419,42 @@ class _ReportsScreenState extends State<ReportsScreen>
             ar: ar, en: en, hi: hi, ur: ur, tr: tr, es: es);
       }
 
-      // Always derive the report title locally so the invoice language wins
-      // over whatever locale the backend decided to return in `title`. The
-      // API used to stamp "إقفالية مبيعات" regardless of cashier prefs,
-      // which leaked Arabic into es/en/tr receipts.
-      final reportTitle = _selectedReportType == 'categoriesSales'
-          ? reportPick(
+      // Derive title locally so invoice language wins over backend `title`.
+      final String reportTitle;
+      switch (reportType) {
+        case 'categoriesSales':
+          reportTitle = reportPick(
               ar: 'تقرير الفئات',
               en: 'Categories Report',
               hi: 'श्रेणी रिपोर्ट',
               ur: 'زمروں کی رپورٹ',
               es: 'Reporte de Categorías',
-              tr: 'Kategori Raporu')
-          : reportPick(
+              tr: 'Kategori Raporu');
+          break;
+        case 'employeesIncome':
+          reportTitle = reportPick(
+              ar: 'دخل الموظفين',
+              en: 'Employees Income',
+              hi: 'कर्मचारी आय',
+              ur: 'ملازمین کی آمدنی',
+              es: 'Ingresos de Empleados',
+              tr: 'Çalışan Geliri');
+          break;
+        default:
+          reportTitle = reportPick(
               ar: 'إقفالية مبيعات',
               en: 'Sales Closing',
               hi: 'बिक्री समापन',
               ur: 'سیلز کلوزنگ',
               es: 'Cierre de Ventas',
               tr: 'Satış Kapanışı');
-      final reportDate = report['date']?.toString() ?? toStr;
-      final reportTime = report['time']?.toString() ?? '';
+      }
       final reportFrom = report['from']?.toString() ?? fromStr;
       final reportTo = report['to']?.toString() ?? toStr;
-      final address = branch['address']?.toString() ?? '';
-      final district = branch['district']?.toString() ?? '';
-      final cashier = report['cashier']?.toString();
       final taxPercentage = _parseDouble(report['tax_percentage'] ?? 15);
 
       final String columnHeader;
-      switch (_selectedReportType) {
+      switch (reportType) {
         case 'categoriesSales':
           columnHeader = reportPick(
               ar: 'التصنيف',
@@ -579,6 +463,15 @@ class _ReportsScreenState extends State<ReportsScreen>
               ur: 'زمرہ',
               es: 'Categoría',
               tr: 'Kategori');
+          break;
+        case 'employeesIncome':
+          columnHeader = reportPick(
+              ar: 'الموظف',
+              en: 'Employee',
+              hi: 'कर्मचारी',
+              ur: 'ملازم',
+              es: 'Empleado',
+              tr: 'Çalışan');
           break;
         default:
           columnHeader = reportPick(
@@ -594,7 +487,7 @@ class _ReportsScreenState extends State<ReportsScreen>
       final total = apiTotal > 0 ? apiTotal : lines.fold<double>(0.0, (s, l) => s + l.amount);
       final tax = total * (taxPercentage / 100);
 
-      Widget _cell(String text, {bool bold = false, double fontSize = 18}) {
+      Widget cell(String text, {bool bold = false, double fontSize = 18}) {
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           child: Text(text,
@@ -603,29 +496,34 @@ class _ReportsScreenState extends State<ReportsScreen>
         );
       }
 
+      // Thermal printers can't render white; force black-on-white regardless of theme.
       final reportWidget = Directionality(
         textDirection: TextDirection.rtl,
-        child: Container(
-          color: context.appCardBg,
-          padding: const EdgeInsets.all(12),
-          child: Column(
+        child: DefaultTextStyle(
+          style: const TextStyle(
+            color: Colors.black,
+            fontSize: 16,
+            fontFamily: 'sans-serif',
+          ),
+          child: IconTheme(
+            data: const IconThemeData(color: Colors.black),
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(12),
+              child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 8),
-              // Title
               Text(reportTitle, textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
-              // From / To — localized. Using the secondary language in a
-              // stacked second line would break the 2-column table layout,
-              // so we just render the primary label here.
               Table(
                 border: TableBorder.all(color: Colors.black, width: 1),
                 children: [
                   TableRow(children: [
-                    _cell(reportTo),
-                    _cell(reportPick(
+                    cell(reportTo),
+                    cell(reportPick(
                         ar: 'إلى',
                         en: 'To',
                         hi: 'तक',
@@ -634,8 +532,8 @@ class _ReportsScreenState extends State<ReportsScreen>
                         tr: 'Bitiş')),
                   ]),
                   TableRow(children: [
-                    _cell(reportFrom),
-                    _cell(reportPick(
+                    cell(reportFrom),
+                    cell(reportPick(
                         ar: 'من',
                         en: 'From',
                         hi: 'से',
@@ -646,14 +544,12 @@ class _ReportsScreenState extends State<ReportsScreen>
                 ],
               ),
               const SizedBox(height: 8),
-              // Data table
               Table(
                 border: TableBorder.all(color: Colors.black, width: 1),
                 columnWidths: const {0: FlexColumnWidth(1), 1: FlexColumnWidth(1)},
                 children: [
-                  // Header
                   TableRow(children: [
-                    _cell(
+                    cell(
                         reportPick(
                             ar: 'المبلغ',
                             en: 'Amount',
@@ -662,17 +558,15 @@ class _ReportsScreenState extends State<ReportsScreen>
                             es: 'Monto',
                             tr: 'Tutar'),
                         bold: true),
-                    _cell(columnHeader, bold: true),
+                    cell(columnHeader, bold: true),
                   ]),
-                  // Data rows
                   ...lines.map((line) => TableRow(children: [
-                    _cell(fmt.format(line.amount)),
-                    _cell(line.label),
+                    cell(fmt.format(line.amount)),
+                    cell(line.label),
                   ])),
-                  // Total
                   TableRow(children: [
-                    _cell(fmt.format(total), bold: true),
-                    _cell(
+                    cell(fmt.format(total), bold: true),
+                    cell(
                         reportPick(
                             ar: 'الاجمالي',
                             en: 'Total',
@@ -682,19 +576,20 @@ class _ReportsScreenState extends State<ReportsScreen>
                             tr: 'Toplam'),
                         bold: true),
                   ]),
-                  // Tax
-                  TableRow(children: [
-                    _cell(fmt.format(tax), bold: true),
-                    _cell(
-                        reportPick(
-                            ar: 'الضريبة',
-                            en: 'Tax',
-                            hi: 'कर',
-                            ur: 'ٹیکس',
-                            es: 'Impuesto',
-                            tr: 'Vergi'),
-                        bold: true),
-                  ]),
+                  // Suppress tax for employees-income (per-employee revenue, not VAT).
+                  if (reportType != 'employeesIncome')
+                    TableRow(children: [
+                      cell(fmt.format(tax), bold: true),
+                      cell(
+                          reportPick(
+                              ar: 'الضريبة',
+                              en: 'Tax',
+                              hi: 'कर',
+                              ur: 'ٹیکس',
+                              es: 'Impuesto',
+                              tr: 'Vergi'),
+                          bold: true),
+                    ]),
                 ],
               ),
               const SizedBox(height: 16),
@@ -721,8 +616,10 @@ class _ReportsScreenState extends State<ReportsScreen>
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 16),
               ),
-              const SizedBox(height: 12),
-            ],
+                  const SizedBox(height: 12),
+                ],
+              ),
+            ),
           ),
         ),
       );
@@ -731,16 +628,21 @@ class _ReportsScreenState extends State<ReportsScreen>
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ تم طباعة الإقفالية'),
+          SnackBar(
+            duration: const Duration(seconds: 3),
+            content: Text('✅ ${translationService.t('closing_report_printed')}'),
             backgroundColor: Colors.green,
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل الطباعة: $e'), backgroundColor: Colors.red),
+        UiFeedback.error(
+          context,
+          translationService.t(
+            'print_failed_with_reason',
+            args: {'reason': '$e'},
+          ),
         );
       }
     } finally {
@@ -752,398 +654,452 @@ class _ReportsScreenState extends State<ReportsScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.appBg,
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _buildErrorView()
-              : _buildContent(),
+      body: SafeArea(
+        child: _isLoading
+            ? _buildLoadingView()
+            : _error != null
+                ? _buildErrorView()
+                : _buildContent(),
+      ),
+    );
+  }
+
+  Widget _buildLoadingView() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(color: _accent),
+          const SizedBox(height: 16),
+          Text(
+            translationService.t('loading'),
+            style: TextStyle(color: context.appTextMuted, fontSize: 14),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildErrorView() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
-          const SizedBox(height: 16),
-          Text(
-            translationService.t('error'),
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.red.shade700,
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(LucideIcons.alertTriangle,
+                  size: 44, color: Colors.red.shade400),
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(_error!, style: TextStyle(color: context.appTextMuted)),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _loadData,
-            icon: const Icon(Icons.refresh),
-            label: Text(translationService.t('try_again')),
-          ),
-        ],
+            const SizedBox(height: 20),
+            Text(
+              translationService.t('error'),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: context.appText,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _error ?? '',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: context.appTextMuted, fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _loadData,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: Text(translationService.t('try_again')),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accent,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildContent() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Column(
-          children: [
-            _buildHeader(),
-            _buildTabBar(),
-            Expanded(
-              child: _buildTabContent(),
-            ),
-          ],
-        );
-      },
+    return Column(
+      children: [
+        _buildHeader(),
+        Expanded(child: _buildBody()),
+      ],
     );
   }
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
         color: context.appCardBg,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isSmallScreen = constraints.maxWidth < 600;
-          
-          if (isSmallScreen) {
-            // عرض مضغوط للشاشات الصغيرة
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  translationService.t('daily_closing_report'),
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatDate(_dateFrom)} - ${_formatDate(_dateTo)}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: context.appTextMuted,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // Report type filter
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: context.appSurfaceAlt,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: context.appBorder),
-                  ),
-                  child: DropdownButton<String>(
-                    value: _selectedReportType,
-                    isExpanded: true,
-                    underline: const SizedBox(),
-                    style: const TextStyle(fontSize: 13, color: Colors.black87),
-                    items: [
-                      DropdownMenuItem(
-                        value: 'salesPay',
-                        child: Text(translationService.t('sales_report_title')),
-                      ),
-                      DropdownMenuItem(
-                        value: 'categoriesSales',
-                        child: Text(translationService.t('categories')),
-                      ),
-                      if (_isOwner)
-                        DropdownMenuItem(
-                          value: 'employeesIncome',
-                          child: Text(translationService.t('employees_income')),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          _selectedReportType = value;
-                        });
-                        _loadData();
-                      }
-                    },
-                  ),
-                ),
-                if (_isOwner) ...[
-                  const SizedBox(height: 8),
-                  _buildCashierFilter(),
-                ],
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _selectDateRange,
-                        icon: const Icon(Icons.calendar_today, size: 14),
-                        label: Text(translationService.t('period'), style: TextStyle(fontSize: 12)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFF58220),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: _loadData,
-                        icon: const Icon(Icons.refresh, size: 18),
-                        padding: EdgeInsets.all(8),
-                        constraints: BoxConstraints(),
-                        style: IconButton.styleFrom(
-                          backgroundColor: context.appSurfaceAlt,
-                          foregroundColor: context.appTextMuted,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: _sendReportViaWhatsApp,
-                        icon: const Icon(LucideIcons.messageCircle, size: 18),
-                        padding: EdgeInsets.all(8),
-                        constraints: BoxConstraints(),
-                        style: IconButton.styleFrom(
-                          backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.1),
-                          foregroundColor: const Color(0xFF25D366),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: _isPrinting ? null : _printReport,
-                        icon: _isPrinting
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.print, size: 18),
-                        padding: EdgeInsets.all(8),
-                        constraints: BoxConstraints(),
-                        style: IconButton.styleFrom(
-                          backgroundColor: context.appSurfaceAlt,
-                          foregroundColor: context.appTextMuted,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          }
-          
-          // عرض عادي للشاشات الكبيرة
-          return Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(LucideIcons.barChart2,
+                    color: _accent, size: 22),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      translationService.t('daily_closing_report'),
+                      translationService.t('reports'),
                       style: TextStyle(
-                        fontSize: 20,
+                        fontSize: 19,
                         fontWeight: FontWeight.bold,
+                        color: context.appText,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 1),
                     Text(
-                      '${_formatDate(_dateFrom)} - ${_formatDate(_dateTo)}',
+                      _currentReportTitle(),
                       style: TextStyle(
                         fontSize: 12,
                         color: context.appTextMuted,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               ),
-              // Report type filter
-              Container(
-                width: 200,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: context.appSurfaceAlt,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: context.appBorder),
-                ),
-                child: DropdownButton<String>(
-                  value: _selectedReportType,
-                  isExpanded: true,
-                  underline: const SizedBox(),
-                  style: const TextStyle(fontSize: 14, color: Colors.black87),
-                  items: [
-                    DropdownMenuItem(
-                      value: 'salesPay',
-                      child: Text(translationService.t('sales_report_title')),
-                    ),
-                    DropdownMenuItem(
-                      value: 'categoriesSales',
-                      child: Text(translationService.t('categories')),
-                    ),
-                    if (_isOwner)
-                      DropdownMenuItem(
-                        value: 'employeesIncome',
-                        child: Text(translationService.t('employees_income')),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        _selectedReportType = value;
-                      });
-                      _loadData();
-                    }
-                  },
-                ),
-              ),
-              if (_isOwner) ...[
-                const SizedBox(width: 8),
-                SizedBox(width: 220, child: _buildCashierFilter()),
-              ],
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: _selectDateRange,
-                icon: const Icon(Icons.calendar_today, size: 16),
-                label: Text(translationService.t('period'), style: TextStyle(fontSize: 13)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFF58220),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
+              _headerIconButton(
+                icon: Icons.refresh,
+                tooltip: translationService.t('refresh'),
                 onPressed: _loadData,
-                icon: const Icon(Icons.refresh, size: 20),
-                style: IconButton.styleFrom(
-                  backgroundColor: context.appSurfaceAlt,
-                  foregroundColor: context.appTextMuted,
-                ),
               ),
               const SizedBox(width: 8),
-              IconButton(
-                onPressed: _sendReportViaWhatsApp,
-                icon: const Icon(LucideIcons.messageCircle, size: 20),
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.1),
-                  foregroundColor: const Color(0xFF25D366),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
+              _headerIconButton(
+                icon: Icons.print,
+                tooltip: translationService.t('print'),
+                color: _accent,
+                busy: _isPrinting,
                 onPressed: _isPrinting ? null : _printReport,
-                icon: _isPrinting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.print, size: 20),
-                style: IconButton.styleFrom(
-                  backgroundColor: context.appSurfaceAlt,
-                  foregroundColor: context.appTextMuted,
-                ),
               ),
             ],
-          );
-        },
+          ),
+          const SizedBox(height: 14),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _reportTypeChip(
+                    'salesPay',
+                    translationService.t('sales_report_title'),
+                    LucideIcons.receipt),
+                const SizedBox(width: 8),
+                _reportTypeChip('categoriesSales',
+                    translationService.t('categories'), LucideIcons.layers),
+                if (_isOwner && _isSalon) ...[
+                  const SizedBox(width: 8),
+                  _reportTypeChip(
+                      'employeesIncome',
+                      translationService.t('employees_income'),
+                      LucideIcons.users),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  /// Owner-only dropdown that scopes the report to a single cashier by
-  /// passing `cashier_id` to the `/salesPay` and `/categoriesSales`
-  /// endpoints — same filter the web dashboard exposes.
-  Widget _buildCashierFilter() {
-    final items = <DropdownMenuItem<String?>>[
-      DropdownMenuItem<String?>(
-        value: null,
-        child: Text(
-          translationService.t('all_cashiers'),
-          style: const TextStyle(fontSize: 13, color: Colors.black87),
-        ),
-      ),
-      ..._cashiers.map((c) {
-        final id = (c['value'] ?? c['id'])?.toString() ?? '';
-        final label = (c['label'] ??
-                c['fullname'] ??
-                c['name'] ??
-                c['username'] ??
-                id)
-            .toString();
-        return DropdownMenuItem<String?>(
-          value: id,
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 13, color: Colors.black87),
-            overflow: TextOverflow.ellipsis,
-          ),
-        );
-      }),
-    ];
+  /// Current report title; shown as header subtitle and body heading.
+  String _currentReportTitle() {
+    switch (_selectedReportType) {
+      case 'categoriesSales':
+        return translationService.t('categories');
+      case 'employeesIncome':
+        return translationService.t('employees_income');
+      default:
+        return translationService.t('sales_report_title');
+    }
+  }
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: context.appSurfaceAlt,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: context.appBorder),
-      ),
-      child: Row(
-        children: [
-          Icon(LucideIcons.user, size: 16, color: context.appTextMuted),
-          const SizedBox(width: 6),
-          Expanded(
-            child: DropdownButton<String?>(
-              value: _selectedCashierId,
-              isExpanded: true,
-              underline: const SizedBox(),
-              hint: Text(
-                translationService.t('filter_by_cashier'),
-                style: const TextStyle(fontSize: 13, color: Colors.black87),
-              ),
-              items: items,
-              onChanged: _cashiersLoading
-                  ? null
-                  : (value) {
-                      if (value == _selectedCashierId) return;
-                      setState(() => _selectedCashierId = value);
-                      _loadData();
-                    },
-            ),
-          ),
-          if (_cashiersLoading) ...[
-            const SizedBox(width: 6),
-            const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ],
-        ],
+  Widget _headerIconButton({
+    required IconData icon,
+    String? tooltip,
+    Color? color,
+    bool busy = false,
+    VoidCallback? onPressed,
+  }) {
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      icon: busy
+          ? const SizedBox(
+              width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+          : Icon(icon, size: 20),
+      style: IconButton.styleFrom(
+        backgroundColor: color != null
+            ? color.withValues(alpha: 0.12)
+            : context.appSurfaceAlt,
+        foregroundColor: color ?? context.appTextMuted,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
+  }
+
+  Widget _reportTypeChip(String value, String label, IconData icon) {
+    final selected = _selectedReportType == value;
+    return ChoiceChip(
+      selected: selected,
+      showCheckmark: false,
+      avatar: Icon(icon,
+          size: 16, color: selected ? Colors.white : context.appTextMuted),
+      label: Text(label),
+      labelStyle: TextStyle(
+        fontSize: 13,
+        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+        color: selected ? Colors.white : context.appText,
+      ),
+      selectedColor: _accent,
+      backgroundColor: context.appSurfaceAlt,
+      side: BorderSide(color: selected ? _accent : context.appBorder),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      onSelected: (v) {
+        if (!v || selected) return;
+        setState(() => _selectedReportType = value);
+        _loadData();
+      },
+    );
+  }
+
+
+  /// "خيارات الفلتر" dialog: date range + owner-only cashier picker; applies on "تطبيق الفلتر".
+  Future<void> _showFilterDialog() async {
+    DateTime tempFrom = _dateFrom;
+    DateTime tempTo = _dateTo;
+    String? tempCashierId = _selectedCashierId;
+    final df = DateFormat('yyyy-MM-dd');
+
+    final applied = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setLocalState) {
+            return AlertDialog(
+              backgroundColor: context.appCardBg,
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              titlePadding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+              title: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 22),
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                  ),
+                  Expanded(
+                    child: Text(
+                      translationService.t('filter_options'),
+                      textAlign: TextAlign.end,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: context.appText,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      translationService.t('booking_date'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: context.appTextMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () async {
+                        final picked = await showDateRangePicker(
+                          context: dialogContext,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now(),
+                          initialDateRange:
+                              DateTimeRange(start: tempFrom, end: tempTo),
+                          builder: (context, child) => Theme(
+                            data: Theme.of(context).copyWith(
+                              colorScheme:
+                                  const ColorScheme.light(primary: _accent),
+                            ),
+                            child: child!,
+                          ),
+                        );
+                        if (picked != null) {
+                          setLocalState(() {
+                            tempFrom = picked.start;
+                            tempTo = picked.end;
+                          });
+                        }
+                      },
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
+                          suffixIcon:
+                              const Icon(Icons.calendar_today, size: 18),
+                        ),
+                        child: Text(
+                          '${df.format(tempFrom)}    -    ${df.format(tempTo)}',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                    if (_isOwner) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        translationService.t('cashier'),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: context.appTextMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      InputDecorator(
+                        decoration: InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String?>(
+                            value: tempCashierId,
+                            isExpanded: true,
+                            hint: Text(translationService.t('select_cashier')),
+                            items: <DropdownMenuItem<String?>>[
+                              DropdownMenuItem<String?>(
+                                value: null,
+                                child:
+                                    Text(translationService.t('all_cashiers')),
+                              ),
+                              ..._cashiers.map((c) {
+                                final id =
+                                    (c['value'] ?? c['id'])?.toString() ?? '';
+                                final label = (c['label'] ??
+                                        c['fullname'] ??
+                                        c['name'] ??
+                                        c['username'] ??
+                                        id)
+                                    .toString();
+                                return DropdownMenuItem<String?>(
+                                  value: id,
+                                  child:
+                                      Text(label, overflow: TextOverflow.ellipsis),
+                                );
+                              }),
+                            ],
+                            onChanged: _cashiersLoading
+                                ? null
+                                : (v) =>
+                                    setLocalState(() => tempCashierId = v),
+                          ),
+                        ),
+                      ),
+                      if (_cashiersLoading) ...[
+                        const SizedBox(height: 8),
+                        const LinearProgressIndicator(minHeight: 2),
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              actions: [
+                OutlinedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(translationService.t('cancel')),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  icon: const Icon(Icons.filter_alt, size: 18),
+                  label: Text(translationService.t('apply_filter')),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (applied == true) {
+      final changed = tempFrom != _dateFrom ||
+          tempTo != _dateTo ||
+          tempCashierId != _selectedCashierId;
+      setState(() {
+        _dateFrom = tempFrom;
+        _dateTo = tempTo;
+        _selectedCashierId = tempCashierId;
+      });
+      if (changed) unawaited(_loadData());
+    }
   }
 
   List<DailyClosingReportLine> _buildReportLines(
@@ -1153,7 +1109,6 @@ class _ReportsScreenState extends State<ReportsScreen>
     final statistics = report['statistics'] as Map<String, dynamic>?;
     if (statistics != null && statistics.isNotEmpty) {
       for (final entry in statistics.entries) {
-        // Skip 'total' — it will be calculated from the sum of other lines
         if (entry.key == 'total') continue;
         final label = _paymentLabelForKey(entry.key);
         final amount = _parseDouble(entry.value);
@@ -1188,12 +1143,7 @@ class _ReportsScreenState extends State<ReportsScreen>
     return lines;
   }
 
-  /// Pick the best localized label for a chart data item (category / meal
-  /// / whatever the pieChart endpoint returns). The API now ships parallel
-  /// locale keys like `label_en` / `name_ar` / a nested `localizedNames`
-  /// map, plus a bilingual "عربي - English" combo in `label` / `name`.
-  /// We prefer the exact invoice-language match, then fall back through
-  /// English → Arabic → whatever string we can find.
+  /// Best localized label for chart item; prefer invoice language → English → Arabic → fallback.
   String _localizedChartLabel(Map item) {
     final primary = printerLanguageSettings.primary.trim().toLowerCase();
 
@@ -1207,12 +1157,10 @@ class _ReportsScreenState extends State<ReportsScreen>
     }
 
     String? readKey(String code) {
-      // Parallel keys: label_en / name_en / category_name_en / title_en.
       for (final suffix in const ['label', 'name', 'category_name', 'title']) {
         final raw = item['${suffix}_$code'];
         if (raw is String && raw.trim().isNotEmpty) return raw.trim();
       }
-      // Nested maps: localizedNames / translations / name / label.
       for (final nestedKey in const [
         'localizedNames',
         'localized_names',
@@ -1232,8 +1180,7 @@ class _ReportsScreenState extends State<ReportsScreen>
 
     if (resolved == null) {
       final rawLabel = (item['label'] ?? item['name'])?.toString().trim() ?? '';
-      // Catalog backends commonly pack "عربي - English" into one string.
-      // Split it so the English side can win for non-Arabic primaries.
+      // "عربي - English" combined strings: split so English wins for non-Arabic primaries.
       if (rawLabel.contains(' - ')) {
         final parts = rawLabel.split(' - ');
         if (primary == 'ar') {
@@ -1248,10 +1195,7 @@ class _ReportsScreenState extends State<ReportsScreen>
     return resolved.isNotEmpty ? resolved : '—';
   }
 
-  /// Translate a payment-method key into the printer's active language.
-  /// The report prints this label directly, so following the invoice
-  /// language keeps the closing receipt consistent with the rest of the
-  /// tickets.
+  /// Translate payment-method key into the printer's active language.
   String _paymentLabelForKey(String key) {
     final code = printerLanguageSettings.primary.trim().toLowerCase();
     String pick({
@@ -1322,365 +1266,164 @@ class _ReportsScreenState extends State<ReportsScreen>
     }
   }
 
-  Widget _buildTabBar() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isSmallScreen = constraints.maxWidth < 600;
-        
-        return Container(
-          color: context.appCardBg,
-          child: TabBar(
-            controller: _tabController,
-            labelColor: context.appPrimary,
-            unselectedLabelColor: context.appTextMuted,
-            indicatorColor: const Color(0xFFF58220),
-            isScrollable: true,
-            labelStyle: TextStyle(fontSize: isSmallScreen ? 12 : 14),
-            unselectedLabelStyle: TextStyle(fontSize: isSmallScreen ? 12 : 14),
-            tabs: [
-              Tab(text: translationService.t('sales_summary')),
-            ],
-          ),
-        );
-      },
+  Widget _buildBody() {
+    final report = _currentReport;
+    final statistics = report?['statistics'] as Map<String, dynamic>?;
+    final hasStatistics = statistics != null && statistics.isNotEmpty;
+    final lines = (report == null || hasStatistics)
+        ? const <DailyClosingReportLine>[]
+        : _buildReportLines(report);
+    final hasContent = hasStatistics || lines.isNotEmpty;
+
+    // Grand total: prefer API aggregate, fall back to summing visible lines.
+    double total = 0;
+    if (hasStatistics && statistics['total'] != null) {
+      total = _parseDouble(statistics['total']);
+    } else if (report?['chartTotal'] != null) {
+      total = _parseDouble(report!['chartTotal']);
+    } else if (hasStatistics) {
+      total = statistics.entries
+          .where((e) => e.key != 'total')
+          .fold<double>(0.0, (s, e) => s + _parseDouble(e.value));
+    } else if (lines.isNotEmpty) {
+      total = lines.fold<double>(0.0, (s, l) => s + l.amount);
+    }
+
+    return RefreshIndicator(
+      color: _accent,
+      onRefresh: _loadData,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+        children: [
+          _buildTabHeader(),
+          const SizedBox(height: 14),
+          if (!hasContent)
+            Padding(
+              padding: const EdgeInsets.only(top: 40),
+              child: _buildEmptyState(),
+            )
+          else ...[
+            _buildTotalHero(total),
+            const SizedBox(height: 22),
+            if (hasStatistics)
+              _buildStatisticsCards(context, statistics)
+            else
+              ...lines.map((line) => _buildBreakdownCard(line, total)),
+          ],
+        ],
+      ),
     );
   }
 
-  Widget _buildTabContent() {
-    return TabBarView(
-      controller: _tabController,
+  /// Per-tab header: title + filter button.
+  Widget _buildTabHeader() {
+    return Row(
       children: [
-        _buildSalesSummaryTab(),
+        Container(
+          width: 4,
+          height: 18,
+          decoration: BoxDecoration(
+            color: _accent,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            _currentReportTitle(),
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: context.appText,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        ElevatedButton.icon(
+          onPressed: _showFilterDialog,
+          icon: const Icon(LucideIcons.slidersHorizontal, size: 16),
+          label: Text(translationService.t('filter_options')),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _accent,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildSalesSummaryTab() {
-    if (_currentReport == null) return _buildEmptyState();
-
-    final report = _currentReport!;
-
-    // Extract statistics from API response
-    final statistics = report['statistics'] as Map<String, dynamic>?;
-
-    if (statistics != null && statistics.isNotEmpty) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              report['title']?.toString() ?? translationService.t('report_summary'),
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildStatisticsCards(context, statistics),
-          ],
+  Widget _buildTotalHero(double total) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF58220), Color(0xFFFFA94D)],
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
         ),
-      );
-    }
-
-    // Handle chart-based response (categories, etc.)
-    final lines = _buildReportLines(report);
-    if (lines.isNotEmpty) {
-      final fmt = NumberFormat('0.00', 'en');
-      final total = lines.fold<double>(0.0, (s, l) => s + l.amount);
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              report['title']?.toString() ?? translationService.t('report_summary'),
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            // Total
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: context.isDark
-                    ? const Color(0xFFF58220).withValues(alpha: 0.15)
-                    : const Color(0xFFFFF7ED),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFF58220).withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                children: [
-                  Text(translationService.t('total_amount'),
-                      style: TextStyle(fontSize: 14, color: context.appTextMuted)),
-                  const SizedBox(height: 4),
-                  Text('${fmt.format(total)} ${ApiConstants.currency}',
-                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFFF58220))),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            ...lines.map((line) {
-              final percent = total > 0 ? (line.amount / total * 100) : 0.0;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: context.appCardBg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: context.appBorder),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(line.label,
-                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: context.appText)),
-                          const SizedBox(height: 4),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: percent / 100,
-                              backgroundColor: context.appBorder,
-                              valueColor: const AlwaysStoppedAnimation(Color(0xFFF58220)),
-                              minHeight: 6,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text('${percent.toStringAsFixed(1)}%',
-                              style: TextStyle(fontSize: 12, color: context.appTextMuted)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Text('${fmt.format(line.amount)} ${ApiConstants.currency}',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFF58220))),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      );
-    }
-
-    return _buildEmptyState();
-  }
-
-  Widget _buildStatisticsCards(BuildContext context, Map<String, dynamic> statistics) {
-    final cards = <Widget>[];
-    
-    // Map of payment methods to their display info
-    final paymentMethodsInfo = {
-      'cash': {
-        'label': translationService.t('cash_payment'),
-        'icon': LucideIcons.banknote,
-        'color': const Color(0xFF10B981),
-        'bgColor': const Color(0xFFECFDF5),
-      },
-      'card': {
-        'label': translationService.t('card_payment'),
-        'icon': LucideIcons.creditCard,
-        'color': const Color(0xFF3B82F6),
-        'bgColor': const Color(0xFFEFF6FF),
-      },
-      'benefit': {
-        'label': translationService.t('benefit_pay'),
-        'icon': LucideIcons.smartphone,
-        'color': const Color(0xFF8B5CF6),
-        'bgColor': const Color(0xFFF3E8FF),
-      },
-      'stc': {
-        'label': translationService.t('stc_pay'),
-        'icon': LucideIcons.wallet,
-        'color': const Color(0xFFF59E0B),
-        'bgColor': const Color(0xFFFEF3C7),
-      },
-      'bank_transfer': {
-        'label': translationService.t('bank_transfer'),
-        'icon': LucideIcons.send,
-        'color': const Color(0xFF0EA5E9),
-        'bgColor': const Color(0xFFE0F2FE),
-      },
-      'wallet': {
-        'label': translationService.t('wallet'),
-        'icon': LucideIcons.wallet,
-        'color': const Color(0xFF14B8A6),
-        'bgColor': const Color(0xFFCCFBF1),
-      },
-      'cheque': {
-        'label': translationService.t('cheque'),
-        'icon': LucideIcons.fileCheck,
-        'color': const Color(0xFF92400E),
-        'bgColor': const Color(0xFFFEF3C7),
-      },
-      'petty_cash': {
-        'label': translationService.t('petty_cash'),
-        'icon': LucideIcons.banknote,
-        'color': const Color(0xFF0F766E),
-        'bgColor': const Color(0xFFCCFBF1),
-      },
-      'pay_later': {
-        'label': translationService.t('pay_later'),
-        'icon': LucideIcons.clock,
-        'color': const Color(0xFF6366F1),
-        'bgColor': const Color(0xFFE0E7FF),
-      },
-      'tabby': {
-        'label': translationService.t('tabby'),
-        'icon': LucideIcons.creditCard,
-        'color': context.appTextMuted,
-        'bgColor': context.appSurfaceAlt,
-      },
-      'tamara': {
-        'label': translationService.t('tamara'),
-        'icon': LucideIcons.creditCard,
-        'color': const Color(0xFF7C3AED),
-        'bgColor': const Color(0xFFF3E8FF),
-      },
-      'keeta': {
-        'label': translationService.t('keeta'),
-        'icon': LucideIcons.truck,
-        'color': const Color(0xFFF97316),
-        'bgColor': const Color(0xFFFEE2E2),
-      },
-      'kita': {
-        'label': translationService.t('keeta'),
-        'icon': LucideIcons.truck,
-        'color': const Color(0xFFF97316),
-        'bgColor': const Color(0xFFFEE2E2),
-      },
-      'my_fatoorah': {
-        'label': translationService.t('my_fatoorah'),
-        'icon': LucideIcons.wallet,
-        'color': const Color(0xFF06B6D4),
-        'bgColor': const Color(0xFFCFFAFE),
-      },
-      'jahez': {
-        'label': translationService.t('jahez'),
-        'icon': LucideIcons.truck,
-        'color': const Color(0xFF16A34A),
-        'bgColor': const Color(0xFFDCFCE7),
-      },
-      'gahez': {
-        'label': translationService.t('jahez'),
-        'icon': LucideIcons.truck,
-        'color': const Color(0xFF16A34A),
-        'bgColor': const Color(0xFFDCFCE7),
-      },
-      'talabat': {
-        'label': translationService.t('talabat'),
-        'icon': LucideIcons.shoppingBag,
-        'color': const Color(0xFFDC2626),
-        'bgColor': const Color(0xFFFEE2E2),
-      },
-      'hunger_station': {
-        'label': translationService.t('hunger_station'),
-        'icon': LucideIcons.truck,
-        'color': const Color(0xFFEA580C),
-        'bgColor': context.isDark
-            ? const Color(0xFFF58220).withValues(alpha: 0.15)
-            : const Color(0xFFFFF7ED),
-      },
-      'hungerstation': {
-        'label': translationService.t('hunger_station'),
-        'icon': LucideIcons.truck,
-        'color': const Color(0xFFEA580C),
-        'bgColor': context.isDark
-            ? const Color(0xFFF58220).withValues(alpha: 0.15)
-            : const Color(0xFFFFF7ED),
-      },
-      'total': {
-        'label': translationService.t('total_amount'),
-        'icon': LucideIcons.trendingUp,
-        'color': const Color(0xFFF58220),
-        'bgColor': context.isDark
-            ? const Color(0xFFF58220).withValues(alpha: 0.15)
-            : const Color(0xFFFFF7ED),
-      },
-    };
-
-    statistics.forEach((key, value) {
-      final info = paymentMethodsInfo[key] ?? {
-        'label': key,
-        'icon': LucideIcons.dollarSign,
-        'color': context.appTextMuted,
-        'bgColor': context.appSurfaceAlt,
-      };
-
-      cards.add(
-        _buildSummaryCard(
-          title: info['label'] as String,
-          value: _parseDouble(value),
-          icon: info['icon'] as IconData,
-          color: info['color'] as Color,
-          bgColor: info['bgColor'] as Color,
-        ),
-      );
-    });
-
-    // Display cards in a grid (2 columns)
-    final rows = <Widget>[];
-    for (var i = 0; i < cards.length; i += 2) {
-      rows.add(
-        Row(
-          children: [
-            Expanded(child: cards[i]),
-            if (i + 1 < cards.length) ...[
-              const SizedBox(width: 16),
-              Expanded(child: cards[i + 1]),
-            ] else
-              const Expanded(child: SizedBox()),
-          ],
-        ),
-      );
-      if (i + 2 < cards.length) {
-        rows.add(const SizedBox(height: 16));
-      }
-    }
-
-    return Column(children: rows);
-  }
-
-  double _parseDouble(dynamic value) {
-    if (value == null) return 0.0;
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? 0.0;
-    return 0.0;
-  }
-
-  String _formatDate(DateTime date) {
-    return DateFormat('yyyy/MM/dd', 'ar').format(date);
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: _accent.withValues(alpha: 0.30),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
         children: [
-          Icon(
-            LucideIcons.fileText,
-            size: 64,
-            color: context.appBorder,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            translationService.t('no_data_available'),
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: context.appTextMuted,
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(14),
             ),
+            child: const Icon(LucideIcons.trendingUp, color: Colors.white, size: 26),
           ),
-          const SizedBox(height: 8),
-          Text(
-            translationService.t('select_period_to_view_reports'),
-            style: TextStyle(
-              fontSize: 14,
-              color: context.appTextSubtle,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  translationService.t('total_amount'),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text(
+                    '${_formatter.format(total)} ${ApiConstants.currency}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                      height: 1.1,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_formatDate(_dateFrom)}  —  ${_formatDate(_dateTo)}',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                    fontSize: 11.5,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1688,80 +1431,65 @@ class _ReportsScreenState extends State<ReportsScreen>
     );
   }
 
-  Widget _buildSummaryCard({
-    required String title,
-    required double value,
-    required IconData icon,
-    required Color color,
-    required Color bgColor,
-    bool isNegative = false,
-  }) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isSmallScreen = constraints.maxWidth < 400;
-        
-        return Container(
-          padding: EdgeInsets.all(isSmallScreen ? 14 : 20),
-          decoration: BoxDecoration(
-            color: context.appCardBg,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
+  Widget _buildBreakdownCard(DailyClosingReportLine line, double total) {
+    final percent = total > 0 ? (line.amount / total * 100).clamp(0.0, 100.0) : 0.0;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: context.appCardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: context.appBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Container(
-                width: isSmallScreen ? 48 : 56,
-                height: isSmallScreen ? 48 : 56,
-                decoration: BoxDecoration(
-                  color: bgColor,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  icon,
-                  color: color,
-                  size: isSmallScreen ? 24 : 28,
+              Expanded(
+                child: Text(
+                  line.label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: context.appText,
+                  ),
                 ),
               ),
-              SizedBox(width: isSmallScreen ? 12 : 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: context.appTextMuted,
-                        fontSize: isSmallScreen ? 12 : 14,
-                      ),
-                    ),
-                    SizedBox(height: isSmallScreen ? 2 : 4),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        '${_formatter.format(value)} ${ApiConstants.currency}',
-                        style: TextStyle(
-                          color: isNegative ? Colors.red : Colors.black87,
-                          fontSize: isSmallScreen ? 16 : 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
+              const SizedBox(width: 12),
+              Text(
+                '${_formatter.format(line.amount)} ${ApiConstants.currency}',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: _accent,
                 ),
               ),
             ],
           ),
-        );
-      },
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: percent / 100,
+                    backgroundColor: context.appBorder,
+                    valueColor: const AlwaysStoppedAnimation(_accent),
+                    minHeight: 7,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                '${percent.toStringAsFixed(1)}%',
+                style: TextStyle(fontSize: 11.5, color: context.appTextMuted),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
-
-
 }

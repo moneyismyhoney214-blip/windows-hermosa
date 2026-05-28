@@ -1,0 +1,102 @@
+# Hermosa POS — Dart/Flutter static-analysis config.
+# Tuned so that CI catches the high-impact correctness/security issues that
+# previously slipped through the codebase: stray `print`, unawaited Futures,
+# unsafe `as` casts, missing `mounted` checks, unused imports.
+#
+# Rules are intentionally pragmatic — the codebase predates this file, so
+# rules that would generate thousands of low-value warnings are left off
+# (e.g. `public_member_api_docs`) and can be enabled once the existing
+# violations are paid down.
+
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: false        # too noisy on the existing dynamic-heavy
+                               # JSON parsing layer; revisit once models.dart
+                               # is split.
+    strict-inference: false
+    strict-raw-types: false
+  errors:
+    # Print and context-after-async stay as warnings — they catch real
+    # bugs. `unawaited_futures` is demoted to info because the legacy
+    # codebase has ~80 intentional fire-and-forget call sites
+    # (AnimationController.forward, video_player setup chains, dialog
+    # returns) and a runZonedGuarded sink in main.dart already routes
+    # any exceptions those Futures throw to the Logger. New code is
+    # still encouraged to wrap with `unawaited(...)` via PR review.
+    avoid_print: warning
+    use_build_context_synchronously: warning
+    unawaited_futures: info
+    invalid_use_of_protected_member: error
+    # `library_private_types_in_public_api` is left at the default info
+    # level. The idiomatic Flutter `State<MyWidget> createState() =>
+    # _MyWidgetState()` pattern is allowlisted with file-local
+    # `// ignore_for_file:` headers in the widgets that need it (see
+    # `lib/screens/*_screen.dart`, `lib/dialogs/*_dialog.dart`). This
+    # surfaces genuine API leaks (e.g. private types in service-level
+    # public methods) while keeping the State pattern legal.
+    # Generated files (json_serializable) shouldn't trip lints.
+    todo: ignore
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "**/*.mocks.dart"
+    - "build/**"
+    - "vendor/**"        # vendored NearPay SDK has its own analysis_options
+    - "tools/**"
+    - "test_driver/**"
+
+linter:
+  rules:
+    # --- Error-prevention -------------------------------------------------
+    avoid_print: true                 # use the Logger service instead.
+    avoid_dynamic_calls: true
+    # avoid_returning_null_for_future was removed in Dart 3.3.0; the
+    # null-safety system covers the case via Future<T?> vs Future<T>.
+    avoid_type_to_string: true
+    cancel_subscriptions: true
+    close_sinks: true
+    no_adjacent_strings_in_list: true
+    no_duplicate_case_values: true
+    prefer_void_to_null: true
+    unawaited_futures: true
+    unrelated_type_equality_checks: true
+    use_build_context_synchronously: true
+    valid_regexps: true
+
+    # --- Style / readability ---------------------------------------------
+    always_declare_return_types: true
+    avoid_empty_else: true
+    avoid_init_to_null: true
+    avoid_null_checks_in_equality_operators: true
+    avoid_relative_lib_imports: true
+    avoid_return_types_on_setters: true
+    avoid_returning_null_for_void: true
+    avoid_unused_constructor_parameters: true
+    constant_identifier_names: false  # legacy SCREAMING_CASE consts exist
+    curly_braces_in_flow_control_structures: true
+    directives_ordering: true
+    empty_catches: false              # we intentionally have many; the
+                                      # Logger-migration pass will revisit.
+    empty_constructor_bodies: true
+    null_closures: true
+    prefer_const_constructors: true
+    prefer_const_constructors_in_immutables: true
+    prefer_const_declarations: true
+    prefer_const_literals_to_create_immutables: true
+    prefer_final_fields: true
+    prefer_final_locals: true
+    prefer_is_empty: true
+    prefer_is_not_empty: true
+    prefer_typing_uninitialized_variables: true
+    sized_box_for_whitespace: true
+    sort_child_properties_last: true
+    unnecessary_brace_in_string_interps: true
+    unnecessary_const: true
+    unnecessary_new: true
+    unnecessary_null_checks: true
+    unnecessary_null_in_if_null_operators: true
+    unnecessary_string_interpolations: true
+    use_full_hex_values_for_flutter_colors: true
+    use_key_in_widget_constructors: true

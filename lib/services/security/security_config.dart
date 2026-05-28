@@ -1,16 +1,28 @@
-/// Temporary security configuration wrapper.
+/// Compile-time security configuration.
 ///
-/// NOTE: This keeps secrets centralized until backend secure distribution
-/// is available. Do not log these values.
+/// IMPORTANT: anything in this file ships in the APK / IPA in plaintext.
+/// Treat every value here as **public to anyone who unzips the build**.
+/// Move anything more sensitive (per-merchant tokens, signing keys,
+/// payment-terminal credentials) into [SecureTokenStore] or fetch from
+/// the backend at runtime instead.
+///
+/// History: the previous version of this file held four NearPay-tier
+/// terminal credentials (`nearPayClientUuid`, `nearPayTerminalId`,
+/// `nearPayGoogleCloudProjectNumber`, `nearPayPrivateKeyFileName`) as
+/// `static const`. Those constants were never read anywhere in lib/ —
+/// they were dead identifiers that nonetheless leaked terminal pairing
+/// material to anyone with `unzip`. They were removed entirely; the
+/// actual NearPay flow loads its developer certificate at runtime from
+/// `assets/certs/`, which is a separate but still-followed-up item.
 class SecurityConfig {
   SecurityConfig._();
 
+  /// HMAC handshake secret for the cashier ↔ customer-display WebSocket
+  /// channel. Both engines are bundled into the same APK so this value is
+  /// shared by construction; the threat model assumes the attacker who
+  /// extracts this string already has the rest of the binary.
+  ///
+  /// Future: derive per-install from a Keystore-resident master so a
+  /// breached APK doesn't compromise every deployment uniformly.
   static const String wsSharedSecret = 'hermosa_pos_secure_ws_key_2024';
-
-  static const String nearPayClientUuid =
-      '55df27ff-0b1c-430f-a137-3d8dd96d4af0';
-  static const String nearPayTerminalId = '0211868700118687';
-  static const String nearPayGoogleCloudProjectNumber = '764962961378';
-  static const String nearPayPrivateKeyFileName =
-      '1770817497953-private-key.pem';
 }

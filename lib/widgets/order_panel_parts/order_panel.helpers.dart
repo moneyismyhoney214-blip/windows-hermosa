@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../order_panel.dart';
 
 extension OrderPanelHelpers on _OrderPanelState {
@@ -54,15 +54,15 @@ extension OrderPanelHelpers on _OrderPanelState {
     final fallback = option['label']?.toString() ?? '';
     switch (_canonicalOrderTypeValue(option['value']?.toString() ?? '')) {
       case 'restaurant_pickup':
-        return _tr('سفري', 'Pickup');
+        return translationService.t('pickup_label');
       case 'restaurant_internal':
-        return _tr('داخل المطعم', 'Dine In');
+        return translationService.t('dine_in');
       case 'restaurant_delivery':
-        return _tr('توصيل', 'Delivery');
+        return translationService.t('delivery');
       case 'cars':
-        return _tr('سيارة', 'Car');
+        return translationService.t('car_label_v2');
       case 'services':
-        return _tr('محلي', 'Local');
+        return translationService.t('local_provider');
       default:
         return fallback;
     }

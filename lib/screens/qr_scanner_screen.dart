@@ -1,16 +1,17 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 class QRScannerScreen extends StatefulWidget {
   final Function(String ip, int port, String mode) onConnect;
 
   const QRScannerScreen({
-    Key? key,
+    super.key,
     required this.onConnect,
-  }) : super(key: key);
+  });
 
   @override
   State<QRScannerScreen> createState() => _QRScannerScreenState();
@@ -40,9 +41,15 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
     if (barcode == null || barcode.rawValue == null) return;
 
     try {
-      final data = jsonDecode(barcode.rawValue!);
+      final decoded = jsonDecode(barcode.rawValue!);
+      if (decoded is! Map) {
+        setState(() {
+          _errorMessage = 'كود QR غير صالح';
+        });
+        return;
+      }
+      final data = decoded.map((k, v) => MapEntry(k.toString(), v));
 
-      // التحقق من أن الكود من تطبيق Display App
       if (data['app'] != 'hermosa_pos_display') {
         setState(() {
           _errorMessage = 'كود QR غير صالح';
@@ -82,11 +89,15 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
         actions: [
           IconButton(
             onPressed: () => _controller?.toggleTorch(),
-            icon: ValueListenableBuilder(
-              valueListenable: _controller!.torchState,
+            // mobile_scanner 5.x: torch state lives on `MobileScannerState`
+            // (the controller's value), no longer a standalone notifier.
+            icon: ValueListenableBuilder<MobileScannerState>(
+              valueListenable: _controller!,
               builder: (context, state, child) {
                 return Icon(
-                  state == TorchState.off ? Icons.flash_off : Icons.flash_on,
+                  state.torchState == TorchState.off
+                      ? Icons.flash_off
+                      : Icons.flash_on,
                 );
               },
             ),
@@ -131,9 +142,10 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
           // الماسح الضوئي
           Expanded(
             child: MobileScanner(
-              controller: _controller!,
+              controller: _controller,
               onDetect: _onDetect,
-              overlay: Container(
+              // mobile_scanner 5.x renamed `overlay` → `overlayBuilder`.
+              overlayBuilder: (context, constraints) => Container(
                 decoration: BoxDecoration(
                   border: Border.all(
                     color: Colors.white,

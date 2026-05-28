@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../models/customer.dart';
-import '../services/api/customer_service.dart';
+
 import '../locator.dart';
+import '../models/customer.dart';
 import '../screens/customers_screen.dart'; // To reuse CustomerFormDialog
-import '../services/language_service.dart';
+import '../services/api/customer_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
 
 class CustomerSelectionDialog extends StatefulWidget {
   const CustomerSelectionDialog({super.key});
@@ -47,8 +49,12 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(translationService.t('error_loading_customers', args: {'error': e.toString()}))),
+        UiFeedback.error(
+          context,
+          translationService.t(
+            'error_loading_customers',
+            args: {'error': e.toString()},
+          ),
         );
       }
     }
@@ -78,7 +84,7 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
     );
 
     if (result == true) {
-      _loadCustomers();
+      unawaited(_loadCustomers());
     }
   }
 
@@ -169,8 +175,10 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
                               const Icon(LucideIcons.userX,
                                   size: 48, color: Colors.grey),
                               const SizedBox(height: 16),
-                              const Text('لا يوجد نتائج لهذا البحث',
-                                  style: TextStyle(color: Colors.grey)),
+                              Text(
+                                translationService.t('customer_search_no_results'),
+                                style: const TextStyle(color: Colors.grey),
+                              ),
                               const SizedBox(height: 16),
                               ElevatedButton.icon(
                                 onPressed: _addNewCustomer,

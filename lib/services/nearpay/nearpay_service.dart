@@ -1,6 +1,12 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 import 'package:flutter/foundation.dart';
-import '../api/base_client.dart';
+
 import '../api/api_constants.dart';
+import '../api/base_client.dart';
 
 /// NearPay Service — fetches a JWT from the backend and caches it until expiry.
 class NearPayService {

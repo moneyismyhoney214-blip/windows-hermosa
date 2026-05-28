@@ -4,6 +4,31 @@ part of '../invoice_print_widget.dart';
 extension InvoicePrintWidgetTotals on InvoicePrintWidget {
   Widget _buildTotals() {
     if (data == null) return const SizedBox.shrink();
+    // The entire order is free when the grand total is zero AND there's an
+    // order-level discount/coupon explaining why. We use both signals so a
+    // zero-priced sample order (no items / all-zero menu) doesn't trigger
+    // the FREE ORDER banner spuriously.
+    // FREE ORDER fires when the grand total is zero AND any discount
+    // brought it there — covers order-level coupons AND the
+    // "everything-per-item-free" case (e.g. backend invoice IN-824
+    // where the discount lives entirely in the items, with no
+    // explicit order-level coupon).
+    final isOrderFullyFree =
+        data!.totalInclVat <= 0.001 && _hasAnyDiscountSource;
+    // The DISCOUNT banner is reserved for an ORDER-level discount/coupon
+    // (i.e. the cashier discounted the whole bill). Per-item discounts
+    // do NOT trigger the banner — those are surfaced inline beside the
+    // item itself in `_buildItemsSection`, which keeps the banner from
+    // shouting when only a single meal happens to be free or discounted.
+    final hasOrderLevelDiscount =
+        data!.hasOrderDiscount && (data!.orderDiscountAmount ?? 0) > 0;
+    final hasDiscountBanner = !isOrderFullyFree && hasOrderLevelDiscount;
+    final discountAmountForBanner =
+        hasDiscountBanner ? (data!.orderDiscountAmount ?? 0) : 0.0;
+    final discountPctForBanner =
+        hasDiscountBanner ? data!.orderDiscountPercentage : null;
+    final discountNameForBanner =
+        hasDiscountBanner ? data!.orderDiscountName : null;
     return Container(
       margin: const EdgeInsets.only(bottom: 3, top: 6),
       decoration: BoxDecoration(
@@ -12,43 +37,176 @@ extension InvoicePrintWidgetTotals on InvoicePrintWidget {
       padding: const EdgeInsets.all(4),
       child: Column(
         children: [
-          // Pre-tax subtotal — only shown for tax-enabled branches. Tax-free
-          // branches collapse the receipt to a single grand total line.
-          if (ApiConstants.isTaxActive)
-            _buildTotalRow(_ml(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), _sl(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), data!.totalExclVat)
-          else
-            _buildTotalRow(_ml(ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam'), _sl(ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam'), data!.totalExclVat),
-
-          // Order discount (promo code / manual / free)
-          if (data!.hasOrderDiscount) ...[
-            _buildDiscountRow(
-              // Build label with discount details
-              () {
-                final name = data!.orderDiscountName;
-                final pct = data!.orderDiscountPercentage;
-                if (name != null && name.isNotEmpty && pct != null && pct > 0) {
-                  return '$name (${pct.toStringAsFixed(0)}%)';
-                } else if (pct != null && pct > 0) {
-                  return '${_ml(ar: 'خصم', en: 'Discount', es: 'Descuento', tr: 'İndirim', hi: 'छूट', ur: 'ڈسکاؤنٹ')} (${pct.toStringAsFixed(0)}%)';
-                } else if (name != null && name.isNotEmpty) {
-                  return name;
-                }
-                return _ml(ar: 'خصم على الإجمالي', en: 'Order Discount', es: 'Descuento del Pedido', tr: 'Sipariş İndirimi', hi: 'ऑर्डर छूट', ur: 'آرڈر ڈسکاؤنٹ');
-              }(),
-              '',
-              data!.orderDiscountAmount!,
+          // Prominent "FREE ORDER" banner — sits above the rest of the
+          // totals so a cashier scanning the receipt sees it before the
+          // line-by-line breakdown. Uses a double-bordered box so it
+          // reads as a stamp, not just another row.
+          if (isOrderFullyFree) ...[
+            // FREE ORDER banner — plain receipt-style frame (no fill).
+            // Thermal printers struggle with large solid backgrounds, and
+            // the user explicitly asked for the discount/free banners to
+            // be "أبيض و أسود عادي" — same monochrome treatment as the
+            // rest of the receipt.
+            Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: Colors.black, width: 2),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    _ml(ar: 'طلب مجاني', en: 'FREE ORDER', hi: 'मुफ्त ऑर्डर', ur: 'مفت آرڈر', es: 'PEDIDO GRATIS', tr: 'ÜCRETSİZ SİPARİŞ'),
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.tajawal(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.black,
+                        letterSpacing: 1.2),
+                  ),
+                  if (_sl(ar: 'طلب مجاني', en: 'FREE ORDER', hi: 'मुफ्त ऑर्डर', ur: 'مفت آرڈر', es: 'PEDIDO GRATIS', tr: 'ÜCRETSİZ SİPARİŞ').isNotEmpty)
+                    Text(
+                      _sl(ar: 'طلب مجاني', en: 'FREE ORDER', hi: 'मुफ्त ऑर्डर', ur: 'مفت آرڈر', es: 'PEDIDO GRATIS', tr: 'ÜCRETSİZ SİPARİŞ'),
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.tajawal(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: 1.0),
+                    ),
+                  if ((data!.orderDiscountName?.trim().isNotEmpty ?? false) &&
+                      data!.orderDiscountName!.trim() != 'طلب مجاني' &&
+                      data!.orderDiscountName!.trim() != 'Free Order')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        data!.orderDiscountName!,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.tajawal(
+                            fontSize: 13,
+                            color: Colors.black87,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ]
-          // Implied items discount (only if no explicit order discount)
-          else if (_impliedDiscount > 0.01)
-            _buildDiscountRow(
-              _ml(ar: 'اجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹمز ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
-              _sl(ar: 'اجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹمز ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
-              _impliedDiscount,
+          ],
+          if (hasDiscountBanner) ...[
+            // DISCOUNT banner for ORDER-level discounts/coupons only.
+            // Per-item discounts surface inline beside their items in
+            // `_buildItemsSection`. Receipt-monochrome styling — black
+            // border on white, no fill — to match the user's "أبيض و
+            // أسود عادي" requirement and to print cleanly on thermal
+            // paper.
+            Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: Colors.black, width: 2),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    () {
+                      final amount = discountAmountForBanner
+                          .toStringAsFixed(ApiConstants.digitsNumber);
+                      final currency =
+                          _translateCurrency(ApiConstants.currency);
+                      final pct = discountPctForBanner;
+                      final hasPct = pct != null && pct > 0;
+                      final label = _ml(
+                          ar: 'خصم',
+                          en: 'DISCOUNT',
+                          hi: 'छूट',
+                          ur: 'ڈسکاؤنٹ',
+                          es: 'DESCUENTO',
+                          tr: 'İNDİRİM');
+                      if (hasPct) {
+                        return '$label  $amount $currency  (${pct.toStringAsFixed(0)}%)';
+                      }
+                      return '$label  $amount $currency';
+                    }(),
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.tajawal(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.black,
+                        letterSpacing: 0.8),
+                  ),
+                  if (_sl(ar: 'خصم', en: 'DISCOUNT', hi: 'छूट', ur: 'ڈسکاؤنٹ', es: 'DESCUENTO', tr: 'İNDİRİM').isNotEmpty)
+                    Text(
+                      () {
+                        final amount = discountAmountForBanner
+                            .toStringAsFixed(ApiConstants.digitsNumber);
+                        final currency =
+                            _translateCurrency(ApiConstants.currency);
+                        final pct = discountPctForBanner;
+                        final hasPct = pct != null && pct > 0;
+                        final label = _sl(
+                            ar: 'خصم',
+                            en: 'DISCOUNT',
+                            hi: 'छूट',
+                            ur: 'ڈسکاؤنٹ',
+                            es: 'DESCUENTO',
+                            tr: 'İNDİRİM');
+                        if (hasPct) {
+                          return '$label  $amount $currency  (${pct.toStringAsFixed(0)}%)';
+                        }
+                        return '$label  $amount $currency';
+                      }(),
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.tajawal(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: 0.5),
+                    ),
+                  if ((discountNameForBanner?.trim().isNotEmpty ?? false) &&
+                      discountNameForBanner!.trim() != 'خصم' &&
+                      discountNameForBanner.trim() != 'Discount')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        discountNameForBanner,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.tajawal(
+                            fontSize: 13,
+                            color: Colors.black87,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                ],
+              ),
             ),
-          // Tax amount row — only printed when the branch has VAT enabled.
-          if (ApiConstants.isTaxActive)
-            _buildTotalRow(_ml(ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)'), _sl(ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)'), data!.vatAmount),
+          ],
+          // Free orders collapse the rest of the totals to a single
+          // grand-total row (which already prints "0") — the banner
+          // above is the canonical "this is free" statement, so the
+          // per-line subtotal/discount/tax breakdown becomes noise.
+          if (!isOrderFullyFree) ...[
+            // Pre-tax subtotal — only shown for tax-enabled branches. Tax-free
+            // branches collapse the receipt to a single grand total line.
+            if (ApiConstants.isTaxActive)
+              _buildTotalRow(_ml(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), _sl(ar: 'الاجمالي قبل الضريبة', en: 'Total Before Tax', hi: 'कर से पहले कुल', ur: 'ٹیکس سے پہلے کل', es: 'Total Antes de Impuestos', tr: 'Vergi Öncesi Toplam'), data!.totalExclVat)
+            else
+              _buildTotalRow(_ml(ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam'), _sl(ar: 'الإجمالي', en: 'Subtotal', hi: 'उप-योग', ur: 'ذیلی کل', es: 'Subtotal', tr: 'Ara Toplam'), data!.totalExclVat),
+            // When no order-level discount fires the banner, surface the
+            // per-item discount aggregate on its own totals line so the
+            // customer can still see the sum at a glance.
+            if (!hasDiscountBanner && _impliedDiscount > 0.01)
+              _buildDiscountRow(
+                _ml(ar: 'اجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹمز ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
+                _sl(ar: 'اجمالي خصم الأصناف', en: 'Total Items Discount', hi: 'कुल आइटम छूट', ur: 'کل آئٹمز ڈسکاؤنٹ', es: 'Descuento Total de Artículos', tr: 'Toplam Ürün İndirimi'),
+                _impliedDiscount,
+              ),
+            if (ApiConstants.isTaxActive)
+              _buildTotalRow(_ml(ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)'), _sl(ar: 'قيمة الضريبة (${ApiConstants.taxPercentage}%)', en: 'Tax Amount (${ApiConstants.taxPercentage}%)', hi: 'कर राशि (${ApiConstants.taxPercentage}%)', ur: 'ٹیکس رقم (${ApiConstants.taxPercentage}%)', es: 'Monto del Impuesto (${ApiConstants.taxPercentage}%)', tr: 'Vergi Tutarı (${ApiConstants.taxPercentage}%)'), data!.vatAmount),
+          ],
           const Divider(height: 8, thickness: 1, color: Colors.black),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 3),

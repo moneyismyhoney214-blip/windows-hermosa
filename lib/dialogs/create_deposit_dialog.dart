@@ -4,15 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../locator.dart';
+import '../models/receipt_data.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/base_client.dart';
-import '../services/api/salon_employee_service.dart';
 import '../services/api/filter_service.dart';
-import '../services/language_service.dart';
-import '../locator.dart';
+import '../services/api/salon_employee_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
 import '../services/receipt_builder_service.dart';
-import '../models/receipt_data.dart';
+import '../utils/ui_feedback.dart';
 
 class CreateDepositDialog extends StatefulWidget {
   /// Auto-print callback fired right after the deposit is created on the
@@ -36,26 +37,17 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
   final FilterService _filterService = getIt<FilterService>();
   final NumberFormat _amountFormatter = NumberFormat('#,##0.##');
 
-  // Form data
   Map<String, dynamic>? _selectedCustomer;
   final List<_SelectedService> _selectedServices = [];
   DateTime _bookingDate = DateTime.now();
   TimeOfDay _bookingTime = TimeOfDay.now();
 
-  // Payment data
   List<Map<String, dynamic>> _payMethods = [];
   String? _selectedPayMethodKey;
 
-  // Deposit amount typed by the cashier — matches the web dashboard's
-  // `price` field. Service catalog prices are no longer editable; the
-  // cashier picks the services (just to attach them to the booking) and
-  // then types whatever amount the customer is putting down. The dashboard
-  // HAR shows it sends `pays[i][amount] = 0` for every method (the
-  // payment-amount input lives elsewhere in their flow), so we mirror that
-  // — there's no separate "amount paid" field in this dialog.
+  // Deposit amount mirrors the dashboard's `price` field; dashboard HAR sends `pays[i][amount]=0` for every method.
   final TextEditingController _depositAmountController = TextEditingController();
 
-  // Customer search
   List<Map<String, dynamic>> _customers = [];
   final TextEditingController _customerSearchController =
       TextEditingController();
@@ -66,21 +58,11 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
   bool _isCreating = false;
   String? _error;
 
-  String get _langCode =>
-      translationService.currentLanguageCode.trim().toLowerCase();
-  bool get _useArabicUi =>
-      _langCode.startsWith('ar') || _langCode.startsWith('ur');
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
-  // Tax rate now follows the active branch's `taxObject` via ApiConstants.
-  // Returns 0.0 when the branch has VAT disabled, so the deposit total
-  // collapses to the bare subtotal automatically.
+  // Tax rate follows active branch's `taxObject`; 0.0 when VAT disabled.
   double get _taxRate => ApiConstants.effectiveTaxRate;
 
-  // Computed totals — the deposit amount is what the cashier typed in the
-  // amount field; tax + total derive from it. Mirrors the web dashboard,
-  // which sends `price` straight from a single input rather than summing
-  // per-service prices.
+  // Subtotal is what the cashier typed (mirrors dashboard `price`); tax/total derive from it.
   double get _subtotal => _parseServerPrice(_depositAmountController.text);
 
   double get _tax => _subtotal * _taxRate;
@@ -125,10 +107,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
   Future<void> _loadPayMethods() async {
     setState(() => _isLoadingPayMethods = true);
     try {
-      // The /payMethods endpoint requires `type ∈ {incomings, outgoings,
-      // online}` and 422s when it's missing — that 422 is what was leaving
-      // the chips list empty. Deposits are incoming money, so request that
-      // bucket explicitly.
+      // /payMethods requires `type ∈ {incomings, outgoings, online}` or it 422s; deposits are incomings.
       final response =
           await _filterService.getPaymentMethods(type: 'incomings');
       final data = response['data'];
@@ -187,11 +166,10 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
   void _openServicePicker() async {
     final result = await showDialog<_SelectedService>(
       context: context,
-      builder: (ctx) => _ServicePickerDialog(tr: _tr),
+      builder: (ctx) => const _ServicePickerDialog(),
     );
     if (result != null && mounted) {
       setState(() {
-        // Check if already exists, bump quantity if so
         final existing = _selectedServices.indexWhere(
             (s) => s.id == result.id);
         if (existing >= 0) {
@@ -204,20 +182,19 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
   }
 
   Future<void> _createDeposit() async {
-    // Validation
     if (_selectedCustomer == null) {
       setState(() =>
-          _error = _tr('يرجى اختيار العميل', 'Please select a customer'));
+          _error = translationService.t('please_select_customer'));
       return;
     }
     if (_selectedServices.isEmpty) {
       setState(() =>
-          _error = _tr('يرجى اختيار خدمة واحدة على الأقل', 'Please select at least one service'));
+          _error = translationService.t('please_select_at_least_one_service'));
       return;
     }
     if (_subtotal <= 0) {
       setState(
-          () => _error = _tr('الإجمالي يجب أن يكون أكبر من صفر', 'Total must be greater than zero'));
+          () => _error = translationService.t('total_must_be_positive'));
       return;
     }
 
@@ -229,9 +206,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
     try {
       final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
       final bookingDateStr = DateFormat('yyyy-MM-dd').format(_bookingDate);
-      // Backend validates `booking_time` against Laravel's `H:i:s` rule —
-      // sending only `HH:mm` triggers a 422. Always pad the seconds to `00`
-      // since the time picker doesn't expose them.
+      // Backend `booking_time` uses Laravel `H:i:s` — pad seconds to `00` or it 422s.
       final bookingTimeStr =
           '${_bookingTime.hour.toString().padLeft(2, '0')}:'
           '${_bookingTime.minute.toString().padLeft(2, '0')}:00';
@@ -247,15 +222,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
         'booking_time': bookingTimeStr,
       };
 
-      // Add services[] array — dedupe IDs.
-      //
-      // The backend stores the link in a `service_deposit` pivot table
-      // with `PRIMARY KEY (deposit_id, service_id)`, so sending the same
-      // service ID twice (the cashier added quantity ≥ 2 of the same row)
-      // crashed with a 1062 duplicate-key error. Quantity is conceptual
-      // for the deposit's service list — the pivot only records whether a
-      // service is attached, not how many times. Send each unique ID
-      // once.
+      // Dedupe service IDs: `service_deposit` pivot has PK (deposit_id, service_id) — duplicates 1062.
       final seenServiceIds = <String>{};
       int serviceIndex = 0;
       for (final service in _selectedServices) {
@@ -264,20 +231,10 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
         serviceIndex++;
       }
 
-      // Add pays — match the dashboard HAR exactly: every available method
-      // is sent with `amount = 0`. The dashboard doesn't expose a
-      // payment-amount input on the deposit form (only the deposit
-      // `price`), and its HAR posts captures all `pays[i][amount] = 0`. We
-      // mirror that so the cash-app records deposits with the same shape
-      // the web dashboard does.
-      //
-      // The backend still requires the `pays` field to be present and
-      // non-empty; if `getPaymentMethods` failed (offline / network blip)
-      // we fall back to a single cash row so the create can still go
-      // through.
+      // Mirror dashboard HAR: every method with amount=0; fall back to single cash row if methods missing (pays required non-empty).
       const zeroAmount = '0';
       if (_payMethods.isEmpty) {
-        fields['pays[0][name]'] = _tr('دفع نقدي', 'Cash');
+        fields['pays[0][name]'] = translationService.t('cash_payment');
         fields['pays[0][pay_method]'] = 'cash';
         fields['pays[0][amount]'] = zeroAmount;
         fields['pays[0][index]'] = '0';
@@ -298,13 +255,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
 
       final response = await _salonService.createDeposit(fields);
 
-      // Print the deposit receipt BEFORE closing the dialog. Earlier we
-      // tried `unawaited(...)` so the dialog could pop instantly, but that
-      // swallowed any exception silently (no detail-fetch result, no
-      // printer-resolution result) and made the "doesn't print" symptom
-      // impossible to diagnose. Awaiting here keeps the State alive for
-      // the auto-print orchestrator and surfaces failures via its own
-      // snackbars (`_showMissingPrinterSnackBar`, `_showPrintFailureSnackBar`).
+      // Await print before pop so the orchestrator's failure snackbars can fire (unawaited silently swallowed them).
       if (mounted) {
         final printCb = widget.onPrintReceipt;
         if (printCb != null) {
@@ -345,8 +296,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
       final responseData = createResponse['data'];
       Map<String, dynamic>? envelope;
 
-      // Some backends echo the full detail envelope inside the create
-      // response — try that first to avoid the second round-trip.
+      // Some backends echo the full detail envelope in the create response — use it to skip the round-trip.
       if (responseData is Map &&
           (responseData['invoice'] is Map || responseData['branch'] is Map)) {
         envelope = Map<String, dynamic>.from(responseData);
@@ -393,19 +343,11 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
       debugPrint('✅ [Deposit] auto-print completed');
     } catch (e, stack) {
       debugPrint('⚠️ [Deposit] auto-print failed: $e\n$stack');
-      // Surface a hint to the cashier — the standard print-failure snackbar
-      // only fires from inside the orchestrator, but if we threw before
-      // reaching it (e.g. detail fetch crashed) the user would see nothing.
+      // Surface failure to cashier if we threw before reaching the orchestrator's snackbar.
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_tr(
-              'تعذر طباعة فاتورة العربون',
-              'Failed to print deposit receipt',
-            )),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
-          ),
+        UiFeedback.warning(
+          context,
+          translationService.t('deposit_receipt_print_failed'),
         );
       }
     }
@@ -456,7 +398,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
         height: dialogHeight,
         child: Column(
           children: [
-            // ── Header ──
             Container(
               padding: EdgeInsets.all(isCompact ? 16 : 24),
               decoration: const BoxDecoration(
@@ -470,7 +411,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _tr('إنشاء عربون', 'Create Deposit'),
+                          translationService.t('create_deposit'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -481,8 +422,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _tr('اختر الخدمات وأكمل البيانات',
-                              'Select services and fill in details'),
+                          translationService.t('deposit_subtitle'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -503,14 +443,12 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
               ),
             ),
 
-            // ── Body ──
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Error message
                     if (_error != null)
                       Container(
                         width: double.infinity,
@@ -528,16 +466,14 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                         ),
                       ),
 
-                    // ── 1. Customer Selector ──
                     _buildSectionLabel(
-                        _tr('العميل', 'Customer'), LucideIcons.user),
+                        translationService.t('customer'), LucideIcons.user),
                     const SizedBox(height: 8),
                     _buildCustomerSelector(),
                     const SizedBox(height: 16),
 
-                    // ── 2. Selected Services List ──
                     _buildSectionLabel(
-                        _tr('الخدمات', 'Services'), LucideIcons.scissors),
+                        translationService.t('services'), LucideIcons.scissors),
                     const SizedBox(height: 8),
                     if (_selectedServices.isEmpty)
                       Container(
@@ -550,8 +486,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                         ),
                         child: Center(
                           child: Text(
-                            _tr('لم يتم اختيار خدمات بعد',
-                                'No services selected yet'),
+                            translationService.t('no_services_selected_yet'),
                             style: TextStyle(
                                 color: Colors.grey.shade400, fontSize: 13),
                           ),
@@ -567,13 +502,12 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                       }),
                     const SizedBox(height: 8),
 
-                    // ── 3. Add Service Button ──
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed: _openServicePicker,
                         icon: const Icon(LucideIcons.plus, size: 16),
-                        label: Text(_tr('إضافة خدمة', 'Add Service')),
+                        label: Text(translationService.t('add_service')),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: const Color(0xFFF58220),
                           side: const BorderSide(color: Color(0xFFF58220)),
@@ -586,7 +520,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ── 4. Deposit amount + auto-calculated tax/total ──
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(14),
@@ -597,14 +530,12 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                       ),
                       child: Column(
                         children: [
-                          // Editable deposit amount — matches the web
-                          // dashboard's `price` field. Tax + total below
-                          // recalculate live as the cashier types.
+                          // Editable deposit amount (dashboard `price`); tax/total recalc live.
                           Row(
                             children: [
                               Expanded(
                                 child: Text(
-                                  _tr('مبلغ العربون', 'Deposit Amount'),
+                                  translationService.t('deposit_amount'),
                                   style: const TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
@@ -662,16 +593,16 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                           if (ApiConstants.isTaxActive) ...[
                             const SizedBox(height: 6),
                             _buildTotalRow(
-                              _tr(
-                                'الضريبة (${ApiConstants.taxPercentage}%)',
-                                'Tax (${ApiConstants.taxPercentage}%)',
+                              translationService.t(
+                                'tax_with_percent',
+                                args: {'percent': ApiConstants.taxPercentage},
                               ),
                               '${_amountFormatter.format(_tax)} ${ApiConstants.currency}',
                             ),
                           ],
                           const Divider(height: 16),
                           _buildTotalRow(
-                            _tr('الإجمالي', 'Total'),
+                            translationService.t('total'),
                             '${_amountFormatter.format(_total)} ${ApiConstants.currency}',
                             isBold: true,
                             color: const Color(0xFFF58220),
@@ -681,7 +612,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ── 5. Booking Date & Time ──
                     Row(
                       children: [
                         Expanded(
@@ -689,7 +619,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               _buildSectionLabel(
-                                  _tr('تاريخ الحجز', 'Booking Date'),
+                                  translationService.t('booking_date'),
                                   LucideIcons.calendarDays),
                               const SizedBox(height: 8),
                               InkWell(
@@ -721,7 +651,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               _buildSectionLabel(
-                                  _tr('وقت الحجز', 'Booking Time'),
+                                  translationService.t('booking_time'),
                                   LucideIcons.clock),
                               const SizedBox(height: 8),
                               InkWell(
@@ -750,9 +680,8 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ── 6. Payment Method ──
                     _buildSectionLabel(
-                        _tr('طريقة الدفع', 'Payment Method'),
+                        translationService.t('payment_method'),
                         LucideIcons.creditCard),
                     const SizedBox(height: 8),
                     _buildPaymentMethodSection(),
@@ -762,7 +691,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
               ),
             ),
 
-            // ── Footer ──
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -782,7 +710,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      child: Text(_tr('إلغاء', 'Cancel')),
+                      child: Text(translationService.t('cancel')),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -801,8 +729,8 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                           : const Icon(LucideIcons.check, size: 16),
                       label: Text(
                         _isCreating
-                            ? _tr('جارٍ الإنشاء...', 'Creating...')
-                            : _tr('إنشاء عربون', 'Create Deposit'),
+                            ? translationService.t('creating_dots')
+                            : translationService.t('create_deposit'),
                       ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF58220),
@@ -823,7 +751,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
     );
   }
 
-  // ── Section label ──
   Widget _buildSectionLabel(String label, IconData icon) {
     return Row(
       children: [
@@ -841,17 +768,15 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
     );
   }
 
-  // ── Customer selector ──
   Widget _buildCustomerSelector() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Search field
         TextField(
           controller: _customerSearchController,
           onChanged: _onCustomerSearch,
           decoration: InputDecoration(
-            hintText: _tr('ابحث عن عميل...', 'Search customer...'),
+            hintText: translationService.t('search_customer_dots'),
             hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
             prefixIcon: const Icon(Icons.search, size: 18),
             contentPadding:
@@ -874,7 +799,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
           ),
         ),
         const SizedBox(height: 6),
-        // Customer dropdown list
         Container(
           constraints: const BoxConstraints(maxHeight: 120),
           decoration: BoxDecoration(
@@ -896,7 +820,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                       child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Text(
-                        _tr('لا يوجد عملاء', 'No customers'),
+                        translationService.t('no_customers_short'),
                         style:
                             TextStyle(color: Colors.grey[400], fontSize: 12),
                       ),
@@ -956,7 +880,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                       },
                     ),
         ),
-        // Selected customer badge
         if (_selectedCustomer != null)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -991,7 +914,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
     );
   }
 
-  // ── Editable service card (like _buildEditableItemCard) ──
   Widget _buildEditableServiceCard(_SelectedService service) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1003,7 +925,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Service name + delete button
           Row(
             children: [
               Expanded(
@@ -1024,17 +945,14 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
                 },
                 icon: const Icon(LucideIcons.trash2, size: 16),
                 color: const Color(0xFFEF4444),
-                tooltip: _tr('حذف', 'Remove'),
+                tooltip: translationService.t('remove'),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          // Quantity +/- and read-only catalog price. The web dashboard
-          // doesn't let cashiers edit per-service prices on a deposit —
-          // they pick services for the booking record and type the deposit
-          // amount in the totals card below.
+          // Read-only catalog price; cashier types deposit amount in the totals card.
           Row(
             children: [
               Row(
@@ -1081,7 +999,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
     );
   }
 
-  // ── Totals row ──
   Widget _buildTotalRow(String label, String value,
       {bool isBold = false, Color? color}) {
     return Row(
@@ -1107,7 +1024,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
     );
   }
 
-  // ── Payment method section (chips + amount) ──
   Widget _buildPaymentMethodSection() {
     if (_isLoadingPayMethods) {
       return const Center(
@@ -1123,7 +1039,7 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
 
     if (_payMethods.isEmpty) {
       return Text(
-        _tr('لا توجد طرق دفع', 'No payment methods'),
+        translationService.t('no_payment_methods'),
         style: TextStyle(color: Colors.grey[400], fontSize: 12),
       );
     }
@@ -1131,7 +1047,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Payment method chips
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -1172,7 +1087,6 @@ class _CreateDepositDialogState extends State<CreateDepositDialog> {
   }
 }
 
-// ── Quantity Button (same as edit_order_dialog) ──
 class _QtyButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
@@ -1198,18 +1112,17 @@ class _QtyButton extends StatelessWidget {
   }
 }
 
-// ── Selected Service model ──
 class _SelectedService {
   final String id;
   final String name;
   final double catalogPrice;
-  int quantity;
+  // Inline init satisfies null-safety after `dart fix` removed the ctor param; mutated by +/- controls.
+  int quantity = 1;
 
   _SelectedService({
     required this.id,
     required this.name,
     required this.catalogPrice,
-    this.quantity = 1,
   });
 }
 
@@ -1229,11 +1142,8 @@ double _parseServerPrice(dynamic value) {
   return double.tryParse(cleaned) ?? 0.0;
 }
 
-// ── Service Picker Dialog (like _ProductPickerDialog) ──
 class _ServicePickerDialog extends StatefulWidget {
-  final String Function(String ar, String en) tr;
-
-  const _ServicePickerDialog({required this.tr});
+  const _ServicePickerDialog();
 
   @override
   State<_ServicePickerDialog> createState() => _ServicePickerDialogState();
@@ -1248,10 +1158,7 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
   List<Map<String, dynamic>> _services = [];
   String _selectedCategory = 'all';
   bool _isLoadingServices = false;
-  // Type toggle: 'services' (regular) or 'packageServices' (bundled
-  // packages). Uses the same endpoint the salon main screen uses
-  // (`bookingCreateMetadataEndpoint?type=...`) so both lists carry the
-  // same shape (`id`, `name`, `price`, `category_id`).
+  // 'services' (regular) or 'packageServices' (bundled); same endpoint/shape as salon main screen.
   String _serviceMode = 'services';
 
   @override
@@ -1282,7 +1189,6 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
         });
       }
     } catch (_) {
-      // Categories are optional; ignore errors
     }
   }
 
@@ -1338,7 +1244,6 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
   List<Map<String, dynamic>> get _filteredServices {
     var list = _services;
 
-    // Filter by category
     if (_selectedCategory != 'all') {
       list = list.where((s) {
         final catId = s['category_id']?.toString() ?? '';
@@ -1346,7 +1251,6 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
       }).toList();
     }
 
-    // Filter by search
     final query = _searchController.text.trim().toLowerCase();
     if (query.isNotEmpty) {
       list = list.where((s) {
@@ -1373,7 +1277,6 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
         height: dialogHeight,
         child: Column(
           children: [
-            // Header
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
@@ -1381,8 +1284,8 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                   Expanded(
                     child: Text(
                       _serviceMode == 'packageServices'
-                          ? widget.tr('اختيار باقة', 'Select a Package')
-                          : widget.tr('اختيار خدمة', 'Select a Service'),
+                          ? translationService.t('select_package')
+                          : translationService.t('select_service'),
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -1398,16 +1301,14 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
               ),
             ),
 
-            // Service-type toggle (Services / Service Packages) — mirrors
-            // the salon main screen so the cashier can pick from either
-            // catalogue when creating a deposit booking.
+            // Service-type toggle mirrors salon main screen.
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
                   Expanded(
                     child: _modeChip(
-                      label: widget.tr('الخدمات', 'Services'),
+                      label: translationService.t('services'),
                       icon: LucideIcons.scissors,
                       isSelected: _serviceMode == 'services',
                       onTap: () => _onModeChanged('services'),
@@ -1416,7 +1317,7 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: _modeChip(
-                      label: widget.tr('باقات الخدمات', 'Service Packages'),
+                      label: translationService.t('service_packages'),
                       icon: LucideIcons.package,
                       isSelected: _serviceMode == 'packageServices',
                       onTap: () => _onModeChanged('packageServices'),
@@ -1427,7 +1328,6 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
             ),
             const SizedBox(height: 12),
 
-            // Search field
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: TextField(
@@ -1435,8 +1335,8 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                   hintText: _serviceMode == 'packageServices'
-                      ? widget.tr('ابحث عن باقة', 'Search packages')
-                      : widget.tr('ابحث عن خدمة', 'Search services'),
+                      ? translationService.t('search_packages')
+                      : translationService.t('search_services'),
                   prefixIcon: const Icon(Icons.search),
                   filled: true,
                   fillColor: context.appSurfaceAlt,
@@ -1449,7 +1349,6 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
             ),
             const SizedBox(height: 12),
 
-            // Category chips
             if (_categories.isNotEmpty)
               SizedBox(
                 height: 40,
@@ -1461,7 +1360,7 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                     final isAll = index == 0;
                     final category = isAll ? null : _categories[index - 1];
                     final label = isAll
-                        ? widget.tr('الكل', 'All')
+                        ? translationService.t('all')
                         : category?['label']?.toString() ??
                             category?['name']?.toString() ??
                             '';
@@ -1503,7 +1402,6 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
               ),
             const SizedBox(height: 8),
 
-            // Services list
             Expanded(
               child: _isLoadingServices
                   ? const Center(child: CircularProgressIndicator())
@@ -1511,8 +1409,8 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                       ? Center(
                           child: Text(
                             _serviceMode == 'packageServices'
-                                ? widget.tr('لا توجد باقات', 'No packages found')
-                                : widget.tr('لا توجد خدمات', 'No services found'),
+                                ? translationService.t('no_packages_found')
+                                : translationService.t('no_services_found'),
                             style: const TextStyle(color: Colors.grey),
                           ),
                         )
@@ -1526,10 +1424,7 @@ class _ServicePickerDialogState extends State<_ServicePickerDialog> {
                             final label =
                                 (service['name'] ?? service['label'] ?? '')
                                     .toString();
-                            // The API returns prices as a localised string
-                            // ("350.00 ر.س"), not a raw number — strip the
-                            // currency suffix before parsing so the picker
-                            // doesn't show every service as "0".
+                            // API returns prices like "350.00 ر.س" — strip currency before parsing.
                             final price =
                                 _parseServerPrice(service['price']);
                             final serviceId =

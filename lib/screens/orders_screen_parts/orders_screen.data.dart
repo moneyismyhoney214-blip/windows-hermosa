@@ -1,4 +1,5 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, avoid_dynamic_calls, library_private_types_in_public_api
+// JSON wire-boundary / message-dispatch layer — dynamic accesses accepted pending typed-model refactor.
 part of '../orders_screen.dart';
 
 class _PageScan {
@@ -18,16 +19,8 @@ extension OrdersScreenData on _OrdersScreenState {
         _searchQueryForApi.isEmpty ? null : _searchQueryForApi;
     final statusForApi = _selectedStatus == 'all' ? null : _selectedStatus;
 
-    // PERF (salon-only): paint cached bookings instantly so the user sees
-    // the list while the network call refreshes in background. The cashier
-    // (restaurant) module keeps its original behaviour — empty list +
-    // spinner — to avoid touching that flow.
-    //
-    // EXCEPTION: if main_screen JUST created an invoice, the cached page
-    // would render the booking with stale fields (price=0, no customer)
-    // for the second or two it takes the API to reply — three-stage
-    // flicker the user reported. Skip the cache once in that case so the
-    // booking only appears after the fresh API response arrives.
+    // Salon-only: paint cached bookings instantly while network refreshes.
+    // Skip cache after a recent invoice event to avoid three-stage stale-flicker.
     final hasRecentInvoiceEvent = isSalonMode &&
         getIt<SalonInvoiceEvents>().recentEvents().isNotEmpty;
     Map<String, dynamic>? salonCached;
@@ -39,18 +32,13 @@ extension OrdersScreenData on _OrdersScreenState {
           search: searchForApi,
           status: statusForApi,
         );
-      } catch (_) {
+      } catch (e) {
+        Log.d('catch', 'non-fatal: $e');
         salonCached = null;
       }
-      // Pull the persisted invoice→booking map first so completed
-      // bookings render with the trimmed action row on the very first
-      // paint instead of flashing the old "Create Invoice" buttons until
-      // the cross-ref finishes.
+      // Hydrate invoice→booking map so completed bookings render trimmed actions on first paint.
       await _hydrateSalonInvoiceLinkFromCache(todayDateStr);
     } else if (isSalonMode) {
-      // Even when skipping the cached paint, hydrate the invoice→booking
-      // link map so any bookings already known to be invoiced render with
-      // their action row trimmed on the first paint of the fresh response.
       await _hydrateSalonInvoiceLinkFromCache(todayDateStr);
     }
 
@@ -61,9 +49,7 @@ extension OrdersScreenData on _OrdersScreenState {
       _hasMoreBookings = true;
       _selectedBookingIds.clear();
       if (salonCached != null) {
-        // Show stale data immediately; refresh proceeds below without a
-        // blocking spinner. _processBookings will overwrite once the
-        // fresh response arrives.
+        // Show stale data immediately; refresh proceeds without blocking spinner.
         _isLoading = false;
       } else {
         _isLoading = true;
@@ -99,10 +85,7 @@ extension OrdersScreenData on _OrdersScreenState {
       if (mounted) {
         setState(() => _isLoading = false);
       }
-      // Salon list endpoint includes pay-now bookings without any
-      // is_paid / has_invoice / invoice_id signal. Cross-reference today's
-      // invoices to mark them as already-invoiced so the action buttons
-      // disappear and the user can't trigger 422 "booking_id used".
+      // Salon list lacks invoice signals; cross-ref today's invoices to mask buttons.
       if (isSalonMode) {
         unawaited(_kickOffSalonInvoiceCrossRef(todayDateStr));
       }
@@ -111,8 +94,7 @@ extension OrdersScreenData on _OrdersScreenState {
     } catch (e) {
       if (mounted) {
         setState(() {
-          // Preserve any optimistic data we already painted from cache —
-          // only surface the error when we have nothing to show.
+          // Preserve optimistic cache; only surface error when nothing to show.
           if (_bookings.isEmpty) {
             _error = 'Error: $e';
           }
@@ -142,10 +124,7 @@ extension OrdersScreenData on _OrdersScreenState {
       return _buildSearchResponseFromMatches(primaryMatches);
     }
 
-    // PERF: previous implementation scanned up to 8 pages sequentially, so
-    // a miss took 8 full round-trips (~4-10 s). We now fan out pages 2..8
-    // in parallel with Future.wait. Page 1 was already fetched as the
-    // primary search above, so we skip it here.
+    // PERF: fan out pages 2..8 in parallel (page 1 already fetched as primary search).
     const maxPagesToScan = 8;
     final localMatches = <Booking>[];
 
@@ -177,10 +156,7 @@ extension OrdersScreenData on _OrdersScreenState {
       }
     }
 
-    // Last fallback for explicit order-id search: query without date filters
-    // because many environments store historical orders outside "today"
-    // and backend search might only match globally. Again run all pages
-    // in parallel so the total latency is ~1 round-trip, not 8.
+    // Last fallback: query without date filters (historical orders), parallel pages.
     final globalPages = await Future.wait<_PageScan>(
       List<Future<_PageScan>>.generate(maxPagesToScan, (i) {
         final page = i + 1;
@@ -237,7 +213,7 @@ extension OrdersScreenData on _OrdersScreenState {
       _processBookings(data, append: true);
       _bookingPage = nextPage;
     } catch (e) {
-      print('Error loading more: $e');
+      Log.w('orders', 'load-more failed', error: e);
     } finally {
       if (mounted) setState(() => _isLoadingMore = false);
     }
@@ -267,22 +243,16 @@ extension OrdersScreenData on _OrdersScreenState {
     try {
       tenderEnabledMethods =
           await getIt<BranchService>().getEnabledPayMethods();
-    } catch (_) {}
-    // "Pay later" is not a valid pay_method for invoice payments.
+    } catch (e) {
+      Log.d('OrdersScreenData', 'load enabled pay methods failed (non-fatal): $e');
+    }
+    // "Pay later" is not valid for invoice payments.
     tenderEnabledMethods['pay_later'] = false;
 
     final hasAnyEnabled = tenderEnabledMethods.values.any((v) => v == true);
     if (!hasAnyEnabled) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr(
-            'لا توجد طرق دفع مفعّلة لهذا الفرع. فعّل طريقة دفع من لوحة التحكم ثم أعد المحاولة.',
-            'No payment methods are enabled for this branch.',
-          )),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      UiFeedback.warning(context, translationService.t('no_payment_methods_enabled_full'));
       return;
     }
 
@@ -292,14 +262,12 @@ extension OrdersScreenData on _OrdersScreenState {
       return round2(_bookingGrandTotal(booking));
     }
 
-    // Use the active branch's tax config instead of a hardcoded 15% —
-    // otherwise the pay-later dialog shows a tax breakdown for a total that
-    // has no tax baked in, and vice-versa for non-standard tax rates.
+    // Use active branch's tax config (avoid hardcoded 15% mismatching actual rate).
     final branchService = getIt<BranchService>();
     final dialogTaxRate =
         branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       builder: (context) => PaymentTenderDialog(
         total: resolveInvoiceTotal(),
@@ -324,11 +292,31 @@ extension OrdersScreenData on _OrdersScreenState {
           await _processDeferredInvoice(booking, pays);
         },
       ),
-    );
+    ));
   }
 
   Future<void> _processDeferredInvoice(
       Booking booking, List<Map<String, dynamic>> pays) async {
+    // Hard guard: don't POST /invoices when already invoiced (422 cancels real invoice on some accounts).
+    final raw = booking.raw;
+    final alreadyInvoiced = _bookingIdsWithInvoice.contains(booking.id) ||
+        raw['has_invoice'] == true ||
+        raw['has_invoice'] == 1 ||
+        raw['has_invoice']?.toString() == '1' ||
+        (raw['invoice_id'] != null &&
+            raw['invoice_id'].toString().trim().isNotEmpty &&
+            raw['invoice_id'].toString().trim() != '0');
+    if (alreadyInvoiced) {
+      setState(() {
+        _bookingIdsWithInvoice.add(booking.id);
+        booking.raw['has_invoice'] = true;
+      });
+      if (mounted) {
+        UiFeedback.warning(context, translationService.t('order_has_invoice'));
+      }
+      unawaited(_loadData());
+      return;
+    }
     setState(() => _payingBookingIds.add(booking.id));
     try {
       final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
@@ -396,7 +384,7 @@ extension OrdersScreenData on _OrdersScreenState {
       ) {
         final items = <Map<String, dynamic>>[];
         for (final raw in rawItems) {
-          dynamic pick(dynamic value) => value == null ? null : value;
+          dynamic pick(dynamic value) => value;
           final mealMap = (raw['meal'] is Map)
               ? (raw['meal'] as Map).map((k, v) => MapEntry(k.toString(), v))
               : (raw['service'] is Map)
@@ -415,10 +403,7 @@ extension OrdersScreenData on _OrdersScreenState {
           final quantity = (quantityRaw is num)
               ? quantityRaw.toInt()
               : int.tryParse('$quantityRaw') ?? 1;
-          // Salon `booking_services` rows store the line total under
-          // `total_price`, not `total`. Without this fallback the invoice
-          // payload reported `total = 0` for salon items, which made the
-          // create-invoice flow charge only the per-unit price (no addons).
+          // Salon booking_services line total lives under `total_price`, not `total`.
           final totalRaw = raw['total'] ?? raw['line_total'] ?? raw['total_price'];
           final unitRaw = raw['unit_price'] ??
               raw['unitPrice'] ??
@@ -444,7 +429,8 @@ extension OrdersScreenData on _OrdersScreenState {
                   return (map['ar'] ?? map['en'] ?? map.values.first)
                       ?.toString();
                 }
-              } catch (_) {
+              } catch (e) {
+                Log.d('catch', 'non-fatal: $e');
                 return rawText;
               }
             }
@@ -471,10 +457,7 @@ extension OrdersScreenData on _OrdersScreenState {
         return items;
       }
 
-      // Refund-aware override: when a refund just happened the booking.meals
-      // / booking.raw are stale (backend keeps them frozen) and using them
-      // would bill the customer for items that were already refunded. Prefer
-      // the fresh rows captured from the booking-detail endpoint.
+      // Refund-aware override: booking.meals/raw stay frozen after refund; use fresh detail rows.
       final overrideRows = _bookingItemsOverride[booking.id];
       List<Map<String, dynamic>> itemsPayload;
       if (overrideRows != null && overrideRows.isNotEmpty) {
@@ -491,7 +474,6 @@ extension OrdersScreenData on _OrdersScreenState {
                 })
             .toList();
 
-        // Try from booking.raw if meals list was empty
         if (itemsPayload.isEmpty && booking.raw.isNotEmpty) {
           final rawItems = extractItems(Map<String, dynamic>.from(booking.raw));
           if (rawItems.isNotEmpty) {
@@ -507,7 +489,6 @@ extension OrdersScreenData on _OrdersScreenState {
           final detailMap =
               _asMap(details['data']) ?? _asMap(details) ?? const {};
           var rawItems = extractItems(Map<String, dynamic>.from(detailMap));
-          // If still empty, try nested structures
           if (rawItems.isEmpty) {
             final nestedCandidates = [
               detailMap['booking'],
@@ -524,13 +505,13 @@ extension OrdersScreenData on _OrdersScreenState {
             }
           }
           itemsPayload = mapItemsToInvoicePayload(rawItems);
-        } catch (_) {
-          // Ignore; handled below if items remain empty.
+        } catch (e) {
+          Log.d('catch', 'non-fatal: $e');
         }
       }
 
       if (itemsPayload.isEmpty) {
-        throw Exception(_tr('الطلب بدون عناصر', 'Order has no items'));
+        throw Exception(translationService.t('order_no_items'));
       }
 
       double round2(double v) => double.parse(v.toStringAsFixed(ApiConstants.digitsNumber));
@@ -551,9 +532,7 @@ extension OrdersScreenData on _OrdersScreenState {
       }
 
       double resolveExpectedTotal(List<Map<String, dynamic>> items) {
-        // After a refund booking.total stays frozen at the original amount,
-        // so prefer the override sum + recompute tax. Without this the
-        // create-invoice payment dialog showed the pre-refund grand total.
+        // booking.total stays frozen post-refund; prefer override sum + recompute tax.
         final overridePreTax = _bookingRemainingPreTaxOverride[booking.id];
         if (overridePreTax != null) {
           final branchService = getIt<BranchService>();
@@ -602,8 +581,8 @@ extension OrdersScreenData on _OrdersScreenState {
         expectedTotal = round2(
           extractExpectedTotalFromCalc(calcResponse, expectedTotal),
         );
-      } catch (_) {
-        // Non-blocking: keep booking-derived total when calculate fails.
+      } catch (e) {
+        Log.d('catch', 'non-fatal: $e');
       }
       double sumPays(List<Map<String, dynamic>> pays) {
         double sum = 0.0;
@@ -629,7 +608,6 @@ extension OrdersScreenData on _OrdersScreenState {
         final currentTotal = sumPays(apiPays);
         final diff = round2(expectedTotal - currentTotal);
         if (diff.abs() >= 0.01) {
-          // Adjust the last payment line to match backend total.
           final lastIndex = apiPays.length - 1;
           final lastAmount = (apiPays[lastIndex]['amount'] as num?)
                   ?.toDouble() ??
@@ -683,7 +661,7 @@ extension OrdersScreenData on _OrdersScreenState {
         if (salesMealsPayload.isNotEmpty) 'sales_meals': salesMealsPayload,
       };
 
-      // Retry once if backend says total mismatch — adjust pays to match.
+      // Retry once on total-mismatch: adjust pays.
       double? extractExpectedTotal(String msg) {
         final m = RegExp(r'\(([\d.]+)\)').firstMatch(msg);
         return double.tryParse(m?.group(1) ?? '');
@@ -735,8 +713,8 @@ extension OrdersScreenData on _OrdersScreenState {
             payload['pays'] = adjustPays(apiPays, expected);
             try {
               invoiceResponse = await _orderService.createInvoice(payload);
-            } catch (_) {
-              // Last resort: try multipart directly
+            } catch (e) {
+              Log.d('catch', 'non-fatal: $e');
               invoiceResponse =
                   await _orderService.createInvoiceMultipart(payload);
             }
@@ -801,7 +779,6 @@ extension OrdersScreenData on _OrdersScreenState {
         debugPrint('⚠️ Unable to lock order after invoice: $e');
       }
 
-      // Auto-print receipt — use same logic as normal payment flow
       final resolvedInvoiceId = invoiceId?.toString() ?? '';
       final resolvedInvoiceNumber = booking.invoiceNumber ?? invoiceId?.toString() ?? '';
       final resolvedDailyOrder = booking.orderNumber ?? booking.bookingNumberRaw ?? '';
@@ -810,7 +787,6 @@ extension OrdersScreenData on _OrdersScreenState {
 
       debugPrint('🖨️ onPrintReceipt callback: ${widget.onPrintReceipt != null ? "SET" : "NULL"}');
       if (widget.onPrintReceipt != null) {
-        // Use the same printing logic as the normal payment flow
         unawaited(() async {
           try {
             debugPrint('🖨️ Building receipt data for invoice=$effectiveInvoiceId...');
@@ -842,36 +818,22 @@ extension OrdersScreenData on _OrdersScreenState {
         ));
       }
 
+      // Tab settled — free table on every device (skip waiting for reconcile).
+      _mirrorBookingTableState(booking, reserved: false);
+
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-              _tr('تم إنشاء الفاتورة بنجاح', 'Invoice created successfully')),
-        ),
-      );
+      UiFeedback.info(context, translationService.t('invoice_created_ok'));
       await _loadData();
       widget.onNavigateToInvoices?.call();
     } catch (e) {
       if (!mounted) return;
-      // Salon backend already created an invoice for this booking during
-      // pay-now (the /bookings list returns it with no payment markers, so
-      // the orders screen had no way to mask the buttons in time). Mark it
-      // as already-invoiced and refresh the list — the buttons will be
-      // gone on next paint.
+      // Salon pay-now invoice already exists — mark and refresh so buttons clear.
       if (_isBookingAlreadyInvoiced422(e)) {
         setState(() {
           _bookingIdsWithInvoice.add(booking.id);
           booking.raw['has_invoice'] = true;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_tr(
-              'هذا الطلب لديه فاتورة بالفعل',
-              'This order already has an invoice',
-            )),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        UiFeedback.warning(context, translationService.t('order_has_invoice'));
         unawaited(_loadData());
         return;
       }
@@ -881,24 +843,14 @@ extension OrdersScreenData on _OrdersScreenState {
           (booking.orderId == null ||
               booking.orderId == 0 ||
               booking.raw['order_id'] == null)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_tr(
-              'لا يمكن إنشاء فاتورة لهذا الطلب لأن الطلب لا يملك Order ID في السيرفر.',
-              'Cannot create invoice: order has no Order ID on server.',
-            )),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        UiFeedback.warning(context, translationService.t('cannot_create_invoice_no_id'));
         return;
       }
       final userMessage = ErrorHandler.toUserMessage(
         e,
-        fallback: _tr('تعذر إنشاء الفاتورة', 'Failed to create invoice'),
+        fallback: translationService.t('invoice_create_failed'),
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(userMessage)),
-      );
+      UiFeedback.info(context, userMessage);
     } finally {
       if (mounted) setState(() => _payingBookingIds.remove(booking.id));
     }
@@ -945,7 +897,6 @@ extension OrdersScreenData on _OrdersScreenState {
         return r.isNotEmpty ? r : null;
       }
 
-      // Parse items with addons
       final items = (invoice['items'] as List?)?.map((item) {
             final m = (item is Map)
                 ? item.map((k, v) => MapEntry(k.toString(), v))
@@ -956,7 +907,6 @@ extension OrdersScreenData on _OrdersScreenState {
             final unitPrice = mealPrice > 0 ? mealPrice : (qty > 0 ? lineTotal / qty : lineTotal);
             final total = lineTotal > 0 ? lineTotal : mealPrice * qty;
 
-            // Parse bilingual name
             final rawName = m['item_name']?.toString() ?? '';
             String arName = rawName;
             String enName = rawName;
@@ -965,9 +915,7 @@ extension OrdersScreenData on _OrdersScreenState {
               enName = rawName.split(' - ').last.trim();
             }
 
-            // Parse addons — pick per-language names from the parallel
-            // `addons_translations` list when available so the cashier
-            // invoice renders the addon in the chosen invoice language.
+            // Pick per-language addon names from `addons_translations` when available.
             final addons = <ReceiptAddon>[];
             final rawAddons = m['addons'] ?? m['extras'];
             final rawAddonTranslations = m['addons_translations'];
@@ -1031,7 +979,6 @@ extension OrdersScreenData on _OrdersScreenState {
       final parsedGrand = double.tryParse(grandStr) ?? 0;
       final grandTotal = parsedGrand > 0 ? parsedGrand : (totalExcl + tax);
 
-      // Resolve daily order number from invoice API (priority) or fallback
       final resolvedOrderNumber = pick([
         invoice['daily_order_number'],
         invoice['order_number'],
@@ -1041,7 +988,6 @@ extension OrdersScreenData on _OrdersScreenState {
           ? resolvedOrderNumber
           : (dailyOrderNumber ?? '');
 
-      // Resolve customer info
       final customer = invoice['customer'] ?? invoice['client'] ?? envelope['customer'];
       String? clientName;
       String? clientPhone;
@@ -1052,13 +998,11 @@ extension OrdersScreenData on _OrdersScreenState {
         clientName = customer;
       }
 
-      // Resolve order type
       final orderType = pickNullable([
         invoice['order_type'], invoice['type'],
         envelope['order_type'], envelope['type'],
       ]);
 
-      // Resolve payments
       final paysList = invoice['pays'] ?? invoice['payments'] ?? envelope['pays'];
       final payments = <ReceiptPayment>[];
       if (paysList is List) {
@@ -1071,12 +1015,10 @@ extension OrdersScreenData on _OrdersScreenState {
         }
       }
 
-      // Resolve discount
       final discountAmount = double.tryParse(
         (invoice['discount'] ?? invoice['discount_amount'] ?? '0').toString(),
       ) ?? 0;
 
-      // Resolve seller name (bilingual)
       final sellerNameRaw = pick([seller['name'], branch['seller_name'], branch['name']]);
       String sellerNameAr = sellerNameRaw;
       String sellerNameEn = sellerNameRaw;
@@ -1086,7 +1028,6 @@ extension OrdersScreenData on _OrdersScreenState {
         sellerNameEn = sellerNameRaw.split(sep).last.trim();
       }
 
-      // Resolve logo
       String? logoUrl = pickNullable([
         seller['logo'], originalSeller['logo'],
         branch['logo'], branch['image'],
@@ -1169,7 +1110,6 @@ extension OrdersScreenData on _OrdersScreenState {
         return;
       }
 
-      // Fetch full invoice details for receipt data
       final invoiceResponse = await _orderService.getInvoice(invoiceId);
       final rawEnvelope = invoiceResponse.map((k, v) => MapEntry(k.toString(), v));
       final envelope = (rawEnvelope['data'] is Map)
@@ -1186,7 +1126,7 @@ extension OrdersScreenData on _OrdersScreenState {
           ? branch['seller'] as Map<String, dynamic>
           : <String, dynamic>{};
 
-      String _pick(List<dynamic> candidates) {
+      String pick(List<dynamic> candidates) {
         for (final c in candidates) {
           final t = c?.toString().trim();
           if (t != null && t.isNotEmpty && t.toLowerCase() != 'null') return t;
@@ -1215,25 +1155,25 @@ extension OrdersScreenData on _OrdersScreenState {
       final grandTotal = double.tryParse(grandStr) ?? (totalExcl + tax);
 
       final receiptData = OrderReceiptData(
-        invoiceNumber: _pick([invoice['invoice_number'], invoiceNumber]),
-        issueDateTime: _pick([invoice['ISO8601'], invoice['date']]),
-        sellerNameAr: _pick([branch['seller_name']]),
-        sellerNameEn: _pick([branch['seller_name']]),
-        vatNumber: _pick([seller['tax_number'], branch['tax_number']]),
-        branchName: _pick([branch['seller_name']]),
+        invoiceNumber: pick([invoice['invoice_number'], invoiceNumber]),
+        issueDateTime: pick([invoice['ISO8601'], invoice['date']]),
+        sellerNameAr: pick([branch['seller_name']]),
+        sellerNameEn: pick([branch['seller_name']]),
+        vatNumber: pick([seller['tax_number'], branch['tax_number']]),
+        branchName: pick([branch['seller_name']]),
         items: items,
         totalExclVat: totalExcl,
         vatAmount: tax,
         totalInclVat: grandTotal,
-        paymentMethod: _pick([invoice['payment_methods']]),
-        qrCodeBase64: _pick([envelope['qr_image'], invoice['qr_image']]),
-        branchAddress: _pick([branch['address'], branch['district']]),
-        branchMobile: _pick([branch['mobile']]),
-        commercialRegisterNumber: _pick([seller['commercial_register']]),
-        cashierName: _pick([(invoice['cashier'] is Map ? invoice['cashier']['fullname'] : null)]),
+        paymentMethod: pick([invoice['payment_methods']]),
+        qrCodeBase64: pick([envelope['qr_image'], invoice['qr_image']]),
+        branchAddress: pick([branch['address'], branch['district']]),
+        branchMobile: pick([branch['mobile']]),
+        commercialRegisterNumber: pick([seller['commercial_register']]),
+        cashierName: pick([(invoice['cashier'] is Map ? invoice['cashier']['fullname'] : null)]),
         orderNumber: dailyOrderNumber,
-        issueDate: _pick([invoice['date']]),
-        issueTime: _pick([invoice['time']]),
+        issueDate: pick([invoice['date']]),
+        issueTime: pick([invoice['time']]),
       );
 
       for (final printer in cashierPrinters) {

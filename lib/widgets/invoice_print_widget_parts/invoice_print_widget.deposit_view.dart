@@ -312,7 +312,7 @@ extension InvoicePrintWidgetDepositView on InvoicePrintWidget {
 
   Widget _buildDepositTotals() {
     final receipt = data!;
-    final fmt = (double v) => v.toStringAsFixed(ApiConstants.digitsNumber);
+    String fmt(double v) => v.toStringAsFixed(ApiConstants.digitsNumber);
     final currencyAr = ApiConstants.currency;
 
     final rows = <_DepositTotalRow>[

@@ -1,7 +1,9 @@
-import 'base_client.dart';
-import 'api_constants.dart';
-import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
 import 'package:hermosa_pos/services/offline/connectivity_service.dart';
+import 'package:hermosa_pos/services/offline/offline_database_service.dart';
+
+import 'api_constants.dart';
+import 'base_client.dart';
 
 class ReportService {
   final BaseClient _client = BaseClient();
@@ -252,7 +254,8 @@ class ReportService {
     try {
       return await _offlineGet(endpoint, 'categories_sales_${dateFrom}_$dateTo',
           acceptLanguage: acceptLanguage);
-    } catch (_) {
+    } catch (e) {
+      Log.d('report', 'falling back to empty data (non-fatal): $e');
       return {'data': {}};
     }
   }
@@ -282,7 +285,8 @@ class ReportService {
       return await _offlineGet(
           endpoint, 'employees_sales_${cashierId}_${dateFrom}_$dateTo',
           acceptLanguage: acceptLanguage);
-    } catch (_) {
+    } catch (e) {
+      Log.d('report', 'falling back to empty data (non-fatal): $e');
       return {'data': {}};
     }
   }

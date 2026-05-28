@@ -1,7 +1,7 @@
 name: hermosa_pos
 description: A modern POS system converted from React.
 publish_to: 'none'
-version: 1.0.3+23
+version: 1.0.5+27
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -19,9 +19,12 @@ dependencies:
   # For the icons used in the UI
   lucide_icons: ^0.257.0
 
-  # For internationalization utilities
-  intl: any # Allow any version compatible with flutter_localizations
-  mobile_scanner: ^3.5.5  # للماسح الضوئي QR
+  # For internationalization utilities. Pinned to a range that's
+  # compatible with the current flutter_localizations; bumping flutter
+  # may require widening this. Previously `any`, which silently accepted
+  # breaking changes during `pub upgrade`.
+  intl: ^0.20.0
+  mobile_scanner: ^7.2.0  # للماسح الضوئي QR (5.1+ ships 16KB-aligned native libs)
   esc_pos_utils_plus: ^2.0.4
   esc_pos_printer_plus: ^0.1.1
   qr_flutter: ^4.1.0
@@ -30,9 +33,20 @@ dependencies:
   image: ^4.1.0
   http: ^1.6.0
   crypto: ^3.0.3
+  # Used by offline_database_service / offline_pos_database for cross-platform
+  # path joins. Pulled in transitively by flutter, but declared here so the
+  # analyzer's depend_on_referenced_packages rule passes and `pub upgrade`
+  # can't drop it under us.
+  path: ^1.9.0
   json_annotation: ^4.10.0
   get_it: ^9.2.0
   shared_preferences: ^2.2.3
+  # Platform-secure storage (Android Keystore / iOS Keychain) for the JWT,
+  # cached user payload, and any other credential material. SharedPreferences
+  # writes plaintext XML under /data/data/<app>/shared_prefs/ which is
+  # readable on rooted devices and surfaces via ADB backup; secure_storage
+  # keeps these values encrypted at rest.
+  flutter_secure_storage: ^9.2.4
   web_socket_channel: ^2.4.0
   dart_jsonwebtoken: ^3.2.0
   permission_handler: ^11.3.1
@@ -67,8 +81,10 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.0
   connectivity_plus: ^5.0.0
   device_info_plus: ^9.0.0
-  nfc_manager: any
-  video_player: any
+  # Pinned ranges instead of `any` so `pub upgrade` can't silently pull
+  # a breaking SDK / API surface change.
+  nfc_manager: ^4.1.0
+  video_player: ^2.9.0
 
   # NearPay Terminal SDK (vendor)
   flutter_terminal_sdk:
@@ -78,6 +94,13 @@ dependencies:
   # Waiter module — LAN service discovery + vibration feedback
   bonsoir: ^5.1.11
   vibration: ^2.0.0
+
+  # Crash reporting. Activated at runtime only when SENTRY_DSN is
+  # provided via `--dart-define=SENTRY_DSN=<dsn>`; without it the SDK
+  # is initialized as a no-op and FileCrashReporter remains the sole
+  # sink, so default builds keep the same behaviour they had before
+  # the dep was added.
+  sentry_flutter: ^9.7.0
 
 dev_dependencies:
   flutter_test:
@@ -89,10 +112,17 @@ dev_dependencies:
   json_serializable: ^6.12.0
   mockito: ^5.6.3
 
-  async: any
-  stream_channel: any
+  # Test-only transitive helpers. Pinned to caret ranges so `pub upgrade`
+  # in CI can't drift them into incompatibility with package:test.
+  async: ^2.11.0
+  stream_channel: ^2.1.2
 dependency_overrides:
   image: ^4.1.0
+
+hooks:
+  user_defines:
+    sqlite3:
+      source: process
 
 flutter:
 

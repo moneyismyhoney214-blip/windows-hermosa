@@ -105,7 +105,6 @@ class NearPayValidator {
       );
     }
 
-    // 1. NFC Hardware
     NfcAvailability? availability;
     try {
       availability = await NfcManager.instance.checkAvailability();
@@ -119,7 +118,6 @@ class NearPayValidator {
       errors.add('Failed to check NFC: $e');
     }
 
-    // 2. NFC Enabled
     try {
       final nfcEnabled =
           availability == NfcAvailability.enabled || await _isNfcEnabled();
@@ -132,14 +130,12 @@ class NearPayValidator {
       warnings.add('Could not verify NFC status: $e');
     }
 
-    // 3. Android Version
     final androidVersion = await _getAndroidVersion();
     checks['android_version'] = androidVersion >= 28;
     if (androidVersion < 28) {
       errors.add('Android 9+ (API 28) required, found API $androidVersion');
     }
 
-    // 4. Bluetooth (for some terminals)
     try {
       final bluetoothAvailable = await _checkBluetooth();
       checks['bluetooth'] = bluetoothAvailable;
@@ -150,7 +146,7 @@ class NearPayValidator {
       warnings.add('Could not verify Bluetooth: $e');
     }
 
-    // 5. GPS/Location (required by NearPay SDK)
+    // GPS required by NearPay SDK.
     try {
       final gpsEnabled = await _checkGPS();
       checks['gps'] = gpsEnabled;
@@ -174,7 +170,6 @@ class NearPayValidator {
     final checks = <String, PermissionStatus>{};
     final missing = <String>[];
 
-    // Required permissions for NearPay
     final requiredPermissions = <String, Permission>{
       'Location': Permission.location,
       'Phone State': Permission.phone,
@@ -206,7 +201,6 @@ class NearPayValidator {
     final checks = <String, dynamic>{};
     final errors = <String>[];
 
-    // 1. Check saved auth data
     final prefs = await SharedPreferences.getInstance();
 
     final branchId =
@@ -222,7 +216,6 @@ class NearPayValidator {
     if (backendUrl == null || backendUrl.isEmpty) {
       errors.add('Backend URL not configured');
     } else {
-      // Validate URL format
       final uri = Uri.tryParse(backendUrl);
       if (uri == null || !uri.hasScheme) {
         checks['backend_url_valid'] = false;
@@ -238,7 +231,6 @@ class NearPayValidator {
       errors.add('Auth token not configured');
     }
 
-    // 2. Check Google Cloud Project Number
     final storedProjectNumber = prefs.getString('np_google_project_number');
     final projectNumber = storedProjectNumber?.trim().isNotEmpty == true
         ? storedProjectNumber
@@ -251,7 +243,6 @@ class NearPayValidator {
       );
     }
 
-    // 3. Verify environment setting
     final environment =
         prefs.getString('np_environment') ??
         (kReleaseMode ? 'production' : 'sandbox');
@@ -285,7 +276,6 @@ class NearPayValidator {
     final warnings = <String>[];
     final errors = <String>[];
 
-    // 1. Internet connectivity
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
       final hasInternet = connectivityResult != ConnectivityResult.none;
@@ -304,7 +294,7 @@ class NearPayValidator {
       errors.add('Failed to check connectivity: $e');
     }
 
-    // 2. Backend reachability (non-blocking — /ping may not exist)
+    // Backend /ping reachability (non-blocking — endpoint may not exist).
     try {
       final prefs = await SharedPreferences.getInstance();
       final backendUrl = prefs.getString('np_backend_url');
@@ -331,13 +321,11 @@ class NearPayValidator {
         errors.add('Backend URL missing - cannot check reachability');
       }
     } catch (e) {
-      // /ping timeout or DNS failure is a warning, not a fatal error.
-      // The actual payment endpoints may still work fine.
+      // /ping timeout/DNS failure is a warning only; payment endpoints may still work.
       warnings.add('Backend /ping unreachable: $e');
       checks['backend_reachable'] = false;
     }
 
-    // 3. NearPay API reachability
     try {
       const nearPayApiUrl = 'https://api.nearpay.io/health';
       final response = await http
@@ -348,9 +336,7 @@ class NearPayValidator {
       warnings.add('Could not verify NearPay API: $e');
     }
 
-    // 4. NearPay SDK endpoint reachability
-    // This check is advisory only. Endpoint routing can change by SDK/env, so
-    // avoid blocking payments based on this probe alone.
+    // SDK endpoint reachability is advisory only — routing changes by env, so don't block payments.
     try {
       final prefs = await SharedPreferences.getInstance();
       final env = prefs.getString('np_environment')?.toLowerCase();

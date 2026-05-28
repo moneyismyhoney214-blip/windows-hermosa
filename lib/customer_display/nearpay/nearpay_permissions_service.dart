@@ -1,7 +1,7 @@
 /// NearPay Permissions Service
-/// 
+///
 /// Handles runtime permission requests for NearPay SDK
-/// 
+///
 /// Required permissions for NearPay Tap to Pay:
 /// - ACCESS_FINE_LOCATION (required for payment processing)
 /// - ACCESS_NETWORK_STATE (required for connectivity)
@@ -12,6 +12,27 @@ library;
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+/// Status of a single NearPay-required permission. Typed so the
+/// debug-print and any future consumers can read fields without
+/// `dynamic` map indexing.
+class NearPayPermissionInfo {
+  final bool isGranted;
+  final bool isDenied;
+  final bool isPermanentlyDenied;
+  final bool isRestricted;
+  final bool isLimited;
+  final String? note;
+
+  const NearPayPermissionInfo({
+    required this.isGranted,
+    this.isDenied = false,
+    this.isPermanentlyDenied = false,
+    this.isRestricted = false,
+    this.isLimited = false,
+    this.note,
+  });
+}
 
 class NearPayPermissionsService {
   static final NearPayPermissionsService _instance =
@@ -111,46 +132,44 @@ class NearPayPermissionsService {
     await openAppSettings();
   }
 
-  /// Get detailed permission status
-  Future<Map<String, dynamic>> getPermissionStatus() async {
-    final status = <String, dynamic>{};
+  /// Get detailed permission status, keyed by permission display name.
+  Future<Map<String, NearPayPermissionInfo>> getPermissionStatus() async {
+    final status = <String, NearPayPermissionInfo>{};
 
     for (final permission in _requiredPermissions) {
       final permStatus = await permission.status;
-      status[permission.toString()] = {
-        'isGranted': permStatus.isGranted,
-        'isDenied': permStatus.isDenied,
-        'isPermanentlyDenied': permStatus.isPermanentlyDenied,
-        'isRestricted': permStatus.isRestricted,
-        'isLimited': permStatus.isLimited,
-      };
+      status[permission.toString()] = NearPayPermissionInfo(
+        isGranted: permStatus.isGranted,
+        isDenied: permStatus.isDenied,
+        isPermanentlyDenied: permStatus.isPermanentlyDenied,
+        isRestricted: permStatus.isRestricted,
+        isLimited: permStatus.isLimited,
+      );
     }
 
-    // Check NFC separately
-    // Note: NFC permission is special - it's granted at install time
-    // but NFC hardware might not be available
-    status['NFC'] = {
-      'isGranted': true, // NFC permission is auto-granted
-      'note': 'Check NFC hardware availability separately',
-    };
+    // NFC permission is auto-granted at install time but the device may
+    // still lack NFC hardware. Hardware checks live elsewhere.
+    status['NFC'] = const NearPayPermissionInfo(
+      isGranted: true,
+      note: 'Check NFC hardware availability separately',
+    );
 
     return status;
   }
 
-  /// Print permission status for debugging
+  /// Print permission status for debugging.
   Future<void> debugPrintPermissionStatus() async {
     debugPrint('═══════════════════════════════════════════');
     debugPrint('📋 NearPay Permissions Status');
     debugPrint('═══════════════════════════════════════════');
 
     final status = await getPermissionStatus();
-    status.forEach((permission, data) {
-      final granted = data['isGranted'] as bool? ?? false;
-      final icon = granted ? '✅' : '❌';
-      debugPrint('$icon $permission: ${data['isGranted']}');
-
-      if (data['note'] != null) {
-        debugPrint('   → ${data['note']}');
+    status.forEach((permission, info) {
+      final icon = info.isGranted ? '✅' : '❌';
+      debugPrint('$icon $permission: ${info.isGranted}');
+      final note = info.note;
+      if (note != null) {
+        debugPrint('   → $note');
       }
     });
 

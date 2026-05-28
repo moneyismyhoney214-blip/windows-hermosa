@@ -8,16 +8,18 @@ import 'package:flutter_html_to_pdf_plus/flutter_html_to_pdf_plus.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:hermosa_pos/utils/paper_width_utils.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
+import 'package:printing/printing.dart';
 import 'package:screenshot/screenshot.dart';
 
-import '../models/receipt_data.dart';
-import '../models.dart';
-import 'invoice_print_widget.dart';
 import '../locator.dart';
+import '../models.dart';
+import '../models/receipt_data.dart';
+import '../services/language_service.dart';
 import '../services/printer_language_settings_service.dart';
 import '../services/printer_service.dart';
+import '../utils/ui_feedback.dart';
+import 'invoice_print_widget.dart';
 
 /// Cross-platform invoice preview and print screen.
 ///
@@ -120,7 +122,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
   @override
   void initState() {
     super.initState();
-    // If we have receiptData, skip HTML loading
     if (widget.receiptData != null) {
       _isLoading = false;
       _triggerAutoPrintIfNeeded();
@@ -129,14 +130,9 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Content loading
-  // ────────────────────────────────────────────────────────────────────────────
-
   Future<void> _loadContent() async {
     try {
       if (widget.htmlContent != null && widget.htmlContent!.trim().isNotEmpty) {
-        // Directly provided HTML – best path.
         _htmlContent = widget.htmlContent!;
       } else if (widget.localPdfPath != null &&
           widget.localPdfPath!.trim().isNotEmpty) {
@@ -144,12 +140,11 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
         if (path.toLowerCase().endsWith('.html')) {
           _htmlContent = await File(path).readAsString();
         } else {
-          // PDF file – we can't render it inline, but we can still print it.
+          // PDF file – can't render inline but can still print.
           _htmlContent = '';
           _error = null;
         }
       } else if (widget.pdfUrl != null && widget.pdfUrl!.trim().isNotEmpty) {
-        // Remote PDF URL – fallback.
         _htmlContent = '';
         _error = null;
       }
@@ -171,18 +166,12 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (widget.receiptData != null) {
-        // For widget-based receipts, try direct thermal print.
         unawaited(_printThermalFromWidget());
       } else {
-        // For HTML/PDF previews, open printer selection.
         unawaited(_directPrintToThermal());
       }
     });
   }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // HTML → PDF conversion
-  // ────────────────────────────────────────────────────────────────────────────
 
   /// Converts HTML to PDF bytes.
   ///
@@ -201,7 +190,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
       );
       return await file.readAsBytes();
     } on MissingPluginException {
-      // Desktop platforms don't support flutter_html_to_pdf.
       return null;
     } catch (e) {
       final lower = e.toString().toLowerCase();
@@ -214,10 +202,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Printing
-  // ────────────────────────────────────────────────────────────────────────────
-
   /// Print using the [printing] package.
   ///
   /// On **Android** this opens the system print dialog.
@@ -229,26 +213,21 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
 
     try {
       if (_htmlContent.isNotEmpty) {
-        // Try to generate a PDF from HTML first.
         final pdfBytes = await _htmlToPdfBytes(_htmlContent);
 
         if (pdfBytes != null && pdfBytes.isNotEmpty) {
-          // We have a proper PDF – use it.
           await Printing.layoutPdf(
             onLayout: (_) => Future.value(pdfBytes),
             name: widget.title,
             format: _receiptPageFormat,
           );
         } else {
-          // Desktop fallback: write the HTML to a temp file and use
-          // Printing's built-in HTML printing support.
+          // Desktop fallback: write HTML to temp file and use convertHtml.
           final outputDir = await getTemporaryDirectory();
           final htmlFile = File(
               '${outputDir.path}/print_${DateTime.now().millisecondsSinceEpoch}.html');
           await htmlFile.writeAsString(_htmlContent, flush: true);
 
-          // Try using Printing.layoutPdf with the deprecated but still
-          // functional convertHtml API.
           try {
             // ignore: deprecated_member_use
             final convertedPdf = await Printing.convertHtml(
@@ -260,13 +239,11 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
               name: widget.title,
             );
           } catch (_) {
-            // Last resort: open the HTML file in the system browser for
-            // printing (mirrors old behavior but at least uses the right file).
+            // Last resort: open the HTML file in the system browser.
             await _openHtmlInSystem(htmlFile.path);
           }
         }
       } else if (widget.localPdfPath != null) {
-        // Already have a PDF file on disk.
         final file = File(widget.localPdfPath!.trim());
         if (await file.exists()) {
           final bytes = await file.readAsBytes();
@@ -278,12 +255,7 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تعذر بدء الطباعة: $e'),
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
+      UiFeedback.error(context, 'تعذر بدء الطباعة: $e');
     } finally {
       if (mounted) setState(() => _isPrinting = false);
     }
@@ -318,17 +290,16 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('لم يتم العثور على طابعات متصلة'),
+            duration: const Duration(seconds: 3),
+            content: Text(translationService.t('no_connected_printers_found')),
             backgroundColor: Colors.orange.shade700,
           ),
         );
-        // Fallback to system print dialog.
         setState(() => _isPrinting = false);
         await _printInvoice();
         return;
       }
 
-      // Show printer selection dialog.
       if (!mounted) return;
       final selectedPrinter = await showDialog<Printer>(
         context: context,
@@ -336,7 +307,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
       );
 
       if (selectedPrinter == null) {
-        // User cancelled.
         return;
       }
 
@@ -344,8 +314,7 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
       if (_htmlContent.isNotEmpty) {
         pdfBytes = await _htmlToPdfBytes(_htmlContent);
 
-        // If HTML→PDF failed (desktop), try the deprecated but functional
-        // convertHtml from the printing package.
+        // Desktop fallback: deprecated convertHtml.
         if (pdfBytes == null || pdfBytes.isEmpty) {
           try {
             // ignore: deprecated_member_use
@@ -353,9 +322,7 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
               html: _htmlContent,
               format: _receiptPageFormat,
             );
-          } catch (_) {
-            // Will show error below.
-          }
+          } catch (_) {}
         }
       } else if (widget.localPdfPath != null) {
         pdfBytes = await File(widget.localPdfPath!.trim()).readAsBytes();
@@ -365,7 +332,8 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('تعذر تحويل الفاتورة إلى PDF للطباعة'),
+            duration: const Duration(seconds: 3),
+            content: Text(translationService.t('pdf_conversion_failed')),
             backgroundColor: Colors.red.shade700,
           ),
         );
@@ -380,32 +348,16 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result
+      UiFeedback.error(context, result
                 ? 'تم إرسال الفاتورة إلى الطابعة ✅'
-                : 'لم يتمكن من إرسال الفاتورة للطابعة ❌',
-          ),
-          backgroundColor: result ? Colors.green.shade700 : Colors.red.shade700,
-        ),
-      );
+                : 'لم يتمكن من إرسال الفاتورة للطابعة ❌');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('خطأ في الطباعة المباشرة: $e'),
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
+      UiFeedback.error(context, 'خطأ في الطباعة المباشرة: $e');
     } finally {
       if (mounted) setState(() => _isPrinting = false);
     }
   }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Build UI
-  // ────────────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -497,8 +449,9 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
     if (widget.printer == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('الرجاء اختيار طابعة من الإعدادات أولاً'),
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(translationService.t('pick_printer_in_settings_first')),
           backgroundColor: Colors.orange,
         ),
       );
@@ -518,19 +471,20 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إرسال الفاتورة للطابعة بنجاح ✅'),
+          SnackBar(
+            content: Text('${translationService.t('invoice_sent_to_printer_ok')} ✅'),
             backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في الطباعة: $e'),
-            backgroundColor: Colors.red,
+        UiFeedback.error(
+          context,
+          translationService.t(
+            'print_error_with_reason',
+            args: {'reason': '$e'},
           ),
         );
       }
@@ -578,7 +532,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
       );
     }
 
-    // Use InvoicePrintWidget if we have receiptData (preferred)
     if (widget.receiptData != null) {
       return _buildWidgetPreview();
     }
@@ -587,7 +540,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
       return _buildHtmlPreview();
     }
 
-    // No HTML available (e.g. PDF-only path).
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -617,7 +569,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
 
   /// Builds the invoice preview using InvoicePrintWidget for better display.
   Widget _buildWidgetPreview() {
-    // Read local printer language settings (device-scoped, user-configurable).
     final String pri = printerLanguageSettings.primary;
     final String sec = printerLanguageSettings.secondary;
     final bool allow = printerLanguageSettings.allowSecondary;
@@ -645,7 +596,7 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
               child: Screenshot(
                 controller: _screenshotController,
                 child: InvoicePrintWidget(
-                  data: widget.receiptData!,
+                  data: widget.receiptData,
                   paperWidthMm: widget.printer?.paperWidthMm ?? 80,
                   orderType: widget.orderType,
                   tableNumber: widget.tableNumber,
@@ -710,10 +661,6 @@ class _PdfPreviewScreenState extends State<PdfPreviewScreen> {
     );
   }
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Printer selection dialog
-// ──────────────────────────────────────────────────────────────────────────────
 
 class _PrinterSelectionDialog extends StatelessWidget {
   final List<Printer> printers;

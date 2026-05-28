@@ -1,16 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../services/api/api_constants.dart';
+import '../services/api/base_client.dart';
 import '../services/app_themes.dart';
 import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
 
 /// In-app viewer for the marketing/legal static pages exposed by
 /// `portal.hermosaapp.com/staticPages/<slug>`. The same slug is used on
@@ -41,7 +40,6 @@ class LegalPageScreen extends StatefulWidget {
 }
 
 class _LegalPageScreenState extends State<LegalPageScreen> {
-  static const String _apiHost = 'https://portal.hermosaapp.com';
   static const String _webHost = 'https://v2.hermosaapp.com';
 
   bool _loading = true;
@@ -63,19 +61,16 @@ class _LegalPageScreenState extends State<LegalPageScreen> {
     });
 
     try {
-      final uri = Uri.parse('$_apiHost/staticPages/${widget.slug}');
-      final response = await http.get(uri, headers: {
-        'Accept': 'application/json',
-        'Accept-Language': ApiConstants.acceptLanguage,
-        'Accept-Platform': 'dashboard',
-        'Accept-ISO': 'SAU',
-      }).timeout(const Duration(seconds: 12));
+      // Route through BaseClient so the request inherits the rest of
+      // the app's HTTP setup: TLS pinning, connection pooling, the
+      // retry-on-connection-closed handler, and centralised error
+      // shaping. `skipGlobalAuth: true` keeps the JWT off this call
+      // (public static-pages endpoint, no token required).
+      final json = await BaseClient().get(
+        '/staticPages/${widget.slug}',
+        skipGlobalAuth: true,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-
-      final json = jsonDecode(response.body);
       final data = (json is Map && json['data'] is Map)
           ? Map<String, dynamic>.from(json['data'] as Map)
           : <String, dynamic>{};
@@ -112,13 +107,7 @@ class _LegalPageScreenState extends State<LegalPageScreen> {
   }
 
   void _showLaunchError() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFFDC2626),
-        behavior: SnackBarBehavior.floating,
-        content: Text(translationService.t('error_occurred')),
-      ),
-    );
+    UiFeedback.error(context, translationService.t('error_occurred'));
   }
 
   @override

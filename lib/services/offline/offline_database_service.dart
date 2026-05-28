@@ -1,7 +1,10 @@
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+
+import '../logger_service.dart';
 
 /// Core SQLite database service for offline-first POS operations.
 ///
@@ -14,8 +17,16 @@ class OfflineDatabaseService {
   OfflineDatabaseService._internal();
 
   Database? _db;
-  static const int _dbVersion = 2;
+  static const int _dbVersion = 3;
   static const String _dbName = 'hermosa_offline.db';
+
+  /// Test-only override for the database file path. When non-null, the
+  /// next [_initDatabase] call opens this file instead of resolving
+  /// `<getDatabasesPath()>/$_dbName`. Lets concurrent test files run
+  /// against isolated DBs (the production code paths still use the
+  /// fixed `_dbName` location).
+  @visibleForTesting
+  static String? debugOverrideDbPath;
 
   /// Whether the database is ready.
   bool get isReady => _db != null;
@@ -28,8 +39,14 @@ class OfflineDatabaseService {
   }
 
   Future<Database> _initDatabase() async {
-    final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, _dbName);
+    final overridePath = debugOverrideDbPath;
+    final String path;
+    if (overridePath != null) {
+      path = overridePath;
+    } else {
+      final dbPath = await getDatabasesPath();
+      path = p.join(dbPath, _dbName);
+    }
     debugPrint('Offline DB path: $path');
     return await openDatabase(
       path,
@@ -47,7 +64,6 @@ class OfflineDatabaseService {
   Future<void> _onCreate(Database db, int version) async {
     final batch = db.batch();
 
-    // ── Categories ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS categories (
         id TEXT PRIMARY KEY,
@@ -63,7 +79,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Products / Meals ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
@@ -82,7 +97,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Customers ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS customers (
         id TEXT PRIMARY KEY,
@@ -99,7 +113,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Restaurant Tables ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS restaurant_tables (
         id TEXT PRIMARY KEY,
@@ -114,7 +127,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Orders / Bookings ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
@@ -141,7 +153,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Invoices ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS invoices (
         id TEXT PRIMARY KEY,
@@ -166,7 +177,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Payment Methods ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS payment_methods (
         id TEXT PRIMARY KEY,
@@ -179,7 +189,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Branch Settings ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS branch_settings (
         branch_id INTEGER PRIMARY KEY,
@@ -192,7 +201,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Promo Codes ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS promo_codes (
         id TEXT PRIMARY KEY,
@@ -211,7 +219,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Sync Queue ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS sync_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -230,7 +237,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Countries & Cities (for customer forms) ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS countries (
         id INTEGER PRIMARY KEY,
@@ -256,7 +262,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── Reports Cache ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS reports_cache (
         cache_key TEXT PRIMARY KEY,
@@ -266,7 +271,6 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // ── User / Auth Cache ──
     batch.execute('''
       CREATE TABLE IF NOT EXISTS auth_cache (
         key TEXT PRIMARY KEY,
@@ -275,7 +279,7 @@ class OfflineDatabaseService {
       )
     ''');
 
-    // Indexes for performance
+    // Indexes back every WHERE/ORDER BY clause in the hot paths.
     batch.execute(
         'CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id)');
     batch.execute(
@@ -292,6 +296,18 @@ class OfflineDatabaseService {
         'CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status)');
     batch.execute(
         'CREATE INDEX IF NOT EXISTS idx_customers_seller ON customers(seller_id)');
+    // v3: composite indexes for sync drain path (branch_id + is_synced).
+    batch.execute(
+        'CREATE INDEX IF NOT EXISTS idx_orders_branch_synced ON orders(branch_id, is_synced)');
+    batch.execute(
+        'CREATE INDEX IF NOT EXISTS idx_invoices_branch_synced ON invoices(branch_id, is_synced)');
+    // Customer-id indexes avoid full scan on every cashier refresh.
+    batch.execute(
+        'CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id)');
+    batch.execute(
+        'CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id)');
+    batch.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sync_queue_created ON sync_queue(created_at)');
 
     await batch.commit(noResult: true);
     debugPrint('Offline database tables created');
@@ -302,11 +318,52 @@ class OfflineDatabaseService {
       await db.execute(
           'ALTER TABLE orders ADD COLUMN payment_type TEXT DEFAULT \'payment\'');
     }
+    if (oldVersion < 3) {
+      // Idempotent v3 index upgrade — SQLite indexes existing rows in-place.
+      const v3Indexes = [
+        'CREATE INDEX IF NOT EXISTS idx_orders_branch_synced ON orders(branch_id, is_synced)',
+        'CREATE INDEX IF NOT EXISTS idx_invoices_branch_synced ON invoices(branch_id, is_synced)',
+        'CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id)',
+        'CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id)',
+        'CREATE INDEX IF NOT EXISTS idx_sync_queue_created ON sync_queue(created_at)',
+      ];
+      for (final stmt in v3Indexes) {
+        try {
+          await db.execute(stmt);
+        } catch (e) {
+          // Legacy schemas may lack referenced columns — query planner falls back to scan.
+          debugPrint('⚠️ v3 index skipped (likely missing column): $e');
+        }
+      }
+    }
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  CATEGORIES
-  // ═══════════════════════════════════════════════════════════════════
+  /// Removes rows from `sync_queue` whose `status` is `'synced'` and
+  /// whose `created_at` is older than [olderThan]. Bounds queue growth
+  /// on devices that have been online for months — left alone the table
+  /// grows linearly with the number of successful sync attempts.
+  ///
+  /// Returns the number of rows deleted. Safe to call from a periodic
+  /// timer; takes a single transaction.
+  Future<int> cleanupSyncedSyncQueue({
+    Duration olderThan = const Duration(days: 7),
+  }) async {
+    final db = await database;
+    final threshold =
+        DateTime.now().subtract(olderThan).toIso8601String();
+    final deleted = await db.delete(
+      'sync_queue',
+      where: 'status = ? AND created_at < ?',
+      whereArgs: ['synced', threshold],
+    );
+    if (deleted > 0) {
+      debugPrint('🧹 sync_queue cleanup removed $deleted rows '
+          'older than ${olderThan.inDays}d');
+    }
+    return deleted;
+  }
+
+  // --- Categories ---
 
   Future<void> saveCategories(
       List<Map<String, dynamic>> categories, int branchId) async {
@@ -348,15 +405,13 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  PRODUCTS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Products ---
 
   Future<void> saveProducts(
       List<Map<String, dynamic>> products, int branchId,
@@ -402,7 +457,7 @@ class OfflineDatabaseService {
       {String? categoryId}) async {
     final db = await database;
     String where = 'branch_id = ?';
-    List<dynamic> whereArgs = [branchId];
+    final List<dynamic> whereArgs = [branchId];
     if (categoryId != null && categoryId != 'all') {
       where += ' AND category_id = ?';
       whereArgs.add(categoryId);
@@ -412,15 +467,13 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  CUSTOMERS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Customers ---
 
   Future<void> saveCustomers(
       List<Map<String, dynamic>> customers, int sellerId) async {
@@ -454,7 +507,7 @@ class OfflineDatabaseService {
       {String? search}) async {
     final db = await database;
     String where = 'seller_id = ?';
-    List<dynamic> whereArgs = [sellerId];
+    final List<dynamic> whereArgs = [sellerId];
     if (search != null && search.isNotEmpty) {
       where += ' AND (name LIKE ? OR phone LIKE ? OR email LIKE ?)';
       final pattern = '%$search%';
@@ -466,7 +519,7 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
@@ -496,9 +549,7 @@ class OfflineDatabaseService {
     return localId;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  TABLES
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Tables ---
 
   Future<void> saveTables(
       List<Map<String, dynamic>> tables, int branchId) async {
@@ -539,15 +590,13 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  ORDERS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Orders ---
 
   Future<String> saveLocalOrder(Map<String, dynamic> orderData, int branchId,
       {String paymentType = 'payment'}) async {
@@ -682,12 +731,11 @@ class OfflineDatabaseService {
         try {
           final parsed =
               jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-          // Inject local metadata
           parsed['_is_local'] = row['is_local'] == 1;
           parsed['_is_synced'] = row['is_synced'] == 1;
           parsed['_local_id'] = row['id'];
           return parsed;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
@@ -730,9 +778,7 @@ class OfflineDatabaseService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  INVOICES
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Invoices ---
 
   Future<String> saveLocalInvoice(
       Map<String, dynamic> invoiceData, int branchId) async {
@@ -858,7 +904,7 @@ class OfflineDatabaseService {
           parsed['_is_synced'] = row['is_synced'] == 1;
           parsed['_local_id'] = row['id'];
           return parsed;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
@@ -888,9 +934,7 @@ class OfflineDatabaseService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  PAYMENT METHODS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Payment Methods ---
 
   Future<void> savePaymentMethods(
       List<Map<String, dynamic>> methods, int branchId) async {
@@ -931,15 +975,13 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  BRANCH SETTINGS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Branch Settings ---
 
   Future<void> saveBranchSettings(
       int branchId, Map<String, dynamic> settings) async {
@@ -975,14 +1017,12 @@ class OfflineDatabaseService {
       try {
         return jsonDecode(row['settings_json'] as String)
             as Map<String, dynamic>;
-      } catch (_) {}
+      } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
     }
     return Map<String, dynamic>.from(row);
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  PROMO CODES
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Promo Codes ---
 
   Future<void> savePromoCodes(
       List<Map<String, dynamic>> codes, int branchId) async {
@@ -1027,15 +1067,13 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  SYNC QUEUE
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Sync Queue ---
 
   Future<int> addToSyncQueue({
     required String operation,
@@ -1103,9 +1141,7 @@ class OfflineDatabaseService {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  REPORTS CACHE
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Reports Cache ---
 
   Future<void> cacheReport(
       String key, Map<String, dynamic> data, int branchId) async {
@@ -1134,14 +1170,13 @@ class OfflineDatabaseService {
     try {
       return jsonDecode(rows.first['data_json'] as String)
           as Map<String, dynamic>;
-    } catch (_) {
+    } catch (e) {
+      Log.d('offline-db', 'data_json decode failed (non-fatal): $e');
       return null;
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  COUNTRIES & CITIES
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Countries & Cities ---
 
   Future<void> saveCountries(List<Map<String, dynamic>> countries) async {
     final db = await database;
@@ -1175,7 +1210,7 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
@@ -1212,21 +1247,18 @@ class OfflineDatabaseService {
       if (row['raw_json'] != null) {
         try {
           return jsonDecode(row['raw_json'] as String) as Map<String, dynamic>;
-        } catch (_) {}
+        } catch (e) { Log.w('offline-db', 'JSON decode failed for cached row', error: e); }
       }
       return Map<String, dynamic>.from(row);
     }).toList();
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  HELPERS
-  // ═══════════════════════════════════════════════════════════════════
+  // --- Helpers ---
 
   String _extractName(dynamic data) {
     if (data == null) return '';
     if (data is String) return data;
     if (data is Map) {
-      // Try localized name
       final nameDisplay = data['name_display'];
       if (nameDisplay is Map) {
         return nameDisplay['ar']?.toString() ??

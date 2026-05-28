@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../services/display_app_service.dart';
+
 import '../locator.dart';
-import '../services/language_service.dart';
 import '../screens/qr_scanner_screen.dart';
 import '../services/app_themes.dart';
+import '../services/display_app_service.dart';
+import '../services/language_service.dart';
 
 class DisplayConnectionDialog extends StatefulWidget {
-  const DisplayConnectionDialog({Key? key}) : super(key: key);
+  const DisplayConnectionDialog({super.key});
 
   @override
   State<DisplayConnectionDialog> createState() =>
@@ -207,7 +208,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 ),
-                child: Text('ربط الآن',
+                child: Text(translationService.t('connect_now'),
                     style: GoogleFonts.tajawal(fontWeight: FontWeight.bold)),
               );
 
@@ -224,7 +225,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
                       ),
                     ),
                     Text(
-                      'آخر اتصال ناجح',
+                      translationService.t('last_successful_connection'),
                       style: GoogleFonts.tajawal(
                           fontSize: 12, color: const Color(0xFF94A3B8)),
                     ),
@@ -402,7 +403,7 @@ class _DisplayConnectionDialogState extends State<DisplayConnectionDialog> {
                   child: Text(
                     _displayService.errorMessage!,
                     style: GoogleFonts.tajawal(
-                        color: Color(0xFFB91C1C), fontSize: 13),
+                        color: const Color(0xFFB91C1C), fontSize: 13),
                   ),
                 ),
               ],

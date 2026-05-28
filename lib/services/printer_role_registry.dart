@@ -1,9 +1,11 @@
 import 'dart:convert';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models.dart';
 import 'api/api_constants.dart';
+import 'logger_service.dart';
 
 enum PrinterRole {
   kitchen,
@@ -67,17 +69,47 @@ extension PrinterRoleX on PrinterRole {
   }
 }
 
+/// Persisted map of `printerDeviceId → assigned role`. Used to override
+/// the heuristic role-inference in [_inferRole] when the cashier has
+/// manually tagged a printer in settings.
+///
+/// **Storage**: lives in `flutter_secure_storage` (Android Keystore /
+/// iOS Keychain). A one-time migration on the first read pulls any
+/// legacy plaintext entry out of `SharedPreferences` and writes it
+/// into secure storage, then deletes the SharedPrefs entry. Printer
+/// device IDs aren't a credential, but the audit flagged any device
+/// identifier in SharedPrefs as readable via ADB backup on rooted
+/// devices, so moving them lines up the storage policy across the
+/// app.
 class PrinterRoleRegistry {
+  PrinterRoleRegistry({FlutterSecureStorage? secureStorage})
+      : _secureStorage = secureStorage ?? const FlutterSecureStorage();
+
   static const String _storageKey = 'printer_role_registry_v1';
 
+  final FlutterSecureStorage _secureStorage;
   final Map<String, PrinterRole> _explicitRoles = <String, PrinterRole>{};
   bool _loaded = false;
 
   Future<void> initialize() async {
     if (_loaded) return;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_storageKey);
+      var raw = await _secureStorage.read(key: _storageKey);
+
+      // One-time migration of the legacy SharedPrefs entry into secure
+      // storage. The plaintext blob is dropped from SharedPrefs once
+      // copied so it stops being included in ADB backups.
+      if (raw == null) {
+        final legacy = await _readLegacySharedPrefs();
+        if (legacy != null) {
+          raw = legacy;
+          await _secureStorage.write(key: _storageKey, value: legacy);
+          await _deleteLegacySharedPrefs();
+          Log.i('printer-role',
+              'migrated legacy SharedPrefs entry to secure storage');
+        }
+      }
+
       if (raw != null && raw.isNotEmpty) {
         final decoded = jsonDecode(raw);
         if (decoded is Map) {
@@ -91,7 +123,7 @@ class PrinterRoleRegistry {
       }
     } catch (e) {
       // Keep default heuristic behavior if registry cannot be loaded.
-      print('⚠️ Failed to load printer role registry: $e');
+      Log.w('printer-role', 'failed to load registry', error: e);
     } finally {
       _loaded = true;
     }
@@ -100,17 +132,14 @@ class PrinterRoleRegistry {
   Future<void> setRole(String deviceId, PrinterRole role) async {
     final id = deviceId.trim();
     if (id.isEmpty) {
-      print('⚠️ setRole called with EMPTY deviceId!');
+      Log.w('printer-role', 'setRole called with empty deviceId');
       return;
     }
     await initialize();
     _explicitRoles[id] = role;
     await _persist();
-    print('✅ setRole: "$id" → ${role.storageValue} (total: ${_explicitRoles.length} roles saved)');
-    // Verify it was saved
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_storageKey);
-    print('💾 Persisted roles: $saved');
+    Log.d('printer-role',
+        'setRole "$id" → ${role.storageValue} (${_explicitRoles.length} total)');
   }
 
   Future<void> clearRole(String deviceId) async {
@@ -128,11 +157,13 @@ class PrinterRoleRegistry {
   PrinterRole resolveRole(DeviceConfig device) {
     final explicit = _explicitRoles[device.id];
     if (explicit != null) {
-      print('🏷️ Role [${device.name}] id=${device.id} → EXPLICIT: ${explicit.storageValue}');
+      Log.d('printer-role',
+          'resolve ${device.name} (${device.id}) → EXPLICIT ${explicit.storageValue}');
       return explicit;
     }
     final inferred = _inferRole(device);
-    print('🏷️ Role [${device.name}] id=${device.id} → INFERRED: ${inferred.storageValue} (name="${device.name}" type="${device.type}")');
+    Log.d('printer-role',
+        'resolve ${device.name} (${device.id}) → INFERRED ${inferred.storageValue}');
     return inferred;
   }
 
@@ -170,14 +201,43 @@ class PrinterRoleRegistry {
 
   Future<void> _persist() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
       final payload = <String, String>{
         for (final entry in _explicitRoles.entries)
           entry.key: entry.value.storageValue,
       };
-      await prefs.setString(_storageKey, jsonEncode(payload));
+      await _secureStorage.write(
+        key: _storageKey,
+        value: jsonEncode(payload),
+      );
     } catch (e) {
-      print('⚠️ Failed to persist printer role registry: $e');
+      Log.w('printer-role', 'failed to persist', error: e);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // Legacy SharedPreferences migration helpers
+  // ────────────────────────────────────────────────────────────────────
+
+  Future<String?> _readLegacySharedPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_storageKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _deleteLegacySharedPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_storageKey);
+    } catch (e) {
+      // Non-fatal — if the cleanup fails, the value still lives in
+      // secure storage. Next migration check will be a no-op since the
+      // primary read path hits secure storage first.
+      Log.w('printer-role',
+          'failed to delete legacy SharedPrefs entry post-migration',
+          error: e);
     }
   }
 }

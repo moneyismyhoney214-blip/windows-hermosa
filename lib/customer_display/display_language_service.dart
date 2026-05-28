@@ -40,14 +40,13 @@ class DisplayLanguageService {
   }
 
   static Map<String, String> _effectiveTranslations(String code) {
-    // Priority: Selected Code > English > Arabic
+    // Layered fallback: AR < EN < target locale.
     if (code == 'ar') {
       return Map<String, String>.from(_ar);
     }
     if (code == 'en') {
       return <String, String>{..._ar, ..._en};
     }
-    // For other languages (tr, es, etc.), layer them: AR < EN < Target
     return <String, String>{..._ar, ..._en, ..._mapByLanguage(code)};
   }
 

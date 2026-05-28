@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../orders_screen.dart';
 
 extension OrdersScreenProcessing on _OrdersScreenState {
@@ -14,7 +14,7 @@ extension OrdersScreenProcessing on _OrdersScreenState {
             .toList()
         : [];
 
-    // Ensure order-number search works even if backend search behavior varies.
+    // Defensive order-number filter for backend search inconsistencies.
     if (_isOrderNumberSearch && _searchQueryForApi.isNotEmpty) {
       final digits = _searchQueryForApi;
       newItems = newItems.where((booking) {
@@ -25,7 +25,7 @@ extension OrdersScreenProcessing on _OrdersScreenState {
         final bookingNumber =
             (booking.bookingNumber ?? '').replaceAll(RegExp(r'[^0-9]'), '');
 
-        // Exact match for order search to avoid collisions with booking IDs.
+        // Exact match — booking IDs share the numeric namespace.
         return orderId == digits ||
             id == digits ||
             orderNumber == digits ||
@@ -35,12 +35,7 @@ extension OrdersScreenProcessing on _OrdersScreenState {
 
     final totalCount = _extractTotalCount(response);
 
-    // Salon-only: when we've already learned (via SalonInvoiceCreatedEvent
-    // or the cross-ref scan) that a booking is invoiced, force its
-    // status/status_display to the "انتهي" state so the list paint never
-    // briefly shows "حجز مؤكد" while the backend lags ~1s before
-    // propagating status=3 in the LIST response. This kills the
-    // "card flips to انتهي a second later" flicker.
+    // Force known-invoiced bookings to status=3 to kill the ~1s "card flips to انتهي" flicker.
     if (ApiConstants.branchModule == 'salons' &&
         _bookingIdsWithInvoice.isNotEmpty) {
       for (final booking in newItems) {
@@ -52,16 +47,7 @@ extension OrdersScreenProcessing on _OrdersScreenState {
       }
     }
 
-    // Salon-only: enforce strict separation between Bookings, Pending
-    // Invoices and Posted Invoices. The /bookings endpoint returns:
-    //   - real appointments (`book_appointment=true`) → Bookings tab
-    //   - pay-later orders awaiting invoice (`book_appointment=false`,
-    //     status=1) → Pending Invoices tab (this screen)
-    //   - finalised orders (status=3 "انتهي" or status=7 "مكتمل", with
-    //     `invoice_id` set on the detail endpoint) → Posted Invoices tab
-    // Without this filter the same customer (e.g. مريم المازني) shows up
-    // in both the Bookings tab AND the Pending Invoices tab, and stays in
-    // Pending after the cashier clicks "Create Invoice".
+    // Strict tab separation: this screen shows only pay-later, non-invoiced, non-paid bookings.
     if (ApiConstants.branchModule == 'salons') {
       newItems = newItems.where((booking) {
         if (booking.raw['book_appointment'] == true) return false;

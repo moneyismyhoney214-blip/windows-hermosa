@@ -73,7 +73,13 @@ android {
         applicationId = "p.cash.hermosaapp.com"
         // NearPay requires minSdk 28
         minSdk = 28
-        targetSdk = 36
+        // Bumped 34 → 35: Play Console now blocks uploads targeting < 35.
+        // The 16KB-page warning may persist for prebuilt vendor .so files
+        // (NearPay 0.0.187 / Sunmi CpaySDK / mobile_scanner) that aren't
+        // re-aligned yet, but AGP 8.11+ auto-aligns everything it can
+        // re-pack at packaging time. Misaligned libs that remain after a
+        // build are listed in the Play Console "Native libraries" report.
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
@@ -87,7 +93,13 @@ android {
         // across every variant.
         implementation("io.nearpay:terminalsdk-release:0.0.187")
         implementation("com.google.android.gms:play-services-location:20.0.0")
-        implementation("com.huawei.hms:location:6.4.0.300")
+        // Huawei HMS Location intentionally dropped: the only consumer
+        // (NearpayProvider's huaweiSafetyDetectApiKey builder call) is
+        // already conditionalized and the cashier passes an empty key,
+        // so the native libTransform.so from com.huawei.hms:core was
+        // dead weight. It was also the only 4KB-aligned .so coming
+        // from a removable Gradle dep — pulling it out drops one of
+        // the Play Console 16KB-page warnings without breaking anything.
         // Centerm Q7 POS SDK (printer + system services). Backed by the
         // com.pos.smartposservice APK that must be pre-installed on Q7
         // hardware. Detected at runtime — code paths are no-ops on
@@ -156,6 +168,19 @@ android {
     packaging {
         jniLibs {
             keepDebugSymbols.add("**/libspin*.so")
+            // Drop Telpo POS hardware bindings (USB + serial helpers).
+            // NearPay's cardreader-release pulls local.libs:telpo-lib in
+            // as one of ~15 vendor support libs, but the cashier runs on
+            // Sunmi/Centerm/Q7 hardware in SoftPOS (NFC) mode and never
+            // touches Telpo devices. The two .so files were also the
+            // last 4KB-aligned arm64 libs failing Play Console's 16KB
+            // page check after the Huawei HMS drop, so excluding them
+            // closes the warning. Re-add ONLY if the app starts
+            // supporting Telpo terminals.
+            excludes += setOf(
+                "**/libserial-util.so",
+                "**/libusb-util.so",
+            )
         }
     }
 }

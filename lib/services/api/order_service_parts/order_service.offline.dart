@@ -45,7 +45,7 @@ extension OrderServiceOffline on OrderService {
         rawPayload: _buildSyncPosPayloadFromBooking(bookingData),
       );
     } catch (e) {
-      print('⚠️ Failed to save POS sale (non-fatal): $e');
+      Log.w('offline', 'failed to save POS sale (non-fatal)', error: e);
     }
 
     return _rememberResponse('create_booking_offline', {

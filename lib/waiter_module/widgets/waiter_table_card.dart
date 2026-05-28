@@ -25,6 +25,14 @@ class WaiterTableCard extends StatelessWidget {
   /// flips the table back to free. Only offered when the table has an
   /// active paymentPending booking owned by the current waiter.
   final VoidCallback? onCancelBooking;
+  /// Refund / return items on this table's order (partial or full),
+  /// reusing the cashier's booking-refund flow — credit note + kitchen
+  /// ticket included. Offered once the table has a committed order.
+  final VoidCallback? onRefund;
+  /// View the full backend order details for this table — works for any
+  /// table that has an active booking (pay-later or paid). Pulled fresh
+  /// from the server so every waiter sees the same thing.
+  final VoidCallback? onDetails;
   /// When non-null, the table was assigned to this waitlist party but
   /// they haven't arrived yet. We overlay a small orange "holding"
   /// pill so the host doesn't accidentally give the table to someone
@@ -45,6 +53,8 @@ class WaiterTableCard extends StatelessWidget {
     this.onEditOrder,
     this.onReleaseTable,
     this.onCancelBooking,
+    this.onRefund,
+    this.onDetails,
     this.holdingForName,
   });
 
@@ -123,21 +133,51 @@ class WaiterTableCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (state == _CardState.paid ||
-                    state == _CardState.paymentPending)
+                if (state == _CardState.waitlistHold)
                   const PositionedDirectional(
                     bottom: 4,
                     start: 6,
                     child: Icon(
-                      LucideIcons.dollarSign,
+                      LucideIcons.lock,
                       size: 12,
                       color: Color(0xFFB45309),
+                    ),
+                  ),
+                if (state == _CardState.paid ||
+                    state == _CardState.paymentPending)
+                  PositionedDirectional(
+                    bottom: 4,
+                    start: 6,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          LucideIcons.dollarSign,
+                          size: 12,
+                          color: Color(0xFFB45309),
+                        ),
+                        // Paid-but-not-released = customers are still at the
+                        // table. The "seated" glyph makes that unmistakable
+                        // so the waiter knows to free the table once they
+                        // leave (vs. a paymentPending pay-later, which is
+                        // still an open order).
+                        if (state == _CardState.paid) ...[
+                          const SizedBox(width: 3),
+                          const Icon(
+                            LucideIcons.users,
+                            size: 12,
+                            color: Color(0xFFB45309),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 if (onMigrate != null ||
                     onReleaseTable != null ||
                     onEditOrder != null ||
-                    onCancelBooking != null)
+                    onCancelBooking != null ||
+                    onRefund != null ||
+                    onDetails != null)
                   PositionedDirectional(
                     top: -2,
                     end: -2,
@@ -176,11 +216,14 @@ class WaiterTableCard extends StatelessWidget {
     if (state == _CardState.waitlistHold) {
       return translationService.t(
         'waitlist_table_pill_waiting_for',
-        args: {'name': holdingForName!},
+        args: {'name': holdingForName},
       );
     }
     if (state == _CardState.takingOrder) return 'جاري اخذ الطلب';
     if (state == _CardState.paymentPending) return 'تم أخذ الطلب';
+    // Paid, but the table still has the party — the waiter clears it via
+    // the "تحرير الطاولة" action once they actually leave.
+    if (state == _CardState.paid) return 'مدفوعة — مشغولة';
     if (state == _CardState.mine &&
         ownerWaiterName != null &&
         ownerWaiterName!.trim().isNotEmpty) {
@@ -205,12 +248,33 @@ class WaiterTableCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
         ),
         onSelected: (value) {
+          if (value == 'details' && onDetails != null) onDetails!();
           if (value == 'edit' && onEditOrder != null) onEditOrder!();
           if (value == 'migrate' && onMigrate != null) onMigrate!();
           if (value == 'release' && onReleaseTable != null) onReleaseTable!();
           if (value == 'cancel' && onCancelBooking != null) onCancelBooking!();
+          if (value == 'refund' && onRefund != null) onRefund!();
         },
         itemBuilder: (_) => [
+          if (onDetails != null)
+            const PopupMenuItem<String>(
+              value: 'details',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.fileText,
+                      size: 16, color: Color(0xFF2563EB)),
+                  SizedBox(width: 8),
+                  Text(
+                    'تفاصيل الطلب',
+                    style: TextStyle(
+                      color: Color(0xFF2563EB),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (onEditOrder != null)
             const PopupMenuItem<String>(
               value: 'edit',
@@ -224,6 +288,24 @@ class WaiterTableCard extends StatelessWidget {
                     'تعديل الطلب',
                     style: TextStyle(
                       color: Color(0xFFB45309),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (onRefund != null)
+            const PopupMenuItem<String>(
+              value: 'refund',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.undo2, size: 16, color: Color(0xFFEF4444)),
+                  SizedBox(width: 8),
+                  Text(
+                    'استرجاع / إرجاع',
+                    style: TextStyle(
+                      color: Color(0xFFEF4444),
                       fontWeight: FontWeight.w700,
                     ),
                   ),

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../logger_service.dart';
 import 'base_client.dart';
 
 class ErrorHandler {
@@ -45,7 +46,7 @@ class ErrorHandler {
       userMessage = 'انتهت مهلة الاتصال بالخادم. حاول مرة أخرى.';
     } else if (error is SocketException) {
       final url = requestUrl?.toLowerCase() ?? '';
-      if (url.contains('portal.hermosaapp.com')) {
+      if (url.contains('hermosaapp.com')) {
         userMessage =
             'تعذر الوصول إلى خادم Hermosa. تحقق من الشبكة/الجدار الناري أو جرّب شبكة أخرى.';
       } else {
@@ -269,21 +270,18 @@ class ErrorHandler {
     }
     
     // Keep complete technical details in logs for production diagnostics.
-    // Hook Sentry/Crashlytics here if available.
-    // ignore: avoid_print
-    print(
-      '[$tag] op=${operation ?? '-'} url=${requestUrl ?? '-'} '
-      'status=${statusCode ?? '-'} backend="${backendMessage ?? '-'}" '
-      'user="$userMessage"',
-    );
-    
+    // The Logger sink already routes to Sentry/Crashlytics when wired.
+    Log.w(tag,
+        'op=${operation ?? '-'} url=${requestUrl ?? '-'} '
+        'status=${statusCode ?? '-'} backend="${backendMessage ?? '-'}" '
+        'user="$userMessage"');
+
     final shouldSuppressVerboseBody =
         normalizedUrl.contains('/bookings/create') &&
             normalizedBackend.contains('unhandled match case null');
 
     if (shouldSuppressVerboseBody) {
-      // ignore: avoid_print
-      print('[$tag] response=<suppressed known backend trace noise>');
+      Log.d(tag, 'response=<suppressed known backend trace noise>');
       return;
     }
 
@@ -293,8 +291,8 @@ class ErrorHandler {
       final printable = compactBody.length > maxLen
           ? '${compactBody.substring(0, maxLen)}...<truncated>'
           : compactBody;
-      // ignore: avoid_print
-      print('[$tag] response=$printable');
+      // Sanitize before logging — JWT/PAN/email patterns redacted.
+      Log.d(tag, 'response=${Log.sanitize(printable)}');
     }
   }
 }

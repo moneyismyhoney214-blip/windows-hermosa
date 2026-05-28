@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenDevices on _MainScreenState {
@@ -194,9 +194,7 @@ extension MainScreenDevices on _MainScreenState {
           orElse: () => null,
         );
 
-    // If we have an invoiceId, use InvoiceHtmlPdfService to generate the real
-    // HTML invoice (same template used for printing via flutter_html_to_pdf_plus)
-    // and display it in PdfPreviewScreen for a faithful preview.
+    // Generate real HTML invoice (same template used for printing) for faithful preview.
     if (invoiceId != null && invoiceId.trim().isNotEmpty) {
       try {
         final invoiceHtmlPdfService = getIt<InvoiceHtmlPdfService>();
@@ -223,8 +221,7 @@ extension MainScreenDevices on _MainScreenState {
                   ? receiptData.carNumber
                   : null,
               orderType: orderType,
-              // Auto-print already ran at payment time; preview is for viewing
-              // only — user can reprint manually via the print button.
+              // Auto-print already ran at payment; preview is read-only (manual reprint via button).
               promptPrinterSelectionOnOpen: false,
             ),
           ),
@@ -232,11 +229,9 @@ extension MainScreenDevices on _MainScreenState {
         return;
       } catch (e) {
         debugPrint('⚠️ Failed to generate HTML invoice preview: $e');
-        // Fall through to PdfPreviewScreen as fallback.
       }
     }
 
-    // Fallback: use PdfPreviewScreen when no invoiceId or HTML generation failed.
     if (!hostContext.mounted) return;
 
     final titleLabel = _buildInvoicePreviewTitle(
@@ -290,10 +285,8 @@ extension MainScreenDevices on _MainScreenState {
             ? normalizedOrderId
             : '#$normalizedOrderId');
 
-    // مسح السلة أولاً
     _clearCart();
 
-    // عرض صفحة "تم الدفع" الكاملة
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -319,7 +312,6 @@ extension MainScreenDevices on _MainScreenState {
         onGoToOrders: type == 'later'
             ? () {
                 Navigator.of(dialogContext).pop();
-                // Navigate to orders tab
                 setState(() => _activeTab = 'orders');
               }
             : null,
@@ -331,7 +323,6 @@ extension MainScreenDevices on _MainScreenState {
     required OrderReceiptData receiptData,
     String? invoiceId,
   }) async {
-    // Collect all usable printers (physical printers with reachable address).
     final List<DeviceConfig> printers =
         _devices.where(_isUsablePrinter).toList(growable: false);
     if (printers.isEmpty) {
@@ -344,13 +335,10 @@ extension MainScreenDevices on _MainScreenState {
       invoiceId: invoiceId,
     );
 
-    // One or two copies of the cashier receipt, gated purely by the "نسخة
-    // ثانية للعميل" toggle. All other auto-print flags are ignored here — the
-    // cashier always gets at least one copy so long as a printer exists.
+    // Cashier always gets one copy; second copy gated on customer-second-copy toggle.
     final int totalCopies = _autoPrintCustomerSecondCopy ? 2 : 1;
     debugPrint('🧾 _autoPrintReceiptCopies: secondCopy=$_autoPrintCustomerSecondCopy → printing $totalCopies copies');
 
-    // Resolve cashier-role printers (falls back to any non-kitchen printer).
     final cashierPrinters = await _resolvePrintersForRole(
       role: PrinterRole.cashierReceipt,
       printers: printers,
@@ -362,10 +350,7 @@ extension MainScreenDevices on _MainScreenState {
     }
 
     final printerService = getIt<PrinterService>();
-    // Per-printer print timeout. An unreachable printer (bad IP, offline)
-    // used to hang Future.wait forever and stop the second copy from ever
-    // running. 12s is more than enough for a healthy printer to accept
-    // bytes + cut.
+    // Per-printer 12s timeout — unreachable printers otherwise stall Future.wait forever.
     const perPrintTimeout = Duration(seconds: 12);
 
     Future<bool> runOne(DeviceConfig printer, int copy) async {
@@ -390,15 +375,13 @@ extension MainScreenDevices on _MainScreenState {
     var anyFailed = false;
     for (var copy = 0; copy < totalCopies; copy++) {
       debugPrint('🧾 Printing copy ${copy + 1}/$totalCopies on ${cashierPrinters.map((p) => p.name).join(", ")}');
-      // Fire every printer in parallel but bound each by perPrintTimeout so
-      // one dead printer can't stall the whole cycle.
+      // Parallel, bounded by perPrintTimeout so one dead printer can't stall.
       final results = await Future.wait(
         cashierPrinters.map((printer) => runOne(printer, copy)),
       );
       if (!results.any((s) => s)) anyFailed = true;
 
-      // Thermal printers sometimes merge back-to-back jobs; a short gap
-      // between copies gives the printer time to cut and reset.
+      // Short gap between copies so thermal printers can cut and reset.
       if (copy + 1 < totalCopies) {
         await Future.delayed(const Duration(milliseconds: 400));
       }
@@ -424,12 +407,12 @@ extension MainScreenDevices on _MainScreenState {
       return matches;
     }
 
-    // Only fall back to printers with `general` role — never reuse cashier or kitchen printers
+    // `general` role never falls back; cashier or kitchen are off-limits.
     if (role == PrinterRole.general) {
       return const <DeviceConfig>[];
     }
 
-    // For cashierReceipt role: fall back to non-kitchen printers
+    // cashierReceipt role falls back to non-kitchen printers.
     final nonKitchen = physical.where((printer) {
       final resolved = registry.resolveRole(printer);
       return resolved != PrinterRole.kitchen &&
@@ -441,12 +424,7 @@ extension MainScreenDevices on _MainScreenState {
       return nonKitchen;
     }
 
-    // Strict separation: a printer the user explicitly tagged as
-    // أدوار/kitchen/kds/bar is reserved for the turn slip in salon mode (or
-    // the kitchen ticket in restaurant mode) — never reuse it for the
-    // cashier receipt. If the operator wants both on the same printer they
-    // must tag it as `cashier_receipt` (or `general`); the role they pick
-    // is the contract, not a hint we override.
+    // Strict separation: kitchen/kds/bar printers are reserved; operators must retag for cashier reuse.
     debugPrint(
       'ℹ️ No printer eligible for role=$role (kitchen/kds/bar tagged printers '
       'are reserved for the turn/kitchen ticket) — skipping',
@@ -458,19 +436,13 @@ extension MainScreenDevices on _MainScreenState {
     List<OrderChange> changes,
     String orderNumber, {
     bool isFullCancel = false,
-    // Salon-only meta: callers in the salon edit flow pass the booking's
-    // customer + employee names so the change ticket banner identifies
-    // both. Restaurant callers leave them null and the kitchen view
-    // skips both rows (clientName already gates the customer row).
+    // Salon-only meta: customer + employee names for the change-ticket banner.
     String? customerName,
     String? employeeName,
   }) {
     if (changes.isEmpty) return;
 
-    // Resolve printer language (local, device-scoped). The kitchen ticket
-    // renders `tagPrimary` as the main line and `tagSecondary` underneath,
-    // so we need both values whenever the cashier enabled a secondary
-    // language that differs from the primary (e.g. Spanish + English).
+    // Resolve printer language; need both primary + secondary for tag rendering.
     final String invoiceLang = printerLanguageSettings.primary;
     final String invoiceLangSecondary =
         printerLanguageSettings.allowSecondary &&
@@ -478,7 +450,7 @@ extension MainScreenDevices on _MainScreenState {
             ? printerLanguageSettings.secondary
             : '';
 
-    String _pick(String code, {required String ar, required String en, String? es, String? tr, String? hi, String? ur}) {
+    String pick(String code, {required String ar, required String en, String? es, String? tr, String? hi, String? ur}) {
       switch (code) {
         case 'es': return es ?? en;
         case 'tr': return tr ?? en;
@@ -490,34 +462,27 @@ extension MainScreenDevices on _MainScreenState {
       }
     }
 
-    String _tl(String ar, String en, {String? es, String? tr, String? hi, String? ur}) =>
-        _pick(invoiceLang, ar: ar, en: en, es: es, tr: tr, hi: hi, ur: ur);
+    String tl(String ar, String en, {String? es, String? tr, String? hi, String? ur}) =>
+        pick(invoiceLang, ar: ar, en: en, es: es, tr: tr, hi: hi, ur: ur);
 
-    // Returns the secondary-language label or an empty string when no
-    // distinct secondary is configured — caller threads this into
-    // `tagSecondary` so the kitchen view can render a bilingual badge.
-    String _tlSec(String ar, String en, {String? es, String? tr, String? hi, String? ur}) {
+    // Secondary-language label or '' when no distinct secondary configured.
+    String tlSec(String ar, String en, {String? es, String? tr, String? hi, String? ur}) {
       if (invoiceLangSecondary.isEmpty) return '';
-      return _pick(invoiceLangSecondary, ar: ar, en: en, es: es, tr: tr, hi: hi, ur: ur);
+      return pick(invoiceLangSecondary, ar: ar, en: en, es: es, tr: tr, hi: hi, ur: ur);
     }
 
-    // Resolve name for invoice language
-    String _resolveName(OrderChange change) {
+    String resolveName(OrderChange change) {
       final loc = change.localizedNames;
       if (loc != null && loc.containsKey(invoiceLang) && loc[invoiceLang]!.isNotEmpty) {
         return loc[invoiceLang]!;
       }
-      // Fallback: English → original name
       if (loc != null && loc.containsKey('en') && loc['en']!.isNotEmpty) {
         return loc['en']!;
       }
       return change.name;
     }
 
-    // Flatten an OrderChange's extras into the shape the kitchen view expects:
-    // `{name, translations: {option: {ar, en, ...}, attribute: {ar, en, ...}}}`.
-    // Including `translations` lets the kitchen ticket print the addon in the
-    // cashier's selected invoice language instead of only Arabic.
+    // Flatten extras to {name, translations} so kitchen prints addon in invoice language.
     List<Map<String, dynamic>> extrasFor(OrderChange change) {
       if (change.extras.isEmpty) return const [];
       return change.extras.map((e) {
@@ -533,10 +498,9 @@ extension MainScreenDevices on _MainScreenState {
       }).toList(growable: false);
     }
 
-    // Build change items for kitchen ticket
     final changeItems = <Map<String, dynamic>>[];
     for (final change in changes) {
-      final resolvedName = _resolveName(change);
+      final resolvedName = resolveName(change);
       final extras = extrasFor(change);
       switch (change.type) {
         case 'add':
@@ -545,9 +509,9 @@ extension MainScreenDevices on _MainScreenState {
             'nameAr': resolvedName,
             'quantity': change.quantity,
             'tag': 'Add',
-            'tagAr': _tl('إضافة', 'Add', es: 'Agregar', tr: 'Ekle', hi: 'जोड़ें', ur: 'شامل کریں'),
-            'tagPrimary': _tl('إضافة', 'Add', es: 'Agregar', tr: 'Ekle', hi: 'जोड़ें', ur: 'شامل کریں'),
-            'tagSecondary': _tlSec('إضافة', 'Add', es: 'Agregar', tr: 'Ekle', hi: 'जोड़ें', ur: 'شامل کریں'),
+            'tagAr': tl('إضافة', 'Add', es: 'Agregar', tr: 'Ekle', hi: 'जोड़ें', ur: 'شامل کریں'),
+            'tagPrimary': tl('إضافة', 'Add', es: 'Agregar', tr: 'Ekle', hi: 'जोड़ें', ur: 'شامل کریں'),
+            'tagSecondary': tlSec('إضافة', 'Add', es: 'Agregar', tr: 'Ekle', hi: 'जोड़ें', ur: 'شامل کریں'),
             'tagColor': 'green',
             if (change.localizedNames != null) 'localizedNames': change.localizedNames,
             if (extras.isNotEmpty) 'extras': extras,
@@ -559,9 +523,9 @@ extension MainScreenDevices on _MainScreenState {
             'nameAr': resolvedName,
             'quantity': change.quantity,
             'tag': 'Cancelled',
-            'tagAr': _tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
-            'tagPrimary': _tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
-            'tagSecondary': _tlSec('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
+            'tagAr': tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
+            'tagPrimary': tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
+            'tagSecondary': tlSec('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
             'cancelled': true,
             'tagColor': 'black',
             if (change.localizedNames != null) 'localizedNames': change.localizedNames,
@@ -574,9 +538,9 @@ extension MainScreenDevices on _MainScreenState {
             'nameAr': resolvedName,
             'quantity': change.quantity,
             'tag': 'Partial Cancel',
-            'tagAr': _tl('إلغاء جزئي', 'Partial Cancel', es: 'Cancelación parcial', tr: 'Kısmi İptal', hi: 'आंशिक रद्द', ur: 'جزوی منسوخی'),
-            'tagPrimary': _tl('إلغاء جزئي', 'Partial Cancel', es: 'Cancelación parcial', tr: 'Kısmi İptal', hi: 'आंशिक रद्द', ur: 'جزوی منسوخی'),
-            'tagSecondary': _tlSec('إلغاء جزئي', 'Partial Cancel', es: 'Cancelación parcial', tr: 'Kısmi İptal', hi: 'आंशिक रद्द', ur: 'جزوی منسوخی'),
+            'tagAr': tl('إلغاء جزئي', 'Partial Cancel', es: 'Cancelación parcial', tr: 'Kısmi İptal', hi: 'आंशिक रद्द', ur: 'جزوی منسوخی'),
+            'tagPrimary': tl('إلغاء جزئي', 'Partial Cancel', es: 'Cancelación parcial', tr: 'Kısmi İptal', hi: 'आंशिक रद्द', ur: 'جزوی منسوخی'),
+            'tagSecondary': tlSec('إلغاء جزئي', 'Partial Cancel', es: 'Cancelación parcial', tr: 'Kısmi İptal', hi: 'आंशिक रद्द', ur: 'جزوی منسوخی'),
             'tagColor': 'black',
             'oldQuantity': change.oldQuantity,
             'cancelledQuantity': change.cancelledQuantity,
@@ -590,9 +554,9 @@ extension MainScreenDevices on _MainScreenState {
             'nameAr': resolvedName,
             'quantity': change.quantity,
             'tag': 'Qty Change',
-            'tagPrimary': _tl('تعديل كمية', 'Qty Change', es: 'Cambio de cantidad', tr: 'Miktar Değişikliği', hi: 'मात्रा बदलें', ur: 'مقدار تبدیلی'),
-            'tagSecondary': _tlSec('تعديل كمية', 'Qty Change', es: 'Cambio de cantidad', tr: 'Miktar Değişikliği', hi: 'मात्रा बदलें', ur: 'مقدار تبدیلی'),
-            'tagAr': _tl('تعديل كمية', 'Qty Change', es: 'Cambio de cantidad', tr: 'Miktar Değişikliği', hi: 'मात्रा बदلें', ur: 'مقدار تبدیلی'),
+            'tagPrimary': tl('تعديل كمية', 'Qty Change', es: 'Cambio de cantidad', tr: 'Miktar Değişikliği', hi: 'मात्रा बदलें', ur: 'مقدار تبدیلی'),
+            'tagSecondary': tlSec('تعديل كمية', 'Qty Change', es: 'Cambio de cantidad', tr: 'Miktar Değişikliği', hi: 'मात्रा बदलें', ur: 'مقدار تبدیلی'),
+            'tagAr': tl('تعديل كمية', 'Qty Change', es: 'Cambio de cantidad', tr: 'Miktar Değişikliği', hi: 'मात्रा बदلें', ur: 'مقدار تبدیلی'),
             'tagColor': 'orange',
             'oldQuantity': change.oldQuantity,
             if (change.localizedNames != null) 'localizedNames': change.localizedNames,
@@ -605,9 +569,9 @@ extension MainScreenDevices on _MainScreenState {
             'nameAr': resolvedName,
             'quantity': change.quantity,
             'tag': 'Cancelled',
-            'tagAr': _tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
-            'tagPrimary': _tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
-            'tagSecondary': _tlSec('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
+            'tagAr': tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
+            'tagPrimary': tl('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
+            'tagSecondary': tlSec('ملغي', 'Cancelled', es: 'Cancelado', tr: 'İptal', hi: 'रद्द', ur: 'منسوخ'),
             'cancelled': true,
             'tagColor': 'black',
             if (change.localizedNames != null) 'localizedNames': change.localizedNames,
@@ -620,26 +584,22 @@ extension MainScreenDevices on _MainScreenState {
             'nameAr': resolvedName,
             'quantity': change.quantity,
             'tag': 'New',
-            'tagAr': _tl('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'نया', ur: 'نیا'),
+            'tagAr': tl('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'نया', ur: 'نیا'),
 
-            'tagPrimary': _tl('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'نया', ur: 'نیا'),
+            'tagPrimary': tl('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'نया', ur: 'نیا'),
 
-            'tagSecondary': _tlSec('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'नया', ur: 'نیا'),
+            'tagSecondary': tlSec('جديد', 'New', es: 'Nuevo', tr: 'Yeni', hi: 'नया', ur: 'نیا'),
             'tagColor': 'green',
             if (change.localizedNames != null) 'localizedNames': change.localizedNames,
             if (extras.isNotEmpty) 'extras': extras,
           });
           break;
         case 'employee_change':
-          // Salon-only: same service, swapped employee. Render the row as
-          // "<service> — من <X> إلى <Y>" so the cashier (and the salon's
-          // operations team) can see exactly who used to perform the
-          // service and who's taking it over. Tag colour is amber to
-          // distinguish from a quantity edit.
+          // Salon-only employee swap on same service; rendered as "service — from X to Y" with amber tag.
           final fromName = (change.oldEmployeeName ?? '').trim();
           final toName = (change.newEmployeeName ?? '').trim();
           final transferLine = (fromName.isNotEmpty && toName.isNotEmpty)
-              ? _tl(
+              ? tl(
                   'من $fromName إلى $toName',
                   'From $fromName to $toName',
                   es: 'De $fromName a $toName',
@@ -653,9 +613,9 @@ extension MainScreenDevices on _MainScreenState {
             'nameAr': resolvedName,
             'quantity': change.quantity,
             'tag': 'Transfer',
-            'tagAr': _tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
-            'tagPrimary': _tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
-            'tagSecondary': _tlSec('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
+            'tagAr': tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
+            'tagPrimary': tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
+            'tagSecondary': tlSec('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل'),
             'tagColor': 'orange',
             if (transferLine.isNotEmpty) 'note': transferLine,
             if (transferLine.isNotEmpty) 'subtitle': transferLine,
@@ -670,7 +630,6 @@ extension MainScreenDevices on _MainScreenState {
       }
     }
 
-    // Use kitchen print orchestrator to print to kitchen printers
     unawaited(() async {
       try {
         final orchestrator = getIt<PrintOrchestratorService>();
@@ -691,24 +650,22 @@ extension MainScreenDevices on _MainScreenState {
           return;
         }
 
-        // Decide header/note based on whether the whole order is being cancelled
-        // (isFullCancel is set by callers that cancel the entire order) vs a partial edit.
+        // Header/note: full cancel vs partial edit.
         final hasAnyCancel = changeItems.any(
           (item) => item['cancelled'] == true || item['cancelledQuantity'] != null,
         );
-        // Salon "تحويل" header only when EVERY change is an employee swap —
-        // otherwise the more general "تعديل طلب" applies.
+        // "تحويل" header only when EVERY change is an employee swap; otherwise "تعديل طلب".
         final allTransfers = changes.isNotEmpty &&
             changes.every((c) => c.type == 'employee_change');
         final orderTypeLabel = isFullCancel
-            ? _tl('إلغاء طلب', 'Order Cancelled', es: 'Pedido Cancelado', tr: 'Sipariş İptal', hi: 'ऑर्डर रद्द', ur: 'آرڈر منسوخ')
+            ? tl('إلغاء طلب', 'Order Cancelled', es: 'Pedido Cancelado', tr: 'Sipariş İptal', hi: 'ऑर्डर रद्द', ur: 'آرڈر منسوخ')
             : (allTransfers
-                ? _tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل')
-                : _tl('تعديل طلب', 'Order Change', es: 'Cambio de Pedido', tr: 'Sipariş Değişikliği', hi: 'ऑर्डर बदलें', ur: 'آرڈر تبدیلی'));
+                ? tl('تحويل', 'Transfer', es: 'Transferencia', tr: 'Transfer', hi: 'स्थानांतरण', ur: 'منتقل')
+                : tl('تعديل طلب', 'Order Change', es: 'Cambio de Pedido', tr: 'Sipariş Değişikliği', hi: 'ऑर्डर बदलें', ur: 'آرڈر تبدیلی'));
         final String? noteLabel = isFullCancel
-            ? _tl('⛔ الطلب ملغي بالكامل', '⛔ Entire order cancelled', es: '⛔ Pedido cancelado', tr: '⛔ Sipariş tamamen iptal', hi: '⛔ पूरा ऑर्डर रद्द', ur: '⛔ پورا آرڈر منسوخ')
+            ? tl('⛔ الطلب ملغي بالكامل', '⛔ Entire order cancelled', es: '⛔ Pedido cancelado', tr: '⛔ Sipariş tamamen iptal', hi: '⛔ पूरा ऑर्डर रद्द', ur: '⛔ پورا آرڈر منسوخ')
             : (hasAnyCancel
-                ? _tl('⚠️ إلغاء جزئي', '⚠️ Partial cancellation', es: '⚠️ Cancelación parcial', tr: '⚠️ Kısmi iptal', hi: '⚠️ आंशिक रद्दीकरण', ur: '⚠️ جزوی منسوخی')
+                ? tl('⚠️ إلغاء جزئي', '⚠️ Partial cancellation', es: '⚠️ Cancelación parcial', tr: '⚠️ Kısmi iptal', hi: '⚠️ आंशिक रद्दीकरण', ur: '⚠️ جزوی منسوخی')
                 : null);
 
         await orchestrator.enqueueKitchenPrint(
@@ -778,10 +735,10 @@ extension MainScreenDevices on _MainScreenState {
   void _showPrintFailureSnackBar() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('تعذر الطباعة — تحقق من اتصال الطابعة'),
+      SnackBar(
+        content: Text(translationService.t('print_failed_check_connection')),
         backgroundColor: Colors.orange,
-        duration: Duration(seconds: 3),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
@@ -789,16 +746,16 @@ extension MainScreenDevices on _MainScreenState {
   void _showMissingPrinterSnackBar() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('⚠️ يجب ربط طابعة لطباعة الفواتير'),
+      SnackBar(
+        content: Text('⚠️ ${translationService.t('printer_required_for_invoices')}'),
         backgroundColor: Colors.orange,
-        duration: Duration(seconds: 3),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
 
   Future<void> _loadCachedDevicesThenRefresh() async {
-    // Phase 1: Serve cached/local devices INSTANTLY (no network wait)
+    // Phase 1: serve cached devices instantly.
     try {
       final deviceService = getIt<DeviceService>();
       final cached = await deviceService.getCachedDevices();
@@ -809,9 +766,11 @@ extension MainScreenDevices on _MainScreenState {
             ..addAll(cached);
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.d('MainScreenDevices', 'load cached devices failed (non-fatal): $e');
+    }
 
-    // Phase 2: Refresh from API in background
+    // Phase 2: background API refresh.
     await _loadDevicesFromApi();
   }
 
@@ -831,7 +790,8 @@ extension MainScreenDevices on _MainScreenState {
         setState(() => device.isOnline = ok);
         orchestrator.updatePrinterStatus(device.id, ok);
         debugPrint('🖨️ Auto-connect [${device.name}] ${device.ip}:${device.port} → ${ok ? "ONLINE" : "OFFLINE"}');
-      } catch (_) {
+      } catch (e) {
+        Log.d('catch', 'non-fatal: $e');
         if (!mounted) return;
         setState(() => device.isOnline = false);
       }
@@ -850,12 +810,9 @@ extension MainScreenDevices on _MainScreenState {
         ..addAll(devices);
     });
 
-    // Now that the device list is populated, push a fresh snapshot to
-    // every connected waiter — the first broadcast at mesh start fired
-    // with an empty list.
+    // Re-broadcast device list (first mesh-start broadcast was empty).
     _broadcastCashierPrintersConfig();
 
-    // Auto-connect all printers on startup
     unawaited(_autoConnectPrinters());
 
     final displayService = getIt<DisplayAppService>();
@@ -866,7 +823,7 @@ extension MainScreenDevices on _MainScreenState {
       return;
     }
 
-    // Never override a live session during background/data refresh.
+    // Don't override a live session on background refresh.
     if (displayService.isConnected ||
         displayService.isConnecting ||
         displayService.isReconnecting) {
@@ -910,17 +867,11 @@ extension MainScreenDevices on _MainScreenState {
   }
 
   Future<void> _addDevice(DeviceConfig device) async {
-    print('🖥️ [MainScreen] _addDevice called with: ${device.toJson()}');
+    Log.d('devices', 'add: ${device.name} (${device.type})');
     final deviceService = getIt<DeviceService>();
-    print('🖥️ [MainScreen] Creating device via DeviceService...');
     final created = await deviceService.createDevice(device);
-    print('🖥️ [MainScreen] Device created: ${created.toJson()}');
-    if (!mounted) {
-      print('🖥️ [MainScreen] Not mounted, returning');
-      return;
-    }
+    if (!mounted) return;
     setState(() => _devices.add(created));
-    print('🖥️ [MainScreen] Device added to _devices list');
     _broadcastCashierPrintersConfig();
 
     if (_isDisplayDeviceType(created.type) && created.ip.isNotEmpty) {
@@ -945,8 +896,8 @@ extension MainScreenDevices on _MainScreenState {
             mode: targetMode,
           );
         } catch (e) {
-          print(
-              '🖥️ [MainScreen] Display connection failed (device saved): $e');
+          Log.w('devices',
+              'display connection failed (device saved)', error: e);
         }
       }
     }
@@ -956,11 +907,18 @@ extension MainScreenDevices on _MainScreenState {
     final deviceService = getIt<DeviceService>();
     await deviceService.deleteDevice(id);
 
-    // Clean up role, category assignments, kitchen routing, and printer status
-    try { getIt<PrinterRoleRegistry>().clearRole(id); } catch (_) {}
-    try { getIt<CategoryPrinterRouteRegistry>().clearPrinterAssignments(id); } catch (_) {}
-    try { getIt<KitchenPrinterRouteRegistry>().clearPrinterAssignments(id); } catch (_) {}
-    try { getIt<PrintOrchestratorService>().updatePrinterStatus(id, false); } catch (_) {}
+    try { unawaited(getIt<PrinterRoleRegistry>().clearRole(id)); } catch (e) {
+      Log.d('MainScreenDevices', 'clear printer role on remove failed (non-fatal): $e');
+    }
+    try { unawaited(getIt<CategoryPrinterRouteRegistry>().clearPrinterAssignments(id)); } catch (e) {
+      Log.d('MainScreenDevices', 'clear category routes on remove failed (non-fatal): $e');
+    }
+    try { unawaited(getIt<KitchenPrinterRouteRegistry>().clearPrinterAssignments(id)); } catch (e) {
+      Log.d('MainScreenDevices', 'clear kitchen routes on remove failed (non-fatal): $e');
+    }
+    try { getIt<PrintOrchestratorService>().updatePrinterStatus(id, false); } catch (e) {
+      Log.d('MainScreenDevices', 'mark printer offline on remove failed (non-fatal): $e');
+    }
 
     if (!mounted) return;
     setState(() => _devices.removeWhere((d) => d.id == id));

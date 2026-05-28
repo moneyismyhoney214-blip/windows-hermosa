@@ -1,3 +1,6 @@
+// ignore_for_file: avoid_dynamic_calls
+//
+// JSON wire-boundary layer; typed-model refactor tracked in audit_2026_05_19.
 import '../services/api/api_constants.dart';
 
 double _parseFlexibleDouble(dynamic value) {
@@ -78,6 +81,36 @@ String? _readLocalizedBookingText(dynamic value) {
 
   final text = value.toString().trim();
   return text.isEmpty ? null : text;
+}
+
+/// Read [key] off [maybeMap] only when it's actually a Map. The backend
+/// puts `false` (not null) under `customer` in some responses, so a plain
+/// `maybeMap?[key]` would throw NoSuchMethodError.
+String? _mapValue(dynamic maybeMap, String key) {
+  if (maybeMap is Map) {
+    final v = maybeMap[key];
+    final s = v?.toString().trim();
+    if (s != null && s.isNotEmpty && s.toLowerCase() != 'null') return s;
+  }
+  return null;
+}
+
+/// Resolve the linked customer's display name across every payload shape
+/// this API uses: `customer_name` (string), `customer` ({name,...}),
+/// `user` ({name|fullname,...}, used by the booking-details endpoint),
+/// or legacy `client`.
+String? _firstCustomerName(Map<String, dynamic> json) {
+  final direct = json['customer_name']?.toString().trim();
+  if (direct != null && direct.isNotEmpty && direct.toLowerCase() != 'null') {
+    return direct;
+  }
+  return _mapValue(json['customer'], 'name') ??
+      _mapValue(json['user'], 'name') ??
+      _mapValue(json['user'], 'fullname') ??
+      _mapValue(json['client'], 'name') ??
+      (json['client'] is String && (json['client'] as String).trim().isNotEmpty
+          ? (json['client'] as String).trim()
+          : null);
 }
 
 String? _firstMeaningfulText(
@@ -237,7 +270,6 @@ class Booking {
     return Booking(
       id: id,
       orderId: orderId,
-      // Real cashier order number should be prioritized over booking reference.
       orderNumber: orderNumber,
       bookingNumberRaw: _firstMeaningfulText([
         json['booking_number'],
@@ -261,11 +293,11 @@ class Booking {
           json['total'] ?? json['total_price'] ?? json['grand_total']),
       tax: _parseFlexibleDouble(json['tax']),
       discount: _parseFlexibleDouble(json['discount']),
-      customerName: json['customer_name']?.toString() ??
-          json['customer']?['name']?.toString() ??
-          json['client']?.toString(),
+      // Linked customer may be under `user`, `customer`, or `customer_name`.
+      customerName: _firstCustomerName(json),
       customerPhone: json['customer_phone']?.toString() ??
-          json['customer']?['mobile']?.toString() ??
+          _mapValue(json['customer'], 'mobile') ??
+          _mapValue(json['user'], 'mobile') ??
           json['phone']?.toString(),
       meals: mealRows.map((e) => BookingMeal.fromJson(e)).toList(),
       createdAt: json['created_at']?.toString() ?? '',
@@ -400,7 +432,6 @@ class BookingMeal {
   });
 
   factory BookingMeal.fromJson(Map<String, dynamic> json) {
-    // Handle id being int or string
     var id = json['id'];
     if (id is String) {
       id = int.tryParse(id) ?? 0;
@@ -408,8 +439,7 @@ class BookingMeal {
       id ??= 0;
     }
 
-    // Handle meal_id being int or string. Salon bookings use `service_id`
-    // (sometimes nested under `service.id`) instead of `meal_id`.
+    // Salon bookings use `service_id` (sometimes nested) instead of `meal_id`.
     var mealId = json['meal_id'] ??
         json['service_id'] ??
         (json['service'] is Map ? (json['service'] as Map)['id'] : null) ??
@@ -420,7 +450,6 @@ class BookingMeal {
       mealId ??= 0;
     }
 
-    // Handle quantity being int or string
     var quantity = json['quantity'];
     if (quantity is String) {
       quantity = int.tryParse(quantity) ?? 0;
@@ -428,11 +457,7 @@ class BookingMeal {
       quantity ??= 0;
     }
 
-    // API returns 'price' as the LINE TOTAL (unit * qty), NOT unit price.
-    // 'unit_price' is often null. 'total' is also often null.
-    // We need to handle this correctly:
-    // - total = total ?? price (since price IS the line total)
-    // - unitPrice = unit_price ?? (price / quantity)
+    // API quirk: 'price' is the line total (not unit). Derive unit if needed.
     final rawPrice = _parseFlexibleDouble(json['price']);
     final rawUnitPrice = _parseFlexibleDouble(
         json['unit_price'] ?? json['unitPrice']);
@@ -447,12 +472,10 @@ class BookingMeal {
       resolvedTotal = rawTotal;
       resolvedUnitPrice = rawUnitPrice > 0 ? rawUnitPrice : rawTotal / qty;
     } else if (rawPrice > 0) {
-      // 'price' from API is the line total when unit_price is null
       if (rawUnitPrice > 0) {
         resolvedUnitPrice = rawUnitPrice;
-        resolvedTotal = rawPrice; // price is line total
+        resolvedTotal = rawPrice;
       } else {
-        // price is line total, derive unit price
         resolvedTotal = rawPrice;
         resolvedUnitPrice = rawPrice / qty;
       }
@@ -525,7 +548,6 @@ class Invoice {
   });
 
   factory Invoice.fromJson(Map<String, dynamic> json) {
-    // Handle id being int or string
     var id = json['id'];
     if (id is String) {
       id = int.tryParse(id) ?? 0;
@@ -533,7 +555,6 @@ class Invoice {
       id ??= 0;
     }
 
-    // Handle order_id being int or string
     var orderId =
         json['order_id'] ?? json['order']?['id'] ?? json['booking_id'];
     if (orderId is String) {
@@ -545,9 +566,7 @@ class Invoice {
       invoiceNumber:
           json['invoice_number']?.toString() ?? json['id']?.toString() ?? '',
       date: json['date']?.toString() ?? '',
-      customerName: json['customer_name']?.toString() ??
-          json['customer']?['name']?.toString() ??
-          json['client']?.toString(),
+      customerName: _firstCustomerName(json),
       total: _parseFlexibleDouble(
           json['total'] ?? json['grand_total'] ?? json['invoice_total']),
       tax: _parseFlexibleDouble(json['tax']),

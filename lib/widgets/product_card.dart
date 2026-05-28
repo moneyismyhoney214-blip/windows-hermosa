@@ -278,37 +278,8 @@ class _ProductCardState extends State<ProductCard> {
   }
 }
 
-/// Extracted as a const widget to avoid rebuilding on every frame.
-class _ExtraBadge extends StatelessWidget {
-  const _ExtraBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFEF3C7),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            LucideIcons.plusCircle,
-            size: 12,
-            color: Color(0xFFD97706),
-          ),
-          SizedBox(width: 2),
-          Text(
-            'إضافات',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFFD97706),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// `_ExtraBadge` used to live here as a "has add-ons" pill shown over a
+// product card. It was abandoned during a UI refresh and never wired
+// back in — analyzer flagged it as unused_element. Removed to keep the
+// file honest. Restore the previous source from git history if a future
+// design re-introduces the badge.

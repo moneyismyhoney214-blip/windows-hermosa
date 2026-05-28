@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../order_panel.dart';
 
 extension OrderPanelCarPad on _OrderPanelState {
@@ -121,7 +121,7 @@ extension OrderPanelCarPad on _OrderPanelState {
                 children: [
                   Expanded(
                     child: Text(
-                      _tr('رقم السيارة', 'Car Number'),
+                      translationService.t('car_number_label'),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -130,7 +130,7 @@ extension OrderPanelCarPad on _OrderPanelState {
                   ),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: Text(_tr('إغلاق', 'Close')),
+                    child: Text(translationService.t('close')),
                   ),
                 ],
               );
@@ -153,7 +153,7 @@ extension OrderPanelCarPad on _OrderPanelState {
                     Expanded(
                       child: Text(
                         value.isEmpty
-                            ? _tr('ادخل رقم السيارة', 'Enter car number')
+                            ? translationService.t('enter_car_number')
                             : value,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -198,7 +198,7 @@ extension OrderPanelCarPad on _OrderPanelState {
                   const SizedBox(width: 8),
                   Expanded(
                     child: buildKey(
-                      _tr('مسح', 'Clear'),
+                      translationService.t('clear_btn'),
                       onTap: () => setModalState(() => value = ''),
                       color: const Color(0xFFFEE2E2),
                       textColor: const Color(0xFFB91C1C),
@@ -220,13 +220,13 @@ extension OrderPanelCarPad on _OrderPanelState {
                   ...digits.map((d) => buildKey(d, onTap: () => append(d))),
                   buildKey('0', onTap: () => append('0')),
                   buildKey(
-                    _tr('تم', 'Done'),
+                    translationService.t('done_label'),
                     onTap: () => Navigator.pop(context, value),
                     color: const Color(0xFF10B981),
                     textColor: Colors.white,
                   ),
                   buildKey(
-                    _tr('حفظ', 'Save'),
+                    translationService.t('save'),
                     onTap: () => Navigator.pop(context, value),
                     color: const Color(0xFFF58220),
                     textColor: Colors.white,

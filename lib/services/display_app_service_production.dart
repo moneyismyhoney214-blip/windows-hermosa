@@ -1,7 +1,11 @@
+// ignore_for_file: avoid_dynamic_calls
+// JSON wire-boundary layer — dynamic accesses accepted pending typed-model refactor.
 import 'dart:async';
 import 'dart:convert';
-import 'package:web_socket_channel/web_socket_channel.dart';
+
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
 import 'api/api_constants.dart';
 import 'api/base_client.dart';
 
@@ -115,29 +119,25 @@ class DisplayAppService extends ChangeNotifier {
   PaymentStatus _paymentStatus = PaymentStatus.idle;
   bool _profileNearPayEnabled = false;
 
-  // Reconnection logic
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
   static const int maxReconnectAttempts = 5;
   static const Duration reconnectDelay = Duration(seconds: 3);
   bool _manualDisconnect = false;
 
-  // Connection health
   Timer? _pingTimer;
   DateTime? _lastPong;
   static const Duration pingInterval = Duration(seconds: 30);
   static const Duration pongTimeout = Duration(seconds: 10);
 
-  // Message sequencing
   int _sequenceNumber = 0;
   final Map<int, Map<String, dynamic>> _pendingMessages = {};
 
-  // Transaction tracking (Golden Thread)
+  // Golden Thread transaction tracking
   String? _currentTransactionId;
   bool _isVerifyingTransaction = false;
   DateTime? _cdsLockUntil;
 
-  // Callbacks
   PaymentSuccessCallback? _onPaymentSuccess;
   PaymentFailedCallback? _onPaymentFailed;
   PaymentStatusCallback? _onPaymentStatus;
@@ -152,7 +152,6 @@ class DisplayAppService extends ChangeNotifier {
   ConnectionStateCallback? _onConnectionStateChanged;
   TransactionVerificationCallback? _onTransactionVerified;
 
-  // Getters
   ConnectionStatus get status => _status;
   String? get errorCode => _errorCode;
   String? get errorMessage => _errorMessage;
@@ -222,7 +221,6 @@ class DisplayAppService extends ChangeNotifier {
       _channel = WebSocketChannel.connect(wsUrl);
       _logWebSocketConnected(wsUrl.toString());
 
-      // Listen for messages
       _channel!.stream.listen(
         (message) => _handleMessage(message),
         onError: (error) {
@@ -237,10 +235,8 @@ class DisplayAppService extends ChangeNotifier {
         },
       );
 
-      // Wait for authentication challenge
-      await Future.delayed(Duration(milliseconds: 500));
-
-      // Authentication will be handled in _handleMessage
+      // Auth challenge handled in _handleMessage.
+      await Future.delayed(const Duration(milliseconds: 500));
       _startPingTimer();
     } catch (e) {
       debugPrint('[DisplayAppService] ERR_008: Connection failed: $e');
@@ -251,7 +247,6 @@ class DisplayAppService extends ChangeNotifier {
   /// Handle incoming messages with type-safe parsing
   void _handleMessage(dynamic message) {
     try {
-      // Type-safe JSON parsing
       final Map<String, dynamic> data;
       try {
         data = jsonDecode(message) as Map<String, dynamic>;
@@ -271,31 +266,26 @@ class DisplayAppService extends ChangeNotifier {
       WebSocketDebugger.logMessageReceived(type);
       debugPrint('[DisplayAppService] Received: $type');
 
-      // Handle authentication challenge
       if (type == 'AUTH_CHALLENGE') {
         _handleAuthChallenge(data);
         return;
       }
 
-      // Handle authentication success
       if (type == 'AUTH_SUCCESS') {
         _handleAuthSuccess(data);
         return;
       }
 
-      // Handle reconnection handshake
       if (type == 'RECONNECTED') {
         _handleReconnectionHandshake(data);
         return;
       }
 
-      // Handle transaction status response (Golden Thread)
       if (type == 'TRANSACTION_STATUS') {
         _handleTransactionStatusResponse(data);
         return;
       }
 
-      // Handle errors
       if (type == 'ERROR') {
         _errorCode = code ?? 'ERR_015';
         _errorMessage = _parseString(data['message']) ?? 'Unknown error';
@@ -303,26 +293,21 @@ class DisplayAppService extends ChangeNotifier {
         return;
       }
 
-      // Handle pong
       if (type == 'PONG') {
         _lastPong = DateTime.now();
         _onPongReceived();
         return;
       }
 
-      // Handle delivery confirmation
       if (type == 'DELIVERY_CONFIRMED') {
-        // Message delivered successfully
         return;
       }
 
-      // Only process other messages if authenticated
       if (_status != ConnectionStatus.authenticated) {
         debugPrint('[DisplayAppService] ERR_010: Not authenticated');
         return;
       }
 
-      // Process authenticated messages
       _processAuthenticatedMessage(type, data);
     } catch (e, stackTrace) {
       debugPrint('[DisplayAppService] ERR_003: Error handling message: $e');
@@ -436,12 +421,11 @@ class DisplayAppService extends ChangeNotifier {
       return;
     }
 
-    // Generate response (HMAC-SHA256 of challenge)
     final response = _generateAuthResponse(challenge);
 
     final authToken = BaseClient().getToken() ?? '';
     final branchId = ApiConstants.branchId;
-    final backendUrl = ApiConstants.baseUrl;
+    const backendUrl = ApiConstants.baseUrl;
     final nearpayEnabled = _profileNearPayEnabled;
 
     _sendMessage({
@@ -472,7 +456,6 @@ class DisplayAppService extends ChangeNotifier {
   void _handleReconnectionHandshake(Map<String, dynamic> data) {
     debugPrint('[DisplayAppService] Reconnection handshake received');
 
-    // Check for active transactions that need verification
     final activeTransaction = data['activeTransaction'];
     if (activeTransaction != null && _currentTransactionId != null) {
       final serverTransactionId =
@@ -482,17 +465,14 @@ class DisplayAppService extends ChangeNotifier {
         final status = _parseString(activeTransaction['status']);
 
         if (status == 'processing') {
-          // Transaction still in progress on server
           _paymentStatus = PaymentStatus.processing;
           notifyListeners();
         } else if (status == 'completed') {
-          // Transaction completed while disconnected
           _verifyTransaction(_currentTransactionId!);
         }
       }
     }
 
-    // Resend any pending messages
     _resendPendingMessages();
   }
 
@@ -536,7 +516,6 @@ class DisplayAppService extends ChangeNotifier {
     if (rawData != null) {
       final transactionId = _parseString(rawData['transactionId']);
 
-      // Verify this is our current transaction
       if (transactionId != null && transactionId == _currentTransactionId) {
         final flattenedData = <String, dynamic>{
           ...rawData,
@@ -545,14 +524,11 @@ class DisplayAppService extends ChangeNotifier {
         };
 
         _onPaymentSuccess?.call(flattenedData);
-
-        // Clear transaction tracking
         _currentTransactionId = null;
       }
     }
 
-    // Clear after delay
-    Future.delayed(Duration(seconds: 3), () {
+    Future.delayed(const Duration(seconds: 3), () {
       _paymentStatus = PaymentStatus.idle;
       notifyListeners();
     });
@@ -569,7 +545,7 @@ class DisplayAppService extends ChangeNotifier {
     _onPaymentFailed?.call(code, message);
     _currentTransactionId = null;
 
-    Future.delayed(Duration(seconds: 2), () {
+    Future.delayed(const Duration(seconds: 2), () {
       _paymentStatus = PaymentStatus.idle;
       notifyListeners();
     });
@@ -583,7 +559,7 @@ class DisplayAppService extends ChangeNotifier {
     _onPaymentFailed?.call('ERR_014', 'Payment cancelled by user');
     _currentTransactionId = null;
 
-    Future.delayed(Duration(seconds: 2), () {
+    Future.delayed(const Duration(seconds: 2), () {
       _paymentStatus = PaymentStatus.idle;
       notifyListeners();
     });
@@ -612,19 +588,16 @@ class DisplayAppService extends ChangeNotifier {
 
     if (transactionId == _currentTransactionId) {
       if (status == 'completed' && result != null) {
-        // Transaction verified as completed
         _paymentStatus = PaymentStatus.success;
         notifyListeners();
         _onTransactionVerified?.call(true, result);
         _currentTransactionId = null;
       } else if (status == 'failed' || status == 'cancelled') {
-        // Transaction failed
         _paymentStatus = PaymentStatus.failed;
         notifyListeners();
         _onTransactionVerified?.call(false, null);
         _currentTransactionId = null;
       } else {
-        // Still processing
         _onTransactionVerified?.call(false, null);
       }
     }
@@ -636,17 +609,14 @@ class DisplayAppService extends ChangeNotifier {
 
     _isVerifyingTransaction = true;
 
-    // Send status query
     _sendMessage({
       'type': 'QUERY_TRANSACTION_STATUS',
       'transactionId': transactionId,
       'sequenceNumber': ++_sequenceNumber,
     });
 
-    // Set timeout for verification
-    Future.delayed(Duration(seconds: 5), () {
+    Future.delayed(const Duration(seconds: 5), () {
       if (_isVerifyingTransaction) {
-        // No response received
         _isVerifyingTransaction = false;
         _onTransactionVerified?.call(false, null);
       }
@@ -660,18 +630,15 @@ class DisplayAppService extends ChangeNotifier {
 
     _isVerifyingTransaction = true;
 
-    // Send status query
     _sendMessage({
       'type': 'QUERY_TRANSACTION_STATUS',
       'transactionId': _currentTransactionId,
       'sequenceNumber': ++_sequenceNumber,
     });
 
-    // Wait for response with timeout
-    await Future.delayed(Duration(seconds: 5));
+    await Future.delayed(const Duration(seconds: 5));
 
     if (_isVerifyingTransaction) {
-      // No response received
       _isVerifyingTransaction = false;
       _onTransactionVerified?.call(false, null);
     }
@@ -699,7 +666,6 @@ class DisplayAppService extends ChangeNotifier {
       return;
     }
 
-    // Generate transaction ID for Golden Thread
     _currentTransactionId = 'TXN-${DateTime.now().millisecondsSinceEpoch}';
 
     _paymentStatus = PaymentStatus.processing;
@@ -765,17 +731,12 @@ class DisplayAppService extends ChangeNotifier {
 
   /// Check if transaction can be finalized (Golden Thread)
   bool canFinalizeOrder() {
-    // If no transaction in progress, can finalize
     if (_currentTransactionId == null) return true;
-
-    // If payment succeeded or failed, can finalize
     if (_paymentStatus == PaymentStatus.success ||
         _paymentStatus == PaymentStatus.failed ||
         _paymentStatus == PaymentStatus.cancelled) {
       return true;
     }
-
-    // If still processing, cannot finalize
     return false;
   }
 
@@ -821,7 +782,6 @@ class DisplayAppService extends ChangeNotifier {
       notifyListeners();
       _onConnectionStateChanged?.call(_status, null);
 
-      // If payment in progress, mark for verification
       if (_paymentStatus == PaymentStatus.processing &&
           _currentTransactionId != null) {
         _paymentStatus = PaymentStatus.pending_verification;
@@ -910,7 +870,6 @@ class DisplayAppService extends ChangeNotifier {
         final messageStr = jsonEncode(message);
         _channel!.sink.add(messageStr);
 
-        // Store for potential retry
         final seq = message['sequenceNumber'] as int?;
         if (seq != null) {
           _pendingMessages[seq] = message;
@@ -956,7 +915,7 @@ class DisplayAppService extends ChangeNotifier {
 
   /// Generate authentication response
   String _generateAuthResponse(String challenge) {
-    // Simplified - in production, use proper HMAC
+    // Simplified — production should use proper HMAC.
     return 'auth_response_$challenge';
   }
 

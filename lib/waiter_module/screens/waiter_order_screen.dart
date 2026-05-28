@@ -4,28 +4,40 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../dialogs/booking_details_dialog.dart';
+import '../../dialogs/booking_refund_dialog.dart';
+import '../../dialogs/customer_selection_dialog.dart';
+import '../../dialogs/edit_order_dialog.dart';
 import '../../dialogs/payment_tender_dialog.dart';
 import '../../dialogs/product_customization_dialog.dart';
 import '../../locator.dart';
 import '../../models.dart';
-import '../../models/receipt_data.dart';
+import '../../models/booking_invoice.dart';
+import '../../models/customer.dart';
+import '../../services/api/api_constants.dart';
 import '../../services/api/order_service.dart';
 import '../../services/api/product_service.dart';
-import '../../services/api/api_constants.dart';
 import '../../services/app_themes.dart';
+import '../../services/display_app_service.dart';
 import '../../services/language_service.dart';
-import '../../services/printer_language_settings_service.dart';
-import '../../widgets/invoice_print_widget.dart';
-import '../../widgets/send_invoice_whatsapp_button.dart';
+import '../../services/logger_service.dart';
+import '../../services/waitlist_service.dart';
+import '../../utils/order_status.dart';
+import '../../utils/ui_feedback.dart';
+import '../models/waiter.dart';
 import '../models/waiter_table_event.dart';
 import '../services/waiter_billing_service.dart';
 import '../services/waiter_cart_store.dart';
 import '../services/waiter_controller.dart';
+import '../services/waiter_device_prefs.dart';
 import '../services/waiter_kitchen_bridge.dart';
 import '../services/waiter_order_outbox.dart';
 import '../services/waiter_print_dispatcher.dart';
+import '../services/waiter_table_customer_store.dart';
 import '../services/waiter_table_registry.dart';
 import '../theme/waiter_design.dart';
+
+part 'waiter_order_screen_parts/waiter_order_screen.builders.dart';
 
 /// Screen where the waiter assembles the order for a specific table and
 /// fires it to the kitchen (KDS + printer) with one button.
@@ -50,9 +62,9 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   final WaiterKitchenBridge _bridge = getIt<WaiterKitchenBridge>();
   final WaiterOrderOutbox _outbox = getIt<WaiterOrderOutbox>();
   final WaiterBillingService _billing = getIt<WaiterBillingService>();
-  // Pulled from getIt so the ReceiptBuilderCache inside the dispatcher
-  // is shared across orders/screens — otherwise each screen mount would
-  // get a fresh cache and the warm-up cost is paid every time.
+  final WaiterTableCustomerStore _customerStore =
+      getIt<WaiterTableCustomerStore>();
+  // Shared via getIt so ReceiptBuilderCache survives across screen mounts.
   final WaiterPrintDispatcher _printDispatcher = getIt<WaiterPrintDispatcher>();
 
   List<CategoryModel> _categories = const [];
@@ -66,65 +78,66 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   /// cart would look empty and a PATCH would wipe the booking.
   bool _rehydrating = false;
 
+  /// True once this screen has broadcast the transient `takingOrder`
+  /// lifecycle for this table (i.e. it was opened with an empty cart).
+  /// `dispose()` uses this to reliably release the table on exit even if
+  /// `session.self` went null or ownership shifted while the screen was
+  /// open — otherwise the table stays stuck at "جاري اخذ الطلب" on peers.
+  bool _announcedTakingOrder = false;
+
+  /// Flips to true if a *remote* device (cashier or another waiter) edits,
+  /// refunds, or cancels this table's booking while this screen is open.
+  /// Once set, this screen refuses to commit (pay-later / pay-now) because
+  /// our local cart is now a stale view of the booking — a PATCH would
+  /// clobber the remote change. We pop the waiter back to the tables grid
+  /// (clearing the stale cart) so re-opening re-hydrates from the backend.
+  bool _externallyChanged = false;
+
   int _guests = 1;
+  /// When true, this table must be linked to a customer before the
+  /// waiter can submit an order (pay-later) or create an invoice. Mirrors
+  /// the restaurant's "require customer selection" gate; toggled from the
+  /// waiter profile screen.
+  bool _requireCustomerSelection = false;
   StreamSubscription<WaiterTableEventEnvelope>? _eventSub;
 
   @override
   void initState() {
     super.initState();
     _cart.addListener(_onCart);
-    // Mark the waiter as "actively composing an order". The home screen
-    // uses this to suppress the pickup banner + call sound while the
-    // waiter is in the middle of taking an order.
+    _customerStore.addListener(_onCustomerLink);
+    unawaited(_customerStore.initialize());
+    WaiterDevicePrefs.isRequireCustomerSelectionEnabled().then((v) {
+      if (mounted) setState(() => _requireCustomerSelection = v);
+    });
+    // Suppresses home-screen pickup banner/sound while composing.
     widget.controller.setActiveOrderingTable(widget.table.id);
-    // Listen for table-lifecycle events that originate *elsewhere* (the
-    // cashier paying, or another waiter releasing). We react to events
-    // that affect this table so the waiter doesn't keep editing a stale
-    // order.
+    // Watch for external mutations to this table's booking.
     _eventSub = widget.controller.onTableEvent.listen(_onExternalTableEvent);
 
-    // Defensive: if the registry already knows the table was paid (e.g.
-    // the cashier collected while this device was offline and we later
-    // reconciled), wipe any stale local cart and bail out — keeps the
-    // waiter from resending items that were already closed out.
+    // Defensive: if registry already knows table was paid, wipe stale cart + bail.
     if (_registry.paidFor(widget.table.id) &&
         _cart.allItemsFor(widget.table.id).isNotEmpty) {
       _cart.clearTable(widget.table.id);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(translationService.t('waiter_status_paid'))),
-        );
+        UiFeedback.info(context, translationService.t('waiter_status_paid'));
         Navigator.of(context).pop();
       });
       return;
     }
 
-    // Initialize from whatever the waiter previously set; do NOT fall back
-    // to table.seats — the backend capacity is not the guest count.
+    // Don't fall back to table.seats — backend capacity != guest count.
     final existingGuests = _cart.guestsFor(widget.table.id) ??
         _registry.guestCountFor(widget.table.id);
     if (existingGuests != null && existingGuests > 0) _guests = existingGuests;
     _loadCategories();
     _announceAssignment();
-    // Hydrate tax config so price displays are tax-inclusive from the
-    // first frame (matches the cashier's behaviour). Non-blocking — the
-    // UI shows raw prices until the first build after the fetch lands.
+    // Non-blocking — UI shows raw prices until first build after fetch lands.
     unawaited(_hydrateTaxConfig());
-    // Rehydrate the local `_sent` cart from the backend when we open a
-    // paymentPending table with an empty cart — the typical case right
-    // after an app restart: the registry is persisted (so the card
-    // shows paymentPending) but the cart store isn't, so `allItemsFor`
-    // returns []. Without this fetch, tapping "Pay Later" after adding
-    // a new item would PATCH the booking with just the new drafts and
-    // silently delete everything on the backend. Matches the
-    // rehydration we run after the Edit Order dialog closes.
-    //
-    // Deferred through `Future.microtask` so the first `setState` (for
-    // the `_rehydrating = true` spinner) doesn't fire while we're
-    // still inside initState — Flutter tolerates it in practice but
-    // the contract is "setState after initState returns".
+    // Rehydrate sent cart on post-restart entry — registry is persisted but cart isn't,
+    // so a Pay Later without this would PATCH with empty cart and wipe the booking.
+    // Microtask defer so first setState fires after initState returns.
     Future.microtask(_rehydrateSentFromBackendIfNeeded);
   }
 
@@ -154,8 +167,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
 
   List<Map<String, dynamic>> _extractMealsFromResponse(
       Map<String, dynamic> payload) {
-    // Flatten `booking` sub-map if present — same shape handling as
-    // the tables screen's enrichment.
+    // Flatten `booking` sub-map (same shape handling as tables screen enrichment).
     Map<String, dynamic> flat = payload;
     if (payload['booking'] is Map && payload['id'] == null) {
       final inner = Map<String, dynamic>.from(payload['booking'] as Map);
@@ -202,10 +214,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         ? toDouble(row['unit_price'])
         : (toDouble(row['price']) / (qty == 0 ? 1 : qty));
 
-    // Harvest every translation field the backend may ship so the
-    // rehydrated Product stub carries localizedNames end-to-end and
-    // kitchen/receipt printing can render bilingual. Mirror of
-    // waiter_tables_screen's `_cartItemFromRawMeal`.
+    // Harvest translations so rehydrated stub keeps bilingual kitchen/receipt printing.
     final localizedNames = <String, String>{};
     for (final key in const [
       'meal_name_translations',
@@ -255,7 +264,9 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
           try {
             extras.add(Extra.fromJson(
                 entry.map((k, v) => MapEntry(k.toString(), v))));
-          } catch (_) {}
+          } catch (e) {
+            Log.d('WaiterOrderScreen', 'addon Extra.fromJson failed (non-fatal): $e');
+          }
         }
       }
     }
@@ -281,8 +292,8 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
     try {
       await _billing.refreshTaxConfig();
       if (mounted) setState(() {});
-    } catch (_) {
-      /* non-fatal: fall back to tax-exclusive display */
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
   }
 
@@ -296,38 +307,32 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   @override
   void dispose() {
     _cart.removeListener(_onCart);
+    _customerStore.removeListener(_onCustomerLink);
     _eventSub?.cancel();
-    // Release the active-order flag so the pickup banner is unblocked.
-    // Scoped to this table id — guards against a nav race where screen
-    // A's dispose fires after screen B's init.
+    // Scoped to this table id — guards a nav race where dispose A fires after init B.
     widget.controller.clearActiveOrderingTable(widget.table.id);
-    // If we leave the screen without composing any order — empty cart,
-    // no sent items, and only the optimistic `takingOrder` flag we
-    // broadcast in initState is alive on peers — emit `released` so the
-    // table flips back to free. Without this, peering devices keep the
-    // table locked at "جاري اخذ الطلب" forever even though the waiter
-    // walked away. Skip when the table is paymentPending/paid (real
-    // booking exists) or when the registry shows another waiter has
-    // already claimed it.
+    // Aggressive release on exit: any leftover takingOrder state would strand the
+    // table on peers indefinitely if we bail without committing.
     final me = widget.controller.session.self;
     final ownerId = _registry.ownerIdFor(widget.table.id);
-    final iAmOwner = me != null && (ownerId == null || ownerId == me.id);
     final cartEmpty = _cart.allItemsFor(widget.table.id).isEmpty;
     final notCommitted = !_registry.paymentPendingFor(widget.table.id) &&
         !_registry.paidFor(widget.table.id);
-    final wasJustTakingOrder =
-        _registry.takingOrderFor(widget.table.id) || cartEmpty;
-    if (me != null &&
-        iAmOwner &&
-        cartEmpty &&
-        notCommitted &&
-        wasJustTakingOrder) {
+    final claimedBySomeoneElse =
+        ownerId != null && me != null && ownerId != me.id;
+    final mine = ownerId == null ||
+        (me != null && ownerId == me.id) ||
+        _announcedTakingOrder ||
+        _registry.takingOrderFor(widget.table.id);
+    if (cartEmpty && notCommitted && !claimedBySomeoneElse && mine) {
       widget.controller.broadcastTableEvent(TableLifecycleEvent(
         kind: TableLifecycleKind.released,
         tableId: widget.table.id,
         tableNumber: widget.table.number,
-        waiterId: me.id,
-        waiterName: me.name,
+        // Fall back to registry if session vanished mid-teardown — ids are advisory for release.
+        waiterId: me?.id ?? ownerId ?? '',
+        waiterName:
+            me?.name ?? _registry.ownerNameFor(widget.table.id) ?? '',
       ));
     }
     super.dispose();
@@ -336,13 +341,8 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   void _onExternalTableEvent(WaiterTableEventEnvelope env) {
     final event = env.event;
     if (event.tableId != widget.table.id) return;
-    // Self-echoes are handled inline by `_runBillFlow` / the card's
-    // "تحرير الطاولة" action on the tables grid
-    // — responding here would double-pop / stack SnackBars on top of
-    // the success sheet. Use the envelope flag instead of comparing
-    // ids: the cashier broadcasts events with waiterId=owner (me) even
-    // though the *sender* is the cashier, so an id-based filter would
-    // incorrectly mask cashier-paid events from the waiter owner.
+    // Use envelope.fromSelf, NOT id comparison — cashier broadcasts with waiterId=owner
+    // even though sender is the cashier, so id filter would miss cashier-paid events.
     if (env.fromSelf) return;
 
     if (event.kind == TableLifecycleKind.paid ||
@@ -352,15 +352,400 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       final label = event.kind == TableLifecycleKind.paid
           ? translationService.t('waiter_bill_done')
           : translationService.t('waiter_release');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(label)),
-      );
+      UiFeedback.info(context, label);
       Navigator.of(context).pop();
+      return;
     }
+
+    // Other lifecycle events from another device = cart is stale. Block further commits.
+    // If a commit is in flight, raise the flag only; otherwise bail to grid to re-hydrate.
+    if (_externallyChanged) return;
+    _externallyChanged = true;
+    if (_sending) return;
+    _cart.clearTable(widget.table.id);
+    if (!mounted) return;
+    UiFeedback.error(context, translationService.t('waiter_order_changed_elsewhere'));
+    Navigator.of(context).pop();
   }
 
   void _onCart() {
     if (mounted) setState(() {});
+  }
+
+  void _onCustomerLink() {
+    if (mounted) setState(() {});
+  }
+
+  // --- Customer ↔ table binding ---
+
+  /// Customer id pinned to this table — a manual "link customer" wins,
+  /// otherwise the waitlist party this table was opened/seated for.
+  String? _linkedCustomerId() =>
+      _customerStore.linkFor(widget.table.id)?.customerId ??
+      waitlistService.customerIdForTable(widget.table.id);
+
+  /// Display name of the pinned customer (manual link → waitlist party),
+  /// or null when the table isn't linked to anyone.
+  String? _linkedCustomerName() {
+    final manual = _customerStore.linkFor(widget.table.id);
+    if (manual != null && manual.customerName.isNotEmpty) {
+      return manual.customerName;
+    }
+    return waitlistService.customerNameForTable(widget.table.id);
+  }
+
+  bool get _hasLinkedCustomer => _linkedCustomerId() != null;
+
+  /// Settle hold on commit — until then hold stays `notified` so backing out
+  /// with empty cart doesn't destroy the queued party. Safe to call repeatedly.
+  Future<void> _settleWaitlistHoldOnCommit() async {
+    try {
+      final held = waitlistService.entryForTable(widget.table.id);
+      if (held != null) await waitlistService.markSeated(held.id);
+    } catch (e) {
+      Log.d('WaiterOrderScreen', 'settle waitlist hold on commit failed (non-fatal): $e');
+    }
+  }
+
+  /// Open the shared customer picker (search + add-new) and pin whoever
+  /// the waiter picks to this table.
+  Future<void> _promptLinkCustomer() async {
+    final picked = await showDialog<Customer>(
+      context: context,
+      builder: (_) => const CustomerSelectionDialog(),
+    );
+    if (picked == null || !mounted) return;
+    await _customerStore.bind(
+      tableId: widget.table.id,
+      customerId: picked.id,
+      customerName: picked.name,
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// Gate used by [_payLater] / [_printBill]. When "require customer" is
+  /// on and nothing is linked yet, force the picker; returns false (and
+  /// shows a snackbar) if the waiter dismisses it without picking anyone.
+  Future<bool> _ensureCustomerLinked() async {
+    if (!_requireCustomerSelection) return true;
+    if (_hasLinkedCustomer) return true;
+    await _promptLinkCustomer();
+    if (!mounted) return false;
+    if (_hasLinkedCustomer) return true;
+    UiFeedback.info(context, translationService.t('waiter_customer_required_snack'));
+    return false;
+  }
+
+  // --- Order actions (⋮) — Details / Edit / Refund / Cancel ---
+
+  Widget _buildOrderActionsMenu(BuildContext context) {
+    final bookingId = _registry.bookingIdFor(widget.table.id);
+    if (bookingId == null || bookingId.isEmpty) return const SizedBox.shrink();
+    return PopupMenuButton<String>(
+      tooltip: translationService.t('options'),
+      icon: const Icon(LucideIcons.moreVertical),
+      onSelected: (v) async {
+        switch (v) {
+          case 'details':
+            await _orderActionDetails(bookingId);
+            break;
+          case 'edit':
+            await _orderActionEdit(bookingId);
+            break;
+          case 'refund':
+            await _orderActionRefund(bookingId);
+            break;
+          case 'cancel':
+            await _orderActionCancel(bookingId);
+            break;
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'details',
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(LucideIcons.fileText, size: 16, color: Color(0xFF2563EB)),
+            const SizedBox(width: 8),
+            Text(translationService.t('waiter_action_order_details')),
+          ]),
+        ),
+        PopupMenuItem(
+          value: 'edit',
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(LucideIcons.edit3, size: 16, color: Color(0xFF0F766E)),
+            const SizedBox(width: 8),
+            Text(translationService.t('waiter_action_edit_order')),
+          ]),
+        ),
+        PopupMenuItem(
+          value: 'refund',
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(LucideIcons.undo2, size: 16, color: Color(0xFFEF4444)),
+            const SizedBox(width: 8),
+            Text(translationService.t('waiter_action_refund')),
+          ]),
+        ),
+        PopupMenuItem(
+          value: 'cancel',
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(LucideIcons.xCircle, size: 16, color: Color(0xFFDC2626)),
+            const SizedBox(width: 8),
+            Text(translationService.t('waiter_action_cancel_booking')),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  Future<Map<String, dynamic>?> _fetchOrderDetails(String bookingId) async {
+    try {
+      return await getIt<OrderService>().getBookingDetails(bookingId);
+    } catch (e) {
+      if (mounted) {
+        UiFeedback.info(context, '${translationService.t('waiter_retry')}: $e');
+      }
+      return null;
+    }
+  }
+
+  /// Backend often leaves `customer_name` as default even when linked by id —
+  /// prefer the pinned customer for display.
+  void _applyLinkedCustomerName(Map<String, dynamic> details) {
+    final name = _linkedCustomerName();
+    if (name != null && name.trim().isNotEmpty) {
+      details['customer_name'] = name.trim();
+      details['client_name'] = name.trim();
+    }
+  }
+
+  Future<void> _orderActionDetails(String bookingId) async {
+    final details = await _fetchOrderDetails(bookingId);
+    if (details == null || !mounted) return;
+    _applyLinkedCustomerName(details);
+    await showDialog<void>(
+      context: context,
+      builder: (_) => BookingDetailsDialog(
+        bookingData: details,
+        onEditOrder: () => _orderActionEdit(bookingId, prefetched: details),
+        onRefund: () => _orderActionRefund(bookingId),
+      ),
+    );
+  }
+
+  Future<void> _orderActionEdit(
+    String bookingId, {
+    Map<String, dynamic>? prefetched,
+  }) async {
+    final details = prefetched ?? await _fetchOrderDetails(bookingId);
+    if (details == null || !mounted) return;
+    _applyLinkedCustomerName(details);
+    final data = (details['data'] is Map)
+        ? Map<String, dynamic>.from(details['data'] as Map)
+        : Map<String, dynamic>.from(details);
+    data['id'] ??= int.tryParse(bookingId) ?? bookingId;
+    _applyLinkedCustomerName(data);
+    final booking = Booking.fromJson(data);
+    if (isOrderLockedValue(booking.status) || isOrderLockedValue(data['status'])) {
+      UiFeedback.info(context, translationService.t('waiter_edit_locked'));
+      return;
+    }
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (_) => EditOrderDialog(
+        booking: booking,
+        bookingData: details,
+        taxRate: _billing.taxRate,
+        onPrintChanges: (
+          changes,
+          orderNumber, {
+          bool isFullCancel = false,
+          String? customerName,
+          String? employeeName,
+        }) {
+          unawaited(_printDispatcher.printKitchenChangeTicket(
+            changes: changes,
+            orderNumber: orderNumber,
+            isFullCancel: isFullCancel,
+          ));
+        },
+      ),
+    );
+    if (updated == true) await _reconcileBookingFromBackend(bookingId);
+  }
+
+  Future<void> _orderActionRefund(String bookingId) async {
+    final refunded = await showBookingRefundDialog(
+      context: context,
+      bookingId: bookingId,
+      bookingLabel: translationService.t(
+        'waiter_booking_table_label',
+        args: {'table': widget.table.number},
+      ),
+    );
+    if (refunded == null) return;
+    await _reconcileBookingFromBackend(bookingId);
+  }
+
+  Future<void> _orderActionCancel(String bookingId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.appSurface,
+        title: Text(
+          translationService.t('waiter_action_cancel_booking'),
+          style: TextStyle(color: ctx.appText),
+        ),
+        content: Text(
+          translationService.t(
+            'waiter_cancel_booking_body',
+            args: {'table': widget.table.number},
+          ),
+          style: TextStyle(color: ctx.appText),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(translationService.t('waiter_cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            child: Text(translationService.t('waiter_confirm_cancel')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await getIt<OrderService>().updateBookingStatus(
+        orderId: bookingId,
+        status: 8,
+      );
+      getIt<DisplayAppService>().notifyOrderCancelled(orderId: bookingId);
+    } catch (e) {
+      if (!mounted) return;
+      UiFeedback.error(context, 'فشل إلغاء الحجز: $e');
+      return;
+    }
+    // Kitchen cancel ticket from the items we have locally.
+    final cancelItems = _cart.itemsFor(widget.table.id);
+    if (cancelItems.isNotEmpty) {
+      final changes = cancelItems
+          .map((it) => OrderChange(
+                type: 'cancel',
+                name: it.product.name,
+                quantity: it.quantity.round(),
+              ))
+          .toList();
+      unawaited(_printDispatcher.printKitchenChangeTicket(
+        changes: changes,
+        orderNumber: bookingId,
+        isFullCancel: true,
+      ));
+    }
+    final me = widget.controller.session.self;
+    widget.controller.broadcastTableEvent(TableLifecycleEvent(
+      kind: TableLifecycleKind.released,
+      tableId: widget.table.id,
+      tableNumber: widget.table.number,
+      waiterId: me?.id ?? _registry.ownerIdFor(widget.table.id) ?? '',
+      waiterName: me?.name ?? _registry.ownerNameFor(widget.table.id) ?? '',
+    ));
+    _cart.clearTable(widget.table.id);
+    if (!mounted) return;
+    UiFeedback.success(context, 'تم إلغاء حجز الطاولة ${widget.table.number}');
+    Navigator.of(context).pop();
+  }
+
+  /// After an edit/refund from this screen, re-pull the authoritative
+  /// state: rebuild the sent cart, and either release the table (booking
+  /// gone) or re-broadcast the fresh snapshot to peers.
+  Future<void> _reconcileBookingFromBackend(String bookingId) async {
+    try {
+      final after = await getIt<OrderService>().getBookingDetails(bookingId);
+      if (after['status']?.toString().trim() == '500') return;
+      final inner = (after['data'] is Map)
+          ? Map<String, dynamic>.from(after['data'] as Map)
+          : Map<String, dynamic>.from(after);
+      inner['id'] ??= int.tryParse(bookingId) ?? bookingId;
+      final refreshed = Booking.fromJson(inner);
+      final statusStr = refreshed.status.toString().toLowerCase();
+      final rawMeals = _extractMealsFromResponse(inner);
+      final cancelled = statusStr == '8' ||
+          statusStr == 'cancelled' ||
+          statusStr == 'canceled' ||
+          statusStr.contains('cancel');
+      _cart.clearTable(widget.table.id);
+      if (cancelled) {
+        final me = widget.controller.session.self;
+        widget.controller.broadcastTableEvent(TableLifecycleEvent(
+          kind: TableLifecycleKind.released,
+          tableId: widget.table.id,
+          tableNumber: widget.table.number,
+          waiterId: me?.id ?? _registry.ownerIdFor(widget.table.id) ?? '',
+          waiterName: me?.name ?? _registry.ownerNameFor(widget.table.id) ?? '',
+        ));
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+      if (rawMeals.isEmpty) return;
+      _cart.setSentItems(
+        widget.table.id,
+        rawMeals.map(_cartItemFromRawMeal).toList(),
+      );
+      _broadcastUpdate();
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
+    }
+  }
+
+  Widget _buildCustomerAction(BuildContext context) {
+    final name = _linkedCustomerName();
+    if (name == null || name.isEmpty) {
+      return TextButton.icon(
+        onPressed: _promptLinkCustomer,
+        icon: const Icon(LucideIcons.userPlus, size: 16),
+        label: Text(translationService.t('waiter_link_customer')),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: _promptLinkCustomer,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: context.appPrimary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.user, size: 14, color: context.appPrimary),
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 140),
+                child: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: context.appPrimary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(LucideIcons.pencil, size: 12, color: context.appPrimary),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadCategories() async {
@@ -375,7 +760,8 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       if (_selectedCategoryId != null) {
         await _loadProducts(_selectedCategoryId!);
       }
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (!mounted) return;
       setState(() => _loadingCategories = false);
     }
@@ -393,7 +779,8 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         _products = p.where((x) => x.isActive).toList();
         _loadingProducts = false;
       });
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       if (!mounted) return;
       setState(() => _loadingProducts = false);
     }
@@ -404,19 +791,18 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
     if (me == null) return;
     final existingOwner = _registry.ownerIdFor(widget.table.id);
     if (existingOwner != null && existingOwner != me.id) return;
-    // If the table is already in paymentPending (pay-later booked) or
-    // paid, re-broadcasting `assigned`/`takingOrder` would clobber that
-    // state on every peer. Skip — the state is already where it needs
-    // to be; the waiter is here in Edit-Order mode.
+    // Skip if already paymentPending/paid — re-broadcasting would clobber peer state.
     if (_registry.paymentPendingFor(widget.table.id) ||
         _registry.paidFor(widget.table.id)) {
       return;
     }
-    // If the waiter already has items on this table (re-opening mid-service),
-    // don't demote the cashier UI back to "جاري اخذ الطلب" — emit a regular
-    // assigned event so it stays in the occupied state.
+    // Re-opening mid-service emits `assigned`, not `takingOrder`, to avoid demoting.
     final existingCart = _cart.allItemsFor(widget.table.id);
     final hasExistingItems = existingCart.isNotEmpty;
+    if (!hasExistingItems) {
+      // Record so dispose() reliably releases regardless of ownership shifts.
+      _announcedTakingOrder = true;
+    }
     widget.controller.broadcastTableEvent(
       TableLifecycleEvent(
         kind: hasExistingItems
@@ -465,12 +851,8 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         .toList(growable: false);
   }
 
-  /// Matches the cashier's _onProductTap: if the product has extras
-  /// declared on the model, or the backend reports addons via
-  /// meal-has-addons, open the ProductCustomizationDialog so the waiter
-  /// picks extras + qty + notes before adding. Otherwise add it straight
-  /// to the cart. The dialog itself is MainScreen-independent — reused
-  /// here verbatim so cashier and waiter stay UI-identical.
+  /// Mirrors cashier's _onProductTap: open customization dialog when product
+  /// has extras (declared or via meal-has-addons), else add direct.
   Future<void> _addProductToCart(Product product) async {
     if (product.extras.isNotEmpty) {
       _openCustomizationDialog(product);
@@ -479,9 +861,9 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
     bool hasAddons = false;
     try {
       hasAddons = await _productService.mealHasAddons(product.id);
-    } catch (_) {
-      // Network failure — fall back to direct add so the waiter isn't
-      // blocked from taking an order during a connectivity blip.
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
+      // Network failure — fall back to direct add so a blip doesn't block order taking.
     }
     if (!mounted) return;
     if (hasAddons) {
@@ -534,15 +916,15 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   /// table. This mirrors the cashier's delta-print intent, translated
   /// through the only printing channel the waiter device has access to.
   Future<void> _dispatchToKds({
+    required Waiter me,
     required String orderId,
     bool isEdit = false,
   }) async {
-    final me = widget.controller.session.self!;
     final items = _cart
         .itemsFor(widget.table.id)
         .map(_cartItemToWire)
         .toList(growable: false);
-    if (items.isEmpty) return; // nothing to print
+    if (items.isEmpty) return;
     final ts = DateTime.now().millisecondsSinceEpoch;
     final dispatchOrderId =
         isEdit ? '$orderId-edit-$ts' : orderId;
@@ -551,29 +933,36 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         : 'T${widget.table.number}-${orderId.substring(0, 4).toUpperCase()}';
     final total = _cart.subtotalFor(widget.table.id);
 
+    // "Socket connected" ≠ "order delivered" — wait for ACK or fall through
+    // to the offline outbox so a frozen KDS doesn't silently drop the order.
     if (_bridge.isConnected) {
-      await _bridge.sendNewOrder(
-        orderId: dispatchOrderId,
-        orderNumber: orderNumber,
-        tableNumber: widget.table.number,
-        items: items,
-        waiter: me,
-        total: total,
-      );
-    } else {
-      // Queue — offline flush will push when connectivity returns.
-      await _outbox.enqueue(
-        orderId: dispatchOrderId,
-        orderNumber: orderNumber,
-        tableId: widget.table.id,
-        tableNumber: widget.table.number,
-        waiterId: me.id,
-        waiterName: me.name,
-        items: items,
-        total: total,
-        branchId: ApiConstants.branchId.toString(),
-      );
+      try {
+        await _bridge.sendNewOrder(
+          orderId: dispatchOrderId,
+          orderNumber: orderNumber,
+          tableNumber: widget.table.number,
+          items: items,
+          waiter: me,
+          total: total,
+        );
+        if (await _bridge.awaitOrderAck(dispatchOrderId)) return;
+        debugPrint(
+            '⚠️ KDS did not ACK $dispatchOrderId — queuing for offline flush');
+      } catch (e) {
+        debugPrint('⚠️ KDS send failed ($e) — queuing for offline flush');
+      }
     }
+    await _outbox.enqueue(
+      orderId: dispatchOrderId,
+      orderNumber: orderNumber,
+      tableId: widget.table.id,
+      tableNumber: widget.table.number,
+      waiterId: me.id,
+      waiterName: me.name,
+      items: items,
+      total: total,
+      branchId: ApiConstants.branchId.toString(),
+    );
   }
 
   /// Replaces the old "Send to Kitchen" action. Mirrors the cashier's
@@ -588,55 +977,71 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
   /// Without this gate, a fast waiter could tap Pay Later during the
   /// post-restart rehydrate and PATCH the booking with an empty item
   /// list — silently deleting everything on the server.
-  bool get _canSubmit => !_sending && !_rehydrating;
+  bool get _canSubmit => !_sending && !_rehydrating && !_externallyChanged;
+
+  /// Hard block: this table's booking was changed on another device, so
+  /// our cart is stale and a commit would clobber it. Bounce to the
+  /// tables grid (the cart was already cleared when the flag flipped, or
+  /// we clear it here on the retry path) so re-opening re-hydrates.
+  bool _abortIfExternallyChanged() {
+    if (!_externallyChanged) return false;
+    _cart.clearTable(widget.table.id);
+    if (mounted) {
+      UiFeedback.error(context, translationService.t('waiter_order_changed_elsewhere'));
+      Navigator.of(context).pop();
+    }
+    return true;
+  }
 
   Future<void> _payLater() async {
+    if (_abortIfExternallyChanged()) return;
     if (!_cart.hasItems(widget.table.id)) return;
-    if (!_canSubmit) return; // single-flight + post-restart rehydrate guard
+    if (!_canSubmit) return;
+    // Raise single-flight flag BEFORE any await — second tap during customer-link
+    // dialog could otherwise slip past _canSubmit and trigger duplicate createBooking.
     setState(() => _sending = true);
-    final me = widget.controller.session.self!;
+    if (!await _ensureCustomerLinked()) {
+      if (mounted) setState(() => _sending = false);
+      return;
+    }
+    final me = widget.controller.session.self;
+    if (me == null) {
+      setState(() => _sending = false);
+      return;
+    }
     final allItems = _cart.allItemsFor(widget.table.id);
     final subtotal = _cart.subtotalFor(widget.table.id);
     final total = _billing.applyTax(subtotal);
-    // If the registry already has a booking id for this table (pay-later
-    // submitted earlier, waiter reopened via Edit Order), update that
-    // booking in place instead of creating a duplicate.
-    final existingBookingId = _registry.bookingIdFor(widget.table.id);
-    // Retry-guard: if a previous _payLater attempt created a booking on
-    // the backend but dropped the connection before we got the id back,
-    // the cart store holds that booking id. Feed it into processBill via
-    // existingBookingId so it skips createBooking — otherwise a network
-    // retry double-books the table.
+    // A booking carries at most ONE invoice — when `paid`, treat bookingId as gone
+    // and start fresh, so a second-round PATCH doesn't orphan new items.
+    final priorRoundInvoiced = _registry.paidFor(widget.table.id);
+    final existingBookingId =
+        priorRoundInvoiced ? null : _registry.bookingIdFor(widget.table.id);
+    // Retry-guard for crashed-mid-create: pendingBookingId lets processBill skip
+    // createBooking and prevents double-booking on network retry.
     final pendingBookingId = _cart.pendingBookingIdFor(widget.table.id);
     String? bookingId = existingBookingId;
     String? dailyOrderNumber;
     try {
       if (existingBookingId != null) {
-        // 1a. Edit-order path — PATCH the existing booking with the
-        //     combined cart (sent + draft items).
+        // 1a. Edit-order — PATCH existing booking with combined cart.
         await _billing.updateBookingItems(
           bookingId: existingBookingId,
           table: widget.table,
           items: allItems,
           guests: _guests,
         );
-        // Edit doesn't regenerate the daily_order_number — the booking
-        // already has one from its original creation. Fetch it so the
-        // supplemental kitchen ticket carries the original human ref
-        // ("#1012-EDIT") instead of the UUID placeholder.
+        // Fetch daily_order_number so supplemental kitchen ticket has original ref.
         dailyOrderNumber =
             await _billing.fetchDailyOrderNumber(existingBookingId);
       } else {
-        // 1b. First submission — create the pay-later booking via the
-        //     same BillingService + OrderService.createBooking path the
-        //     cashier uses. `payLater` is derived from pays[0].pay_method
-        //     ='pay_later' inside _processBillWithPayload, which skips
-        //     NearPay + invoice creation and simply persists the booking.
+        // 1b. First submission — pay-later via BillingService.processBill.
         final result = await _billing.processBill(
           table: widget.table,
           items: allItems,
           guests: _guests,
           waiterName: me.name,
+          customerId: _linkedCustomerId(),
           pays: [
             {
               'name': 'دفع لاحق',
@@ -645,69 +1050,44 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
               'index': 0,
             },
           ],
-          // On retry, reuse the bookingId from a previous failed attempt
-          // so processBill skips createBooking. Mirrors the cashier's
-          // _runBillFlow existingBookingId pattern.
+          // Retry reuses pendingBookingId so processBill skips createBooking.
           existingBookingId: pendingBookingId,
         );
-        if (!mounted) return;
         if (!result.success) {
-          // Capture any bookingId the backend DID accept before the
-          // failure — e.g. createBooking succeeded but NearPay/invoice
-          // declined. The next retry passes it back in via
-          // existingBookingId so we don't ghost-book the table.
+          // Capture partial bookingId for retry so we don't ghost-book the table.
           final partialBookingId = result.bookingId ?? pendingBookingId;
           if (partialBookingId != null) {
             _cart.setPendingBookingId(widget.table.id, partialBookingId);
           }
           unawaited(WaiterHaptics.warn());
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: context.appDanger,
-              duration: const Duration(seconds: 6),
-              content: Text(
-                'تعذّر تأكيد الطلب: ${result.errorMessage ?? ''}',
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
-          );
+          if (mounted) {
+            UiFeedback.info(context, 'تعذّر تأكيد الطلب: ${result.errorMessage ?? ''}');
+          }
           return;
         }
         bookingId = result.bookingId;
         dailyOrderNumber = result.dailyOrderNumber;
-        // Success — any retry state is now stale; clear it so a future
-        // edit on this table doesn't accidentally reuse the id.
+        // Clear retry state so a future edit doesn't accidentally reuse the id.
         _cart.clearPendingBookingId(widget.table.id);
       }
 
-      // 2. Fire the KDS broadcast using the backend-assigned booking id.
-      //    On edit re-entries the dispatch uses an `-edit-{ts}` suffix
-      //    so the kitchen prints a supplemental ticket with only the
-      //    new items (drafts) rather than mistaking it for a duplicate
-      //    of the original. Matches the cashier's Edit-Order intent of
-      //    triggering a "changes" kitchen ticket.
-      //
-      //    Both KDS dispatch and the paper kitchen ticket fire in the
-      //    background so the screen pops to the tables list immediately
-      //    after the booking lands — same fast-path the cashier uses in
-      //    main_screen.payment after createBooking. Both helpers swallow
-      //    their own exceptions, so unawaiting is safe.
+      // Booking persisted — remaining steps run regardless of mount state so the
+      // kitchen ticket, draft promotion, and lifecycle broadcast can't be lost.
+      // Only the snackbar + pop below are gated on `mounted`.
+      // (See docs/WAITER_MODULE_QA_FINDINGS.md B-1.)
       final broadcastId = bookingId ?? const Uuid().v4();
       final isEdit = existingBookingId != null;
       final kitchenItemsSnapshot =
           List<CartItem>.from(_cart.itemsFor(widget.table.id));
       unawaited(() async {
         try {
-          await _dispatchToKds(orderId: broadcastId, isEdit: isEdit);
+          await _dispatchToKds(me: me, orderId: broadcastId, isEdit: isEdit);
         } catch (e) {
           debugPrint('⚠️ KDS dispatch failed (non-fatal): $e');
         }
       }());
 
-      // 2b. Physical kitchen ticket. Same rule as the cashier: pay-later
-      //     always prints (the chef needs a paper ticket because KDS is
-      //     a screen, not an action). Respects the printKitchenInvoices
-      //     toggle in the device behaviour tab.
+      // 2b. Physical kitchen ticket — pay-later always prints (paper > KDS for prep).
       unawaited(() async {
         try {
           final base = (dailyOrderNumber != null && dailyOrderNumber.isNotEmpty)
@@ -729,13 +1109,15 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         }
       }());
 
-      // 3. Promote the draft so re-entering the order screen (via
-      //    "Edit Order") shows the items as sent rather than draft.
+      // 3. Promote draft to sent so re-entry shows items as sent.
       _cart.markDraftAsSent(widget.table.id);
+      // Force flush — a crash in the 300ms debounce window would re-dispatch on relaunch.
+      await _cart.flushNow();
 
-      // 4. Broadcast the lifecycle: paymentPending is the exact state
-      //    we want — occupied, non-claimable by other waiters, and
-      //    tagged as eligible for Edit Order on the tables card.
+      // 3b. Settle waitlist party that was holding this table.
+      unawaited(_settleWaitlistHoldOnCommit());
+
+      // 4. paymentPending = occupied + non-claimable + Edit Order eligible.
       widget.controller.broadcastTableEvent(
         TableLifecycleEvent(
           kind: TableLifecycleKind.paymentPending,
@@ -752,16 +1134,17 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
       );
       unawaited(WaiterHaptics.success());
 
-      // 5. Pop back to the tables list — the waiter's done taking the
-      //    order. Their own grid will hide this table (owner-hide rule)
-      //    while peers see it as "Order Taken".
-      if (mounted) Navigator.of(context).pop();
+      // 5. Stay on screen for further service.
+      if (mounted) {
+        UiFeedback.info(context, translationService.t('waiter_bill_pending'));
+      }
+      // Bail if remote edit/refund landed mid-commit so waiter isn't stuck with disabled buttons.
+      if (_externallyChanged && mounted) Navigator.of(context).pop();
     } catch (e) {
       unawaited(WaiterHaptics.warn());
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      if (mounted) {
+        UiFeedback.info(context, e.toString());
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -795,7 +1178,7 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
         title: Text(
           '${translationService.t('waiter_table')} ${widget.table.number}',
         ),
-        actions: const [],
+        actions: [_buildCustomerAction(context), _buildOrderActionsMenu(context)],
       ),
       body: SafeArea(
         child: LayoutBuilder(builder: (_, constraints) {
@@ -831,1043 +1214,6 @@ class _WaiterOrderScreenState extends State<WaiterOrderScreen> {
           ),
         );
       }),
-    );
-  }
-
-  Widget _sectionHeader(
-    BuildContext context,
-    String label,
-    IconData icon,
-    Color color,
-  ) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-      color: context.appSurfaceAlt,
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _sentRow(BuildContext context, CartItem item) {
-    return ListTile(
-      dense: true,
-      leading: Icon(LucideIcons.check,
-          size: 16, color: context.appSuccess.withValues(alpha: 0.8)),
-      title: Text(
-        item.product.name,
-        style: TextStyle(color: context.appText),
-      ),
-      subtitle: Text(
-        '${item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1)} × ${_displayPrice(item.product.price).toStringAsFixed(ApiConstants.digitsNumber)}${item.notes.isNotEmpty ? "  •  ${item.notes}" : ""}',
-        style: TextStyle(color: context.appTextMuted, fontSize: 11),
-      ),
-      trailing: Text(
-        _displayPrice(item.totalPrice).toStringAsFixed(ApiConstants.digitsNumber),
-        style: TextStyle(
-          color: context.appTextMuted,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  Widget _draftRow(BuildContext context, CartItem item, int i) {
-    return ListTile(
-      dense: true,
-      title: Text(
-        item.product.name,
-        style: TextStyle(color: context.appText),
-      ),
-      subtitle: GestureDetector(
-        onTap: () => _editItemNotes(i, item),
-        child: Text(
-          item.notes.isEmpty
-              ? '${item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1)} × ${_displayPrice(item.product.price).toStringAsFixed(ApiConstants.digitsNumber)}'
-              : '${item.quantity.toStringAsFixed(0)} × ${_displayPrice(item.product.price).toStringAsFixed(ApiConstants.digitsNumber)}  •  ${item.notes}',
-          style: TextStyle(
-            color:
-                item.notes.isEmpty ? context.appTextMuted : context.appPrimary,
-            fontSize: 11,
-          ),
-        ),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            iconSize: 22,
-            constraints: const BoxConstraints(
-              minWidth: WaiterSizes.minTapTarget,
-              minHeight: WaiterSizes.minTapTarget,
-            ),
-            tooltip: translationService.t('waiter_item_note'),
-            onPressed: () => _editItemNotes(i, item),
-            icon: Icon(LucideIcons.stickyNote,
-                color: item.notes.isEmpty
-                    ? context.appTextMuted
-                    : context.appPrimary),
-          ),
-          IconButton(
-            iconSize: 22,
-            constraints: const BoxConstraints(
-              minWidth: WaiterSizes.minTapTarget,
-              minHeight: WaiterSizes.minTapTarget,
-            ),
-            onPressed: () {
-              final newQty = item.quantity - 1;
-              if (newQty <= 0) {
-                _cart.removeItem(widget.table.id, i);
-              } else {
-                _cart.updateItem(
-                  widget.table.id,
-                  i,
-                  CartItem(
-                    cartId: item.cartId,
-                    product: item.product,
-                    quantity: newQty,
-                    selectedExtras: item.selectedExtras,
-                    discount: item.discount,
-                    discountType: item.discountType,
-                    isFree: item.isFree,
-                    notes: item.notes,
-                  ),
-                );
-              }
-              _broadcastUpdate();
-            },
-            icon: const Icon(LucideIcons.minus),
-          ),
-          Text('${item.quantity.toInt()}',
-              style: TextStyle(color: context.appText)),
-          IconButton(
-            iconSize: 22,
-            constraints: const BoxConstraints(
-              minWidth: WaiterSizes.minTapTarget,
-              minHeight: WaiterSizes.minTapTarget,
-            ),
-            onPressed: () {
-              _cart.updateItem(
-                widget.table.id,
-                i,
-                CartItem(
-                  cartId: item.cartId,
-                  product: item.product,
-                  quantity: item.quantity + 1,
-                  selectedExtras: item.selectedExtras,
-                  discount: item.discount,
-                  discountType: item.discountType,
-                  isFree: item.isFree,
-                  notes: item.notes,
-                ),
-              );
-              _broadcastUpdate();
-            },
-            icon: const Icon(LucideIcons.plus),
-          ),
-          IconButton(
-            iconSize: 22,
-            constraints: const BoxConstraints(
-              minWidth: WaiterSizes.minTapTarget,
-              minHeight: WaiterSizes.minTapTarget,
-            ),
-            onPressed: () {
-              _cart.removeItem(widget.table.id, i);
-              _broadcastUpdate();
-            },
-            icon: Icon(LucideIcons.trash2, color: context.appDanger),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _editItemNotes(int index, CartItem item) async {
-    final ctrl = TextEditingController(text: item.notes);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.appSurface,
-        title: Text(translationService.t('waiter_item_note')),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          maxLines: 3,
-          decoration: InputDecoration(
-            hintText: translationService.t('waiter_item_note_hint'),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(null),
-            child: Text(translationService.t('waiter_cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
-            child: Text(translationService.t('waiter_save')),
-          ),
-        ],
-      ),
-    );
-    if (result == null) return;
-    _cart.updateItem(
-      widget.table.id,
-      index,
-      CartItem(
-        cartId: item.cartId,
-        product: item.product,
-        quantity: item.quantity,
-        selectedExtras: item.selectedExtras,
-        discount: item.discount,
-        discountType: item.discountType,
-        isFree: item.isFree,
-        notes: result,
-      ),
-    );
-    _broadcastUpdate();
-  }
-
-  Future<void> _printBill() async {
-    if (!_canSubmit) return;
-    // Match the cashier: pull enabled-pay-methods + tax config from the
-    // branch settings right before showing the tender dialog.
-    await _billing.refreshPayMethods();
-    // Ensure the NearPay global flag + SDK bootstrap are in sync with the
-    // profile before the tender dialog offers card methods. Same effect
-    // as main_screen.session.dart's login-time bootstrap for the cashier.
-    unawaited(_billing.hydrateNearPayConfig());
-    final me = widget.controller.session.self!;
-    final subtotal = _cart.subtotalFor(widget.table.id);
-    // The backend computes invoice totals tax-inclusive. If we send only the
-    // subtotal here the pays won't match and the backend creates a cancelled
-    // draft invoice before the retry. Apply the branch VAT rate up-front.
-    final total = _billing.applyTax(subtotal);
-    final allItems = _cart.allItemsFor(widget.table.id);
-    if (allItems.isEmpty) return;
-
-    // Announce payment-pending so cashier immediately sees "awaiting payment".
-    widget.controller.broadcastTableEvent(TableLifecycleEvent(
-      kind: TableLifecycleKind.paymentPending,
-      tableId: widget.table.id,
-      tableNumber: widget.table.number,
-      waiterId: me.id,
-      waiterName: me.name,
-      guestCount: _guests,
-      total: total,
-      itemCount: _cart.itemCountFor(widget.table.id),
-      items: _snapshotItems(),
-    ));
-
-    final selectedPays = await showDialog<List<Map<String, dynamic>>>(
-      context: context,
-      builder: (_) => PaymentTenderDialog(
-        total: total,
-        enabledMethods: _billing.enabledPaymentMethods(),
-        onConfirm: () {},
-        onConfirmWithPays: (pays) => Navigator.of(context).pop(pays),
-      ),
-    );
-    if (selectedPays == null || selectedPays.isEmpty) {
-      // Waiter backed out — revert to "open bill" state.
-      widget.controller.broadcastTableEvent(TableLifecycleEvent(
-        kind: TableLifecycleKind.updated,
-        tableId: widget.table.id,
-        tableNumber: widget.table.number,
-        waiterId: me.id,
-        waiterName: me.name,
-        guestCount: _guests,
-        total: total,
-        itemCount: _cart.itemCountFor(widget.table.id),
-        items: _snapshotItems(),
-      ));
-      return;
-    }
-
-    // If a pay-later booking already exists for this table, invoice THAT
-    // booking instead of creating a fresh one. Same pattern as the cashier:
-    //   edit_order_dialog PATCHes the booking via updateBookingItems, then
-    //   the tables/orders screen creates the invoice against the same
-    //   booking_id.
-    //
-    // Source of existingBookingId, in priority order:
-    //   1. registry.bookingIdFor — authoritative after a successful
-    //      pay-later broadcast (peers / re-entry populate this).
-    //   2. cart.pendingBookingIdFor — captured from a previous attempt
-    //      whose response we lost but whose booking DID land on the
-    //      backend. Mirrors the retry-guard used in _payLater.
-    final existingBookingId =
-        _registry.bookingIdFor(widget.table.id) ??
-        _cart.pendingBookingIdFor(widget.table.id);
-
-    // If there are new drafts (waiter re-entered via "Edit Order" and added
-    // items), PATCH them onto the existing booking first so the invoice
-    // includes them. If the booking has no new drafts this is a no-op path.
-    if (existingBookingId != null && _cart.hasItems(widget.table.id)) {
-      try {
-        await _billing.updateBookingItems(
-          bookingId: existingBookingId,
-          table: widget.table,
-          items: allItems,
-          guests: _guests,
-        );
-        // Fire a supplemental kitchen ticket for the newly-added drafts,
-        // same as _payLater's edit path.
-        try {
-          await _dispatchToKds(orderId: existingBookingId, isEdit: true);
-        } catch (e) {
-          debugPrint('⚠️ KDS dispatch failed (non-fatal): $e');
-        }
-        _cart.markDraftAsSent(widget.table.id);
-      } catch (e) {
-        unawaited(WaiterHaptics.warn());
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: context.appDanger,
-            content: Text(
-              '${translationService.t('waiter_bill_failed')}: $e',
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-        );
-        return;
-      }
-    }
-
-    await _runBillFlow(
-      pays: selectedPays,
-      total: total,
-      allItems: allItems,
-      existingBookingId: existingBookingId,
-    );
-  }
-
-  Future<void> _runBillFlow({
-    required List<Map<String, dynamic>> pays,
-    required double total,
-    required List<CartItem> allItems,
-    String? existingBookingId,
-  }) async {
-    final me = widget.controller.session.self!;
-
-    // Fire-and-forward: no blocking progress dialog — the bill flow is
-    // fast enough on the backend that the old "جاري إنشاء الفاتورة…"
-    // spinner was more disruptive than helpful. Callers still get the
-    // success sheet / error snackbar once processBill resolves.
-    final result = await _billing.processBill(
-      table: widget.table,
-      items: allItems,
-      guests: _guests,
-      waiterName: me.name,
-      pays: pays,
-      existingBookingId: existingBookingId,
-    );
-
-    if (!mounted) return;
-
-    if (!result.success) {
-      // Don't wipe the cart — keep the waiter's work so they can retry
-      // with one tap, or pick a different pay method.
-      // Persist the partial bookingId so a later retry (e.g. via the
-      // Pay Later button after snackbar dismissal) doesn't double-book.
-      final persistedBookingId = result.bookingId ?? existingBookingId;
-      if (persistedBookingId != null) {
-        _cart.setPendingBookingId(widget.table.id, persistedBookingId);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: context.appDanger,
-          duration: const Duration(seconds: 8),
-          content: Text(
-            '${translationService.t('waiter_bill_failed')}: ${result.errorMessage ?? ''}',
-            style: const TextStyle(color: Colors.white),
-          ),
-          action: SnackBarAction(
-            textColor: Colors.white,
-            label: translationService.t('waiter_retry'),
-            // Preserve any bookingId the backend already accepted so the
-            // retry doesn't create a duplicate ghost booking. If the
-            // failure happened before createBooking (e.g. NearPay flag
-            // off), bookingId is null and we start fresh.
-            onPressed: () => _runBillFlow(
-              pays: pays,
-              total: total,
-              allItems: allItems,
-              existingBookingId: persistedBookingId,
-            ),
-          ),
-        ),
-      );
-      return;
-    }
-
-    // Success — clear any in-flight bookingId we were retrying against
-    // so the next action on this table doesn't try to reuse a now-paid
-    // booking id.
-    _cart.clearPendingBookingId(widget.table.id);
-
-    // Broadcast paid/open-bill depending on whether it was pay-later.
-    final payLater = result.paymentMethod == 'pay_later';
-
-    // Build the canonical invoice receipt data ONCE — the preview sheet
-    // and the cashier print share it, so we make exactly one bilingual
-    // getInvoice fetch (ar+en in parallel) and reuse the merged payload.
-    // Same pipeline as the cashier (`main_screen.payment._buildOrderReceiptData`),
-    // so the on-screen preview is byte-identical to the thermal print.
-    final receiptData = await _printDispatcher.buildCashierReceiptData(
-      invoiceId: payLater ? null : result.invoiceId,
-      invoiceNumber: result.invoiceNumber,
-      dailyOrderNumber: result.dailyOrderNumber,
-      items: allItems,
-      totalInclVat: total,
-      vatRate: _billing.taxRate,
-      tableNumber: widget.table.number,
-      waiterName: me.name,
-      pays: pays,
-    );
-
-    // Physical prints (cashier receipt + kitchen ticket). Fire BEFORE
-    // the success sheet so the thermal printer is humming by the time
-    // the waiter sees the summary. Errors are swallowed inside the
-    // dispatcher — a down printer shouldn't fail the flow.
-    if (!payLater && result.invoiceId != null) {
-      // Pay-now: print using the prebuilt receipt data so we don't
-      // refetch the invoice. Respects autoPrintCashier +
-      // autoPrintCustomerSecondCopy toggles.
-      unawaited(_printDispatcher.printPrebuiltCashierReceipt(receiptData));
-      final bookingIdForKitchen =
-          result.bookingId ?? existingBookingId ?? '';
-      if (bookingIdForKitchen.isNotEmpty && allItems.isNotEmpty) {
-        // Prefer the backend daily_order_number (e.g. "1023") > invoice
-        // number > `#<bookingId>`. The `#<bookingId>` fallback is the
-        // backend's primary-key view so kitchen staff can correlate
-        // with the order ledger.
-        final orderNumber = result.dailyOrderNumber?.isNotEmpty == true
-            ? result.dailyOrderNumber!
-            : (result.invoiceNumber?.isNotEmpty == true
-                ? result.invoiceNumber!
-                : '#$bookingIdForKitchen');
-        // Pay-now paths in the waiter do NOT consistently dispatch to
-        // KDS (fresh submission skips, retry-after-partial-failure
-        // skips, edit-branch dispatches only new drafts). Always
-        // paper-print on pay-now and let the user opt out via the
-        // `printKitchenInvoices` toggle.
-        const kdsHasIt = false;
-        unawaited(
-          _printDispatcher.printKitchenTicket(
-            bookingId: bookingIdForKitchen,
-            orderNumber: orderNumber,
-            items: allItems,
-            tableNumber: widget.table.number,
-            waiterName: me.name,
-            invoiceNumber: result.invoiceNumber,
-            kdsAlreadyDispatched: kdsHasIt,
-          ),
-        );
-      }
-    }
-    widget.controller.broadcastTableEvent(TableLifecycleEvent(
-      kind: payLater
-          ? TableLifecycleKind.paymentPending
-          : TableLifecycleKind.paid,
-      tableId: widget.table.id,
-      tableNumber: widget.table.number,
-      waiterId: me.id,
-      waiterName: me.name,
-      guestCount: _guests,
-      total: total,
-      itemCount: _cart.itemCountFor(widget.table.id),
-      items: _snapshotItems(),
-      orderId: result.bookingId,
-    ));
-
-    if (!mounted) return;
-
-    // Show success dialog (invoice summary). Uses Dialog (not bottom sheet)
-    // so the cashier-style paper renders at full height — same insets,
-    // same width/height clamps the cashier's InvoiceDetailsDialog uses.
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _BillPreview(
-        receiptData: receiptData,
-        paid: !payLater,
-        invoiceId: result.invoiceId,
-      ),
-    );
-
-    if (!payLater) {
-      // Paid-but-still-seated scenario: don't auto-release. Keep the
-      // table in the "paid" ownership state so it stays "Unavailable"
-      // in the waiters grid + cashier tables screen until the waiter
-      // explicitly taps "Release Table" (card 3-dots menu) when the
-      // guests actually leave. Clear the local cart so stale items
-      // don't resurface if the waiter re-opens the card.
-      _cart.clearTable(widget.table.id);
-      if (mounted) Navigator.of(context).pop();
-    }
-  }
-
-  void _openCartSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: context.appSurface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.8,
-        minChildSize: 0.4,
-        maxChildSize: 0.95,
-        builder: (_, scroll) => AnimatedBuilder(
-          animation: _cart,
-          builder: (_, __) => _buildCart(
-            context,
-            _cart.itemsFor(widget.table.id),
-            scrollController: scroll,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPicker(BuildContext context) {
-    if (_loadingCategories) {
-      return Center(
-        child: CircularProgressIndicator(color: context.appPrimary),
-      );
-    }
-    final bp = context.waiterBreakpoint;
-    // Grid cell size: chunky enough for easy tapping on phones, but
-    // denser on tablets so we aren't staring at a 3-product grid on a 10"
-    // screen. Aspect also drops slightly as cells grow so the image area
-    // stays square-ish.
-    final gridExtent = switch (bp) {
-      WaiterBreakpoint.compact => 150.0,
-      WaiterBreakpoint.medium => 180.0,
-      WaiterBreakpoint.expanded => 200.0,
-    };
-    final chipRowHeight = bp == WaiterBreakpoint.compact ? 52.0 : 58.0;
-    return Column(
-      children: [
-        SizedBox(
-          height: chipRowHeight,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            itemCount: _categories.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (_, i) {
-              final c = _categories[i];
-              final selected = c.id == _selectedCategoryId;
-              return ChoiceChip(
-                label: Text(c.name),
-                selected: selected,
-                onSelected: (_) => _loadProducts(c.id),
-                selectedColor: context.appPrimary.withValues(alpha: 0.2),
-                labelStyle: TextStyle(
-                  color: selected ? context.appPrimary : context.appText,
-                  fontWeight: FontWeight.w600,
-                ),
-                backgroundColor: context.appSurfaceAlt,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                  side: BorderSide(
-                    color: selected ? context.appPrimary : context.appBorder,
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        Expanded(
-          child: _loadingProducts
-              ? Center(
-                  child: CircularProgressIndicator(color: context.appPrimary),
-                )
-              : _products.isEmpty
-                  ? Center(
-                      child: Text(
-                        translationService.t('waiter_no_products'),
-                        style: TextStyle(color: context.appTextMuted),
-                      ),
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.all(12),
-                      gridDelegate:
-                          SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: gridExtent,
-                        mainAxisSpacing: 10,
-                        crossAxisSpacing: 10,
-                        childAspectRatio: 1,
-                      ),
-                      itemCount: _products.length,
-                      itemBuilder: (_, i) {
-                        final p = _products[i];
-                        return InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () => _addProductToCart(p),
-                          child: Ink(
-                            decoration: BoxDecoration(
-                              color: context.appCardBg,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: context.appBorder),
-                            ),
-                            padding: const EdgeInsets.all(10),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Container(
-                                    width: double.infinity,
-                                    decoration: BoxDecoration(
-                                      color: context.appSurfaceAlt,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Center(
-                                      child: Icon(
-                                        LucideIcons.utensils,
-                                        color: context.appTextMuted,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  p.name,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: context.appText,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${_displayPrice(p.price).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
-                                  style: TextStyle(
-                                    color: context.appPrimary,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCart(
-    BuildContext context,
-    List<CartItem> items, {
-    ScrollController? scrollController,
-  }) {
-    final sent = _cart.sentItemsFor(widget.table.id);
-    final subtotal = _cart.subtotalFor(widget.table.id);
-    final draftSubtotal = _cart.draftSubtotalFor(widget.table.id);
-    return Container(
-      color: context.appSurface,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-            child: Row(
-              children: [
-                Icon(LucideIcons.users,
-                    size: 18, color: context.appTextMuted),
-                const SizedBox(width: 6),
-                Text(
-                  translationService.t('waiter_guests'),
-                  style: TextStyle(color: context.appTextMuted),
-                ),
-                const Spacer(),
-                IconButton(
-                  iconSize: 22,
-                  constraints: const BoxConstraints(
-                    minWidth: WaiterSizes.minTapTarget,
-                    minHeight: WaiterSizes.minTapTarget,
-                  ),
-                  onPressed: _guests > 1
-                      ? () {
-                          setState(() => _guests--);
-                          _cart.setGuests(widget.table.id, _guests);
-                          _broadcastUpdate();
-                        }
-                      : null,
-                  icon: const Icon(LucideIcons.minus),
-                ),
-                Text('$_guests',
-                    style: TextStyle(
-                      color: context.appText,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    )),
-                IconButton(
-                  iconSize: 22,
-                  constraints: const BoxConstraints(
-                    minWidth: WaiterSizes.minTapTarget,
-                    minHeight: WaiterSizes.minTapTarget,
-                  ),
-                  onPressed: () {
-                    setState(() => _guests++);
-                    _cart.setGuests(widget.table.id, _guests);
-                    _broadcastUpdate();
-                  },
-                  icon: const Icon(LucideIcons.plus),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: (items.isEmpty && sent.isEmpty)
-                ? Center(
-                    child: Text(
-                      translationService.t('waiter_cart_empty'),
-                      style: TextStyle(color: context.appTextMuted),
-                    ),
-                  )
-                : ListView(
-                    controller: scrollController,
-                    children: [
-                      if (sent.isNotEmpty)
-                        _sectionHeader(
-                          context,
-                          translationService.t('waiter_already_sent'),
-                          LucideIcons.checkCheck,
-                          context.appSuccess,
-                        ),
-                      for (final sentItem in sent) _sentRow(context, sentItem),
-                      if (items.isNotEmpty)
-                        _sectionHeader(
-                          context,
-                          translationService.t('waiter_draft_items'),
-                          LucideIcons.pencil,
-                          context.appPrimary,
-                        ),
-                      for (var i = 0; i < items.length; i++)
-                        _draftRow(context, items[i], i),
-                    ],
-                  ),
-          ),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: context.appSurfaceAlt,
-              border: Border(
-                top: BorderSide(color: context.appBorder),
-              ),
-            ),
-            child: Column(
-              children: [
-                if (sent.isNotEmpty) ...[
-                  Row(
-                    children: [
-                      Text(
-                        translationService.t('waiter_sent_total'),
-                        style: TextStyle(color: context.appTextMuted, fontSize: 12),
-                      ),
-                      const Spacer(),
-                      Text(
-                        '${_displayPrice(subtotal - draftSubtotal).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
-                        style: TextStyle(
-                          color: context.appTextMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                ],
-                Row(
-                  children: [
-                    Text(
-                      translationService.t('waiter_subtotal'),
-                      style: TextStyle(color: context.appTextMuted),
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${_displayPrice(subtotal).toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
-                      style: TextStyle(
-                        color: context.appText,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: 48,
-                        child: FilledButton.icon(
-                          onPressed: (!_canSubmit || items.isEmpty)
-                              ? null
-                              : _payLater,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: context.appPrimary,
-                            foregroundColor: Colors.white,
-                          ),
-                          icon: (_sending || _rehydrating)
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(LucideIcons.clock),
-                          label: Text(
-                            translationService.t('pay_later'),
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      height: 48,
-                      child: OutlinedButton.icon(
-                        onPressed: (!_canSubmit ||
-                                (sent.isEmpty && items.isEmpty))
-                            ? null
-                            : _printBill,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: context.appPrimary,
-                          side: BorderSide(color: context.appPrimary),
-                        ),
-                        icon: const Icon(LucideIcons.receipt, size: 18),
-                        label: Text(translationService.t('waiter_create_invoice')),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Post-payment invoice preview. Renders the same [InvoicePrintWidget] the
-/// cashier shows in `InvoiceDetailsDialog`, fed by the shared
-/// [ReceiptBuilderService] pipeline — so the waiter's on-screen invoice
-/// matches the cashier's pixel-for-pixel (header, totals, ZATCA QR,
-/// footer).
-class _BillPreview extends StatelessWidget {
-  final OrderReceiptData receiptData;
-  final bool paid;
-  final String? invoiceId;
-
-  const _BillPreview({
-    required this.receiptData,
-    this.paid = false,
-    this.invoiceId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // Mirror the printerLanguageSettings exactly — same trio the cashier
-    // uses in InvoiceDetailsDialog and pdf_preview_screen, and the same
-    // values print_listener resolves for the actual thermal print. The
-    // on-screen preview and the printed paper now match byte-for-byte
-    // regardless of bilingual on/off.
-    final pri = printerLanguageSettings.primary;
-    final sec = printerLanguageSettings.secondary;
-    final allow = printerLanguageSettings.allowSecondary;
-
-    // Mirror the cashier's InvoiceDetailsDialog frame exactly:
-    // insetPadding 12/16 (compact) or 24/24, width clamp 280–700,
-    // height clamp 460–760. Without the same chrome, the paper inside
-    // looked smaller than the cashier's even though the widget itself
-    // was identical.
-    final size = MediaQuery.sizeOf(context);
-    final isCompact = size.width < 700;
-    final insetPadding = EdgeInsets.symmetric(
-      horizontal: isCompact ? 12 : 24,
-      vertical: isCompact ? 16 : 24,
-    );
-    final dialogWidth =
-        (size.width - insetPadding.horizontal).clamp(280.0, 700.0).toDouble();
-    final dialogHeight =
-        (size.height - insetPadding.vertical).clamp(460.0, 760.0).toDouble();
-
-    return Dialog(
-      insetPadding: insetPadding,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: SizedBox(
-        width: dialogWidth,
-        height: dialogHeight,
-        child: Column(
-          children: [
-            Container(
-              padding: EdgeInsets.all(isCompact ? 14 : 20),
-              decoration: const BoxDecoration(
-                color: Color(0xFFF58220),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'تفاصيل الفاتورة',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        if (receiptData.invoiceNumber.isNotEmpty)
-                          Text(
-                            'رقم الفاتورة: #${receiptData.invoiceNumber}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.white.withValues(alpha: 0.8),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(LucideIcons.x, color: Colors.white),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Container(
-                color: context.appSurfaceAlt,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 24,
-                  ),
-                  child: Center(
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 450),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(4),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(
-                              alpha: context.isDark ? 0.4 : 0.1,
-                            ),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        children: [
-                          if (paid)
-                            Container(
-                              width: double.infinity,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 8),
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF10B981),
-                                borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(4),
-                                ),
-                              ),
-                              child: Text(
-                                translationService.t('waiter_status_paid'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          InvoicePrintWidget(
-                            data: receiptData,
-                            paperWidthMm: 80,
-                            primaryLang: pri,
-                            secondaryLang: sec,
-                            allowSecondary: allow,
-                          ),
-                          const SizedBox(height: 20),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              padding: EdgeInsets.all(isCompact ? 14 : 20),
-              decoration: BoxDecoration(
-                color: context.appBg,
-                border: Border(top: BorderSide(color: Colors.grey[200]!)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (paid && invoiceId != null && invoiceId!.isNotEmpty) ...[
-                    SendInvoiceWhatsAppButton(
-                      invoiceId: invoiceId!,
-                      customerPhone: receiptData.clientPhone,
-                      customerName: receiptData.clientName,
-                      invoiceNumber: receiptData.invoiceNumber.isNotEmpty
-                          ? receiptData.invoiceNumber
-                          : invoiceId,
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  SizedBox(
-                    height: 48,
-                    child: FilledButton.icon(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: context.appPrimary,
-                        foregroundColor: Colors.white,
-                      ),
-                      icon: const Icon(LucideIcons.check),
-                      label: Text(translationService.t('waiter_close')),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

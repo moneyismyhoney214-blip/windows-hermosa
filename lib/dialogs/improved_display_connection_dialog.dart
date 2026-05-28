@@ -1,11 +1,14 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../screens/qr_scanner_screen.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
 
 /// نموذج جهاز العرض المحفوظ
 class SavedDisplayDevice {
@@ -311,12 +314,7 @@ class _ImprovedDisplayConnectionDialogState
                       final parsedPort =
                           int.tryParse(_portController.text.trim()) ?? 8080;
                       if (parsedPort < 1 || parsedPort > 65535) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(translationService.t('invalid_port')),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
+                        UiFeedback.error(context, translationService.t('invalid_port'));
                         return;
                       }
                       _selectedPort = parsedPort;
@@ -344,12 +342,7 @@ class _ImprovedDisplayConnectionDialogState
                       final parsedPort =
                           int.tryParse(_portController.text.trim()) ?? 8080;
                       if (parsedPort < 1 || parsedPort > 65535) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(translationService.t('invalid_port')),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
+                        UiFeedback.error(context, translationService.t('invalid_port'));
                         return;
                       }
                       _selectedPort = parsedPort;
@@ -757,7 +750,7 @@ class _ImprovedDisplayConnectionDialogState
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      translationService.t('last_connected') + ': ${_formatDate(device.lastConnected)}',
+                      '${translationService.t('last_connected')}: ${_formatDate(device.lastConnected)}',
                       style: GoogleFonts.tajawal(
                         color: Colors.grey[500],
                         fontSize: 12,

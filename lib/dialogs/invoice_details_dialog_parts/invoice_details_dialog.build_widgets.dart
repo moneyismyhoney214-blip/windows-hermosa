@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../invoice_details_dialog.dart';
 
 extension InvoiceDetailsDialogBuildWidgets on _InvoiceDetailsDialogState {
@@ -216,6 +216,64 @@ extension InvoiceDetailsDialogBuildWidgets on _InvoiceDetailsDialogState {
 
       final receiptAddons = extractReceiptAddonsFromItem(item);
 
+      // Convention detection mirrors `_mapModelToReceiptData` in
+      // `invoice_html_pdf_service.dart`: backends are inconsistent about
+      // whether `total` already has the discount subtracted. Anchor on
+      // `unit_price * quantity` to pick the right interpretation so the
+      // dialog preview matches what the printed receipt actually shows.
+      final qty = _parsePrice(item['quantity']);
+      final unitPrice = _parsePrice(item['unit_price'] ?? item['price'] ?? meal['price']);
+      final rawTotal = _parsePrice(item['total'] ?? item['amount']);
+      var lineDiscount =
+          _parsePrice(item['discount_amount'] ?? item['discount']);
+      final explicitOriginal = _parsePrice(
+          item['original_total'] ?? item['price_before_discount']);
+
+      double originalPrice;
+      double actualLineTotal;
+      if (explicitOriginal > 0) {
+        originalPrice = explicitOriginal;
+        actualLineTotal = (explicitOriginal - lineDiscount)
+            .clamp(0.0, explicitOriginal)
+            .toDouble();
+      } else if (unitPrice > 0 && qty > 0 && lineDiscount > 0) {
+        final baseline = unitPrice * qty;
+        final preDiscountFit = (rawTotal - baseline).abs() < 0.01;
+        final postDiscountFit =
+            (rawTotal + lineDiscount - baseline).abs() < 0.01;
+        if (preDiscountFit && !postDiscountFit) {
+          originalPrice = rawTotal;
+          actualLineTotal =
+              (rawTotal - lineDiscount).clamp(0.0, rawTotal).toDouble();
+        } else {
+          originalPrice = rawTotal + lineDiscount;
+          actualLineTotal = rawTotal;
+        }
+      } else if (lineDiscount > 0) {
+        originalPrice = rawTotal + lineDiscount;
+        actualLineTotal = rawTotal;
+      } else {
+        originalPrice = (unitPrice > 0 && qty > 0) ? unitPrice * qty : 0;
+        actualLineTotal = rawTotal;
+      }
+
+      if (lineDiscount <= 0 && originalPrice > actualLineTotal + 0.01) {
+        lineDiscount = originalPrice - actualLineTotal;
+      }
+
+      // Mirrors `_mapModelToReceiptData`: backend can't distinguish a
+      // "Free" toggle from a 100% discount slider (verified IN-831 line
+      // 3: total=13.91/discount=13.91/total_tax=0, no `is_free` field).
+      // Default any math-fully-discounted line to "مجاناً" so the
+      // dialog preview matches the cashier's original intent in the
+      // common case.
+      final isExplicitFree = item['is_free'] == true || item['isFree'] == true;
+      final isMathFullyDiscounted = originalPrice > 0 &&
+          actualLineTotal <= 0.001 &&
+          lineDiscount > 0;
+      final treatAsFree = isExplicitFree || isMathFullyDiscounted;
+      final explicitDiscountPct = _parsePrice(item['discount_percentage']);
+
       return ReceiptItem(
         nameAr: item['service_name']?.toString() ??
             item['meal_name']?.toString() ??
@@ -223,13 +281,19 @@ extension InvoiceDetailsDialogBuildWidgets on _InvoiceDetailsDialogState {
             meal['name']?.toString() ??
             '',
         nameEn: item['meal_name_en']?.toString() ?? meal['name_en']?.toString() ?? '',
-        quantity: _parsePrice(item['quantity']),
-        unitPrice: _parsePrice(item['unit_price'] ?? item['price']),
-        total: _parsePrice(item['total'] ?? item['amount']),
+        quantity: qty,
+        unitPrice: unitPrice,
+        total: actualLineTotal,
         addons: receiptAddons,
-        discountAmount: _parsePrice(item['discount_amount'] ?? item['discount']),
-        discountPercentage: _parsePrice(item['discount_percentage']),
-        discountName: item['discount_name']?.toString(),
+        discountAmount: lineDiscount > 0 ? lineDiscount : null,
+        discountPercentage:
+            explicitDiscountPct > 0 ? explicitDiscountPct : null,
+        discountName: treatAsFree
+            ? 'مجاناً'
+            : (item['discount_name']?.toString().trim().isNotEmpty == true
+                ? item['discount_name']!.toString()
+                : null),
+        originalPrice: originalPrice > 0 ? originalPrice : null,
       );
     }).toList();
 
@@ -265,7 +329,17 @@ extension InvoiceDetailsDialogBuildWidgets on _InvoiceDetailsDialogState {
       tableNumber: _extractTableNumber(data, payload),
       carNumber: data['car_number']?.toString() ?? payload['car_number']?.toString() ?? _asMap(data['type_extra'])?['car_number']?.toString() ?? '',
       commercialRegisterNumber: _extractCommercialRegister(data, payload),
-      orderDiscountAmount: _parsePrice(data['discount'] ?? data['discount_amount'] ?? payload['discount'] ?? payload['discount_amount']),
+      // Backend's `discount` = grand total discount (items + coupon).
+      // Subtract `total_items_discount` so only the TRUE order-level
+      // portion drives the DISCOUNT banner — per-item discounts surface
+      // inline beside their items. Verified IN-831 where discount=36.17
+      // and total_items_discount=36.17 (no coupon) → orderDiscount=0.
+      orderDiscountAmount: () {
+        final total = _parsePrice(data['discount'] ?? data['discount_amount'] ?? payload['discount'] ?? payload['discount_amount']);
+        final items = _parsePrice(data['total_items_discount'] ?? payload['total_items_discount']);
+        final orderOnly = total - items;
+        return orderOnly > 0.01 ? orderOnly : 0.0;
+      }(),
       orderDiscountPercentage: _parsePrice(data['discount_percentage'] ?? payload['discount_percentage']),
       orderDiscountName: (data['discount_name'] ?? data['discount_code'] ?? payload['discount_name'] ?? payload['discount_code'])?.toString(),
     );

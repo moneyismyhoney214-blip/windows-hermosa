@@ -57,11 +57,7 @@ class _SendInvoiceWhatsAppButtonState extends State<SendInvoiceWhatsAppButton> {
     super.initState();
     invoiceWhatsAppDispatcher.addListener(_onDispatcherChanged);
     whatsAppService.addListener(_onDispatcherChanged);
-    // Lazy-init the WhatsApp service so config (and therefore
-    // [WhatsAppConfig.isApiReady]) is populated. The branch settings
-    // path seeds creds in memory regardless of `whatsapp_status`, so
-    // simply waiting for initialize() is enough to know whether the
-    // button can do anything useful.
+    // Lazy-init so WhatsAppConfig.isApiReady reflects branch creds.
     unawaited(whatsAppService.initialize());
   }
 
@@ -162,9 +158,26 @@ class _SendInvoiceWhatsAppButtonState extends State<SendInvoiceWhatsAppButton> {
         break;
       case WhatsAppDispatchOutcome.failure:
         final msg = result.errorMessage?.trim() ?? '';
-        text = msg.isEmpty
-            ? translationService.t('failed_to_send_whatsapp')
-            : translationService.t('failed_to_send_whatsapp_with_reason', args: {'reason': msg});
+        // Map known opaque failure codes to actionable messages instead of
+        // surfacing the raw `wawp_http_400` / `invalid_phone` string to
+        // cashiers. The most common cause is a corrupt customer mobile
+        // (extra leading 0, doubled country code, etc.) that WAWP rejects
+        // — translate that into a "fix the customer's phone" hint.
+        final lower = msg.toLowerCase();
+        final isInvalidPhone = lower == 'invalid_phone' ||
+            lower == 'wawp_http_400' ||
+            lower == 'wawp_http_422' ||
+            lower.contains('chatid') ||
+            lower.contains('invalid number') ||
+            lower.contains('invalid phone');
+        if (isInvalidPhone) {
+          text = translationService.t('invoice_whatsapp_invalid_phone');
+        } else if (msg.isEmpty) {
+          text = translationService.t('failed_to_send_whatsapp');
+        } else {
+          text = translationService.t('failed_to_send_whatsapp_with_reason',
+              args: {'reason': msg});
+        }
         background = const Color(0xFFDC2626);
         break;
     }
@@ -178,25 +191,15 @@ class _SendInvoiceWhatsAppButtonState extends State<SendInvoiceWhatsAppButton> {
 
   @override
   Widget build(BuildContext context) {
-    // Mirror the waiter waitlist gate: show the button whenever the
-    // branch has WAWP credentials configured, ignoring the
-    // `ApiConstants.whatsappEnabled` toggle. That toggle is a backend
-    // policy flag (does the merchant want WhatsApp at all?) which the
-    // waitlist *does* respect — but on the cashier side, removing it
-    // here means the merchant can send invoices over WhatsApp the
-    // moment they paste WAWP creds into branch settings, without
-    // having to also flip an additional flag.
+    // Show whenever WAWP creds are configured; ignore the whatsappEnabled
+    // policy flag so cashiers can send the moment creds are pasted.
     if (!whatsAppService.config.isApiReady) {
       return const SizedBox.shrink();
     }
 
     final inFlight = invoiceWhatsAppDispatcher.isInFlight(widget.invoiceId);
     final sent = invoiceWhatsAppDispatcher.isSent(widget.invoiceId);
-    // Only disable while a request is in-flight. The dispatcher fetches
-    // the customer phone from the backend on demand when the row didn't
-    // ship one (list rows often skip nested customer info), so we no
-    // longer pre-emptively grey out the button — if no phone exists, the
-    // dispatcher returns `noCustomerPhone` and the snackbar explains it.
+    // Only disable while in-flight; dispatcher fetches phone on demand.
     final disabled = inFlight;
 
     final IconData iconData;

@@ -1,4 +1,8 @@
-// ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, avoid_dynamic_calls
+//
+// JSON wire-boundary / message-dispatch layer — dynamic accesses here are
+// known and accepted pending the typed-model refactor planned in
+// audit_2026_05_19.md (split models.dart, introduce concrete DTOs).
 part of '../display_app_service.dart';
 
 extension DisplayAppServiceMessaging on DisplayAppService {
@@ -151,13 +155,14 @@ extension DisplayAppServiceMessaging on DisplayAppService {
           break;
 
         case 'ORDER_RECEIVED':
+          // Display ACK'd the order. Server status 4 = جاري التحضير
+          // (matches Booking.statusDisplay mapping in booking_invoice.dart).
           final payload = data['data'];
           if (payload is Map && payload['orderId'] != null) {
             _lastOrderAckId = payload['orderId'].toString();
-            unawaited(
-                _updateBackendOrderStatus(_lastOrderAckId, 2)); // 2 = Preparing
+            unawaited(_updateBackendOrderStatus(_lastOrderAckId, 4));
           } else if (data['orderId'] != null) {
-            unawaited(_updateBackendOrderStatus(data['orderId'], 2));
+            unawaited(_updateBackendOrderStatus(data['orderId'], 4));
           }
           _lastOrderAckAt = DateTime.now();
           notifyListeners();
@@ -256,17 +261,17 @@ extension DisplayAppServiceMessaging on DisplayAppService {
           break;
 
         case 'ORDER_COMPLETED':
-          debugPrint('Order completed in KDS: ${data['orderId']}');
-          // When KDS bumps an order (marks it as done), update status to 3 (انتهي/Ended)
-          // Status 4 = جاري التحضير (Preparing) - set when order is sent to KDS
-          // Status 3 = انتهي (Ended) - set when KDS bumps the order
-          unawaited(_updateBackendOrderStatus(data['orderId'], 3)); // 3 = Ended
+          // Listener-only: KDS owns the preparing→ready PATCH via
+          // kdsSyncService.queueStatusSync. Cashier records the value locally
+          // and notifies UI listeners. 5 = جاهز للتوصيل (server's "ready" code
+          // in the unified mapping; replaces the prior 3 = انتهي that drifted
+          // out of sync with KDS-side _computedKitchenStatusCode).
+          _recordKdsOrderStatus(data['orderId'], 5);
           break;
 
         case 'ORDER_READY':
-          debugPrint('Order ready in KDS: ${data['orderId']}');
-          // ORDER_READY event also means the order is ended in KDS context
-          unawaited(_updateBackendOrderStatus(data['orderId'], 3)); // 3 = Ended
+          // Listener-only. Same rationale as ORDER_COMPLETED above.
+          _recordKdsOrderStatus(data['orderId'], 5);
           break;
 
         case 'MEAL_DISABLED_SYNC':
@@ -286,7 +291,9 @@ extension DisplayAppServiceMessaging on DisplayAppService {
           break;
 
         case 'ORDER_STATUS_UPDATE':
-          debugPrint('Order status update received: ${data['data']}');
+          // Listener-only. KDS already PATCH'd the backend via
+          // kdsSyncService.queueStatusSync — re-PATCHing here was the source
+          // of "محاولات كثيرة" 422 storms. Record value locally + notify only.
           final statusData = data['data'];
           if (statusData is Map) {
             final orderIdStatus = statusData['order_id'] ?? statusData['id'];
@@ -295,25 +302,20 @@ extension DisplayAppServiceMessaging on DisplayAppService {
               final statusInt = statusValue is int
                   ? statusValue
                   : int.tryParse(statusValue.toString());
-              if (statusInt != null) {
-                if (statusInt == 8) {
-                  debugPrint(
-                      'Ignoring auto status=8 from Display App; cancellation must be manual in cashier.');
-                  break;
-                }
-                unawaited(_updateBackendOrderStatus(orderIdStatus, statusInt));
+              if (statusInt != null && statusInt != 8) {
+                _recordKdsOrderStatus(orderIdStatus, statusInt);
               }
             }
           }
           break;
 
         case 'ORDER_COMPLETED_SYNC':
-          debugPrint('Order completed sync received: ${data['data']}');
+          // Listener-only. 5 = جاهز للتوصيل (matches KDS-side
+          // _computedKitchenStatusCode after bump-all in display_app/kds_page).
           final orderIdSync = data['data'] is Map
               ? data['data']['order_id'] ?? data['data']['id']
               : null;
-          // When KDS bumps an order, update to status 3 (انتهي/Ended)
-          unawaited(_updateBackendOrderStatus(orderIdSync, 3));
+          _recordKdsOrderStatus(orderIdSync, 5);
           break;
       }
     } catch (e) {

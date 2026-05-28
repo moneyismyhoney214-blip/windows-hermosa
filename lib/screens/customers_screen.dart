@@ -2,13 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../models/customer.dart';
-import '../services/api/customer_service.dart';
-import '../services/api/country_code_service.dart';
+
 import '../locator.dart';
-import '../services/language_service.dart';
+import '../models/customer.dart';
+import '../services/api/country_code_service.dart';
+import '../services/api/customer_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
 import '../services/whatsapp_service.dart';
+import '../utils/ui_feedback.dart';
 import '../widgets/country_code_picker.dart';
 
 class CustomersScreen extends StatefulWidget {
@@ -142,7 +144,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     );
 
     if (result == true) {
-      _loadCustomers(refresh: true);
+      unawaited(_loadCustomers(refresh: true));
     }
   }
 
@@ -153,7 +155,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     );
 
     if (result == true) {
-      _loadCustomers(refresh: true);
+      unawaited(_loadCustomers(refresh: true));
     }
   }
 
@@ -180,7 +182,10 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
     return Scaffold(
       backgroundColor: context.appBg,
-      body: Directionality(
+      // Pushed full-screen from main_screen (no parent AppBar) — own the
+      // safe-area handling so the header never collides with the status bar.
+      body: SafeArea(
+        child: Directionality(
         textDirection: isRTL ? TextDirection.rtl : TextDirection.ltr,
         child: Column(
           children: [
@@ -320,6 +325,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                             ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -490,7 +496,6 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.customer?.name);
-    _mobileController = TextEditingController(text: widget.customer?.mobile);
     _taxNumberController =
         TextEditingController(text: widget.customer?.taxNumber);
     _commercialRegisterController =
@@ -511,6 +516,44 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
         }
       }
     }
+
+    // Show the LOCAL part of the phone in the field — the country code
+    // is already represented by the picker beside it. Without this strip
+    // the user sees "+966 | 966503431085" (doubled-looking 966), tries to
+    // "fix" it by deleting the 966, presses save, and `_save()` silently
+    // re-prepends the country code via `normalizePhone` — producing the
+    // exact same stored value, so the edit appears not to save.
+    _mobileController = TextEditingController(
+      text: _stripCountryCodeForDisplay(widget.customer?.mobile, _country),
+    );
+  }
+
+  /// Return the customer's local phone digits with any matched country
+  /// code prefix removed, suitable for showing in the input that sits
+  /// next to the [CountryCodePicker]. Returns the original string
+  /// unchanged if no recognised prefix is present (so unknown formats
+  /// like a saved local-only `0501234567` keep their leading zero).
+  static String? _stripCountryCodeForDisplay(
+    String? stored,
+    CountryOption country,
+  ) {
+    if (stored == null || stored.trim().isEmpty) return stored;
+    final digits = stored.replaceAll(RegExp(r'\D'), '');
+    final cc = country.digits;
+    // Strip ITU "00" prefix if the saved value used it.
+    var trimmed = digits;
+    if (trimmed.startsWith('00') && trimmed.length > 2) {
+      trimmed = trimmed.substring(2);
+    }
+    // Only strip the country code when the rest is long enough to look
+    // like a real local number (≥ 7 digits). Otherwise leave as-is to
+    // avoid corrupting unusual numbering plans.
+    if (cc.isNotEmpty &&
+        trimmed.startsWith(cc) &&
+        trimmed.length - cc.length >= 7) {
+      return trimmed.substring(cc.length);
+    }
+    return trimmed;
   }
 
   @override
@@ -531,12 +574,25 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
       _mobileController.text.trim(),
       countryCodeOverride: _country.areaCode,
     );
+    // Backend only knows a small whitelist of countries (1..7: GCC + Spain).
+    // The picker also surfaces a built-in Arab/Gulf list with synthetic
+    // ids ≥ 100000 (see CountryCodeService._builtInArabCountries) so the
+    // dial-code prefix matches a stored phone like "+20…". Sending a
+    // synthetic id back triggers a 422 ("الحقل الدولة لاغٍ"), and the
+    // field is *required* — omitting it gives "الحقل الدولة مطلوب".
+    // Resolve to a backend-valid id: keep the customer's existing
+    // country_id on update, default to Saudi (1) on create. The phone
+    // country code itself (kept verbatim in the picker) is unaffected.
+    final isSyntheticCountry = _country.value >= 100000;
+    final resolvedCountryId = isSyntheticCountry
+        ? (widget.customer?.countryId?.toString() ?? '1')
+        : '${_country.value}';
     final data = <String, String>{
       'name': _nameController.text,
       'mobile': normalizedMobile.isEmpty
           ? _mobileController.text.trim()
           : normalizedMobile,
-      'country_id': '${_country.value}',
+      'country_id': resolvedCountryId,
       'city_id': '1', // Default
       'type': _type,
     };
@@ -557,12 +613,7 @@ class _CustomerFormDialogState extends State<CustomerFormDialog> {
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${_t('error')}: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        UiFeedback.error(context, '${_t('error')}: $e');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

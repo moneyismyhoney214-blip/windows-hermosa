@@ -172,9 +172,12 @@ class WaiterCartStore extends ChangeNotifier {
     final draft = _carts.remove(oldTableId);
     final sent = _sent.remove(oldTableId);
     final guests = _guestCounts.remove(oldTableId);
+    // Retry-stub booking id must follow the table — orphaned stubs strand on free tables otherwise.
+    final pendingBookingId = _pendingBookingIds.remove(oldTableId);
     if ((draft == null || draft.isEmpty) &&
         (sent == null || sent.isEmpty) &&
-        guests == null) {
+        guests == null &&
+        pendingBookingId == null) {
       return false;
     }
     if (draft != null && draft.isNotEmpty) {
@@ -184,18 +187,18 @@ class WaiterCartStore extends ChangeNotifier {
       _sent.putIfAbsent(newTableId, () => <CartItem>[]).addAll(sent);
     }
     if (guests != null) {
-      // Destination wins if it already had a guest count — the party's
-      // size doesn't change just because the table did.
+      // Destination's existing guest count wins (party size doesn't change with the table).
       _guestCounts[newTableId] = _guestCounts[newTableId] ?? guests;
+    }
+    if (pendingBookingId != null) {
+      _pendingBookingIds[newTableId] = pendingBookingId;
     }
     notifyListeners();
     _schedulePersist();
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // Persistence
-  // ---------------------------------------------------------------------------
+  // --- Persistence ---
 
   /// Load drafts + sent + guests + pending-booking-ids saved for this
   /// waiter on this device. Called by [WaiterController.start]
@@ -213,8 +216,7 @@ class WaiterCartStore extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final primaryKey = '$_persistKeyPrefix$_persistScope';
       final backupKey = '$primaryKey.bak';
-      // Same dual-slot read pattern as the registry — fall back to the
-      // backup slot if the primary is corrupt (power-loss mid-write).
+      // Dual-slot read (primary + backup) for power-loss recovery; mirrors registry.
       Map? decoded;
       for (final key in [primaryKey, backupKey]) {
         final raw = prefs.getString(key);
@@ -272,8 +274,7 @@ class WaiterCartStore extends ChangeNotifier {
           out.add(_decodeCartItem(
               entry.map((k, v) => MapEntry(k.toString(), v))));
         } catch (_) {
-          // Drop the malformed item — better a partial cart than no
-          // cart at all.
+          // Drop malformed item; partial cart beats no cart.
         }
       }
     }
@@ -309,12 +310,7 @@ class WaiterCartStore extends ChangeNotifier {
             id: (e['id'] ?? '').toString(),
             name: (e['name'] ?? '').toString(),
             price: toDouble(e['price']),
-            // Reconstruct the per-language addon labels so the kitchen
-            // change-ticket renderer + the cashier receipt can print
-            // the addon bilingual. Persisting only id/name/price here
-            // was the bug: after app restart, kitchen tickets lost the
-            // addon's Arabic/English pair and fell back to whichever
-            // `name` we serialized.
+            // Restore per-language addon labels — without these, bilingual rendering breaks after app restart.
             optionTranslations: optionTr,
             attributeTranslations: attributeTr,
           ));
@@ -342,7 +338,10 @@ class WaiterCartStore extends ChangeNotifier {
           ? j['cart_id']!.toString()
           : const Uuid().v4(),
       product: product,
-      quantity: toDouble(j['quantity']) == 0 ? 1.0 : toDouble(j['quantity']),
+      quantity: (() {
+        final q = toDouble(j['quantity']);
+        return q == 0 ? 1.0 : q;
+      })(),
       selectedExtras: extras,
       discount: toDouble(j['discount']),
       discountType: j['discount_type'] == 'percentage'
@@ -358,12 +357,7 @@ class WaiterCartStore extends ChangeNotifier {
       'cart_id': item.cartId,
       'meal_id': item.product.id,
       'name': item.product.name,
-      // Persist every translation field the Product was built with —
-      // without these, the kitchen/receipt template can't render
-      // bilingual items after an app restart. `localizedNames` is the
-      // complete map (all 6 supported codes); `nameAr` / `nameEn` are
-      // the canonical pair the template falls back to when
-      // localizedNames is empty for a given language.
+      // Persist all translation fields — bilingual rendering breaks after restart without them.
       if (item.product.nameAr.isNotEmpty) 'nameAr': item.product.nameAr,
       if (item.product.nameEn.isNotEmpty) 'nameEn': item.product.nameEn,
       if (item.product.localizedNames.isNotEmpty)
@@ -398,7 +392,25 @@ class WaiterCartStore extends ChangeNotifier {
     _persistDebounce = Timer(const Duration(milliseconds: 300), _flushPersist);
   }
 
-  Future<void> _flushPersist() async {
+  /// Persist immediately, cancelling any pending debounce. Used right after
+  /// a successful "create booking" so a crash before the 300ms debounce
+  /// can't leave the just-sent items still flagged as drafts on disk — which
+  /// on the next launch would make a re-entry PATCH and re-dispatch them to
+  /// the kitchen a second time.
+  Future<void> flushNow() {
+    _persistDebounce?.cancel();
+    return _flushPersist();
+  }
+
+  // Serialise persist writes — chaining flushes keeps the backup→primary pair atomic vs the next flush + clearPersisted.
+  Future<void> _persistTail = Future<void>.value();
+
+  Future<void> _flushPersist() {
+    _persistTail = _persistTail.then((_) => _flushPersistOnce());
+    return _persistTail;
+  }
+
+  Future<void> _flushPersistOnce() async {
     final scope = _persistScope;
     if (scope == null) return;
     try {
@@ -429,14 +441,19 @@ class WaiterCartStore extends ChangeNotifier {
       final encoded = jsonEncode(blob);
       final primaryKey = '$_persistKeyPrefix$scope';
       final backupKey = '$primaryKey.bak';
-      // Write backup first, then primary — same two-phase pattern the
-      // registry uses so a crash between the two leaves the backup
-      // coherent.
+      // Backup-first, primary-second — crash mid-write leaves backup coherent.
       await prefs.setString(backupKey, encoded);
       await prefs.setString(primaryKey, encoded);
     } catch (e) {
       debugPrint('⚠️ WaiterCartStore persist failed: $e');
     }
+  }
+
+  @override
+  void dispose() {
+    _persistDebounce?.cancel();
+    _persistDebounce = null;
+    super.dispose();
   }
 
   /// Drop the on-disk snapshot. Called on sign-out so the next user of
@@ -446,14 +463,18 @@ class WaiterCartStore extends ChangeNotifier {
     _persistDebounce?.cancel();
     _persistScope = null;
     if (scope == null) return;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final primaryKey = '$_persistKeyPrefix$scope';
-      await prefs.remove(primaryKey);
-      await prefs.remove('$primaryKey.bak');
-    } catch (e) {
-      debugPrint('⚠️ WaiterCartStore clearPersisted failed: $e');
-    }
+    // Chain wipe onto the flush tail — a mid-flight write can't resurrect the cleared cart.
+    _persistTail = _persistTail.then((_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final primaryKey = '$_persistKeyPrefix$scope';
+        await prefs.remove(primaryKey);
+        await prefs.remove('$primaryKey.bak');
+      } catch (e) {
+        debugPrint('⚠️ WaiterCartStore clearPersisted failed: $e');
+      }
+    });
+    return _persistTail;
   }
 
   /// Deliberately mirror the registry's scope logic — must produce an
@@ -475,6 +496,9 @@ class WaiterCartStore extends ChangeNotifier {
   double subtotalFor(String tableId) =>
       draftSubtotalFor(tableId) + sentSubtotalFor(tableId);
 
-  int itemCountFor(String tableId) =>
-      allItemsFor(tableId).fold<int>(0, (s, i) => s + i.quantity.ceil());
+  int itemCountFor(String tableId) {
+    // Sum fractional quantities first, then ceil once — per-line ceiling inflates totals (two 0.5s become 2 instead of 1).
+    final qty = allItemsFor(tableId).fold<double>(0, (s, i) => s + i.quantity);
+    return qty <= 0 ? 0 : qty.ceil();
+  }
 }

@@ -1,8 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-
-import 'dart:async';
 
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
@@ -34,10 +34,10 @@ class _WaiterMessagesScreenState extends State<WaiterMessagesScreen> {
     super.initState();
     widget.controller.messages.addListener(_onStoreChanged);
     widget.controller.pickupStore.addListener(_onStoreChanged);
-    // Opening the tab counts as "read" — clears the unread badge.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.controller.messages.markAllRead();
-    });
+    // NOTE: marking messages read is owned by WaiterHomeScreen, which knows
+    // when this tab is actually selected. This screen lives inside an
+    // IndexedStack, so its initState fires at shell creation regardless of
+    // the active tab — clearing the badge here would do it at launch.
   }
 
   @override
@@ -128,8 +128,10 @@ class _NotificationTile extends StatelessWidget {
     final me = controller.session.self;
     final mine = me != null && message.fromWaiterId == me.id;
     final accepted = message.isAccepted;
-    final acceptedByMe =
-        accepted && message.acceptedByWaiterId == me?.id;
+    final acceptedByMe = accepted &&
+        me != null &&
+        message.acceptedByWaiterId != null &&
+        message.acceptedByWaiterId == me.id;
     final canAccept = !mine && !accepted && message.isBroadcast && !(me?.isViewer ?? false);
     // A viewer-prefixed sender id is always the cashier — mark those
     // visually so waiters know the message came from the till, not from
@@ -333,8 +335,10 @@ class _PickupTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final me = controller.session.self;
     final amIViewer = me?.isViewer ?? false;
-    final claimedByMe =
-        request.isClaimed && request.claimedByWaiterId == me?.id;
+    final claimedByMe = request.isClaimed &&
+        me != null &&
+        request.claimedByWaiterId != null &&
+        request.claimedByWaiterId == me.id;
     final canAccept = !amIViewer && request.isPending;
 
     final accent = request.cancelled

@@ -4,6 +4,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../services/logger_service.dart';
+
 /// Sound Service for playing audio notifications
 ///
 /// Plays sounds when:
@@ -106,7 +108,7 @@ class SoundService {
       try {
         await player.setAudioContext(
           AudioContext(
-            android: AudioContextAndroid(
+            android: const AudioContextAndroid(
               isSpeakerphoneOn: true,
               stayAwake: true,
               contentType: AndroidContentType.sonification,
@@ -133,7 +135,9 @@ class SoundService {
   Future<void> _disposePlaybackPlayer(AudioPlayer player) async {
     try {
       await player.onPlayerComplete.first.timeout(const Duration(seconds: 3));
-    } catch (_) {}
+    } catch (e) {
+      Log.d('SoundService', 'wait for playback complete timed out or failed (non-fatal): $e');
+    }
 
     _activePlayers.remove(player);
     try {

@@ -5,8 +5,8 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../services/api/api_constants.dart';
 import '../services/api/base_client.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
 
 /// Picks a single salon service from the branch catalog so the edit-order
 /// dialog can hand it (along with the employee/date/time picker) to
@@ -62,13 +62,6 @@ class _SalonServicePickerDialogState extends State<SalonServicePickerDialog> {
   int _currentPage = 1;
   int _lastPage = 1;
   String _search = '';
-
-  bool get _useArabicUi {
-    final code = translationService.currentLanguageCode.trim().toLowerCase();
-    return code.startsWith('ar') || code.startsWith('ur');
-  }
-
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   @override
   void initState() {
@@ -256,7 +249,7 @@ class _SalonServicePickerDialogState extends State<SalonServicePickerDialog> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              _tr('اختر الخدمة', 'Choose a Service'),
+              translationService.t('choose_service'),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 17,
@@ -281,7 +274,7 @@ class _SalonServicePickerDialogState extends State<SalonServicePickerDialog> {
         onChanged: _onSearchChanged,
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          hintText: _tr('ابحث عن خدمة', 'Search service'),
+          hintText: translationService.t('search_service'),
           prefixIcon: const Icon(LucideIcons.search, size: 18),
           isDense: true,
           filled: true,
@@ -322,7 +315,7 @@ class _SalonServicePickerDialogState extends State<SalonServicePickerDialog> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         children: [
-          _buildCategoryChip(null, _tr('الكل', 'All')),
+          _buildCategoryChip(null, translationService.t('all')),
           for (final cat in _categories)
             _buildCategoryChip(
               cat['id']?.toString(),
@@ -368,7 +361,7 @@ class _SalonServicePickerDialogState extends State<SalonServicePickerDialog> {
                 size: 40, color: Colors.grey.shade400),
             const SizedBox(height: 8),
             Text(
-              _tr('لا توجد خدمات', 'No services'),
+              translationService.t('no_services'),
               style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
             ),
           ],

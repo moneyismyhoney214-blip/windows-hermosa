@@ -1,474 +1,1257 @@
 {
-  "data": [
-    {
-      "id": 443684,
-      "booking_number": "#BOK-443684",
-      "daily_order_number": 1,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 3,
-      "status_display": "انتهي",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-10 00:40:09",
-      "updated_at": "00:40:12",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 304.35
-    },
-    {
-      "id": 443683,
-      "booking_number": "#BOK-443683",
-      "daily_order_number": 4,
-      "customer": {
-        "name": "ساجده المشعل",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 3,
-      "status_display": "انتهي",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-09 23:46:02",
-      "updated_at": "23:46:06",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 9.57
-    },
-    {
-      "id": 443682,
-      "booking_number": "#BOK-443682",
-      "daily_order_number": 3,
-      "customer": {
-        "name": "بنين اليوسف",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": true,
-      "created_at": "2026-05-09 21:59:40",
-      "updated_at": "21:59:40",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 217.39
-    },
-    {
-      "id": 443681,
-      "booking_number": "#BOK-443681",
-      "daily_order_number": 2,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-09 06:58:32",
-      "updated_at": "07:00:13",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 304.35
-    },
-    {
-      "id": 443680,
-      "booking_number": "#BOK-443680",
-      "daily_order_number": 1,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": true,
-      "created_at": "2026-05-09 06:57:53",
-      "updated_at": "06:57:53",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 608.7
-    },
-    {
-      "id": 443679,
-      "booking_number": "#BOK-443679",
-      "daily_order_number": 1,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 3,
-      "status_display": "انتهي",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-08 08:12:59",
-      "updated_at": "08:13:02",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 304.35
-    },
-    {
-      "id": 443661,
-      "booking_number": "#BOK-443661",
-      "daily_order_number": 8,
-      "customer": {
-        "name": "ساجده المشعل",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 3,
-      "status_display": "انتهي",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 10:21:16",
-      "updated_at": "10:21:19",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 260.87
-    },
-    {
-      "id": 443660,
-      "booking_number": "#BOK-443660",
-      "daily_order_number": 7,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 7,
-      "status_display": "مكتمل",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 03:17:12",
-      "updated_at": "07:24:33",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 2286.9700000000003
-    },
-    {
-      "id": 443659,
-      "booking_number": "#BOK-443659",
-      "daily_order_number": 6,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 03:16:41",
-      "updated_at": "03:16:41",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 608.7
-    },
-    {
-      "id": 443658,
-      "booking_number": "#BOK-443658",
-      "daily_order_number": 5,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 3,
-      "status_display": "انتهي",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 03:16:18",
-      "updated_at": "03:16:23",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 608.7
-    },
-    {
-      "id": 443657,
-      "booking_number": "#BOK-443657",
-      "daily_order_number": 4,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 03:08:45",
-      "updated_at": "03:08:45",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 608.7
-    },
-    {
-      "id": 443656,
-      "booking_number": "#BOK-443656",
-      "daily_order_number": 3,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 03:08:38",
-      "updated_at": "03:08:38",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 608.7
-    },
-    {
-      "id": 443655,
-      "booking_number": "#BOK-443655",
-      "daily_order_number": 2,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 03:07:43",
-      "updated_at": "03:07:43",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 156.52
-    },
-    {
-      "id": 443654,
-      "booking_number": "#BOK-443654",
-      "daily_order_number": 1,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": false,
-      "created_at": "2026-05-07 03:06:40",
-      "updated_at": "03:06:40",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 608.7
-    },
-    {
-      "id": 443653,
-      "booking_number": "#BOK-443653",
-      "daily_order_number": 1,
-      "customer": {
-        "name": "مريم المازني",
-        "avatar": "https://portal.hermosaapp.com/logo.png"
-      },
-      "platform": "dashboard",
-      "type": "services",
-      "type_text": "خدمات",
-      "notes": null,
-      "status": 1,
-      "status_display": "حجز مؤكد ",
-      "has_cancelled": false,
-      "book_appointment": true,
-      "created_at": "2026-05-06 21:58:29",
-      "updated_at": "21:58:29",
-      "delivery_man": {
-        "id": null,
-        "name": null,
-        "mobile": null
-      },
-      "total_price": 347.82
-    }
-  ],
-  "links": {
-    "first": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=1",
-    "last": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=7306",
-    "prev": null,
-    "next": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=2"
-  },
-  "meta": {
-    "current_page": 1,
-    "from": 1,
-    "last_page": 7306,
-    "links": [
-      {
-        "url": null,
-        "label": "&laquo; Previous",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=1",
-        "label": "1",
-        "active": true
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=2",
-        "label": "2",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=3",
-        "label": "3",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=4",
-        "label": "4",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=5",
-        "label": "5",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=6",
-        "label": "6",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=7",
-        "label": "7",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=8",
-        "label": "8",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=9",
-        "label": "9",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=10",
-        "label": "10",
-        "active": false
-      },
-      {
-        "url": null,
-        "label": "...",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=7305",
-        "label": "7305",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=7306",
-        "label": "7306",
-        "active": false
-      },
-      {
-        "url": "https://portal.hermosaapp.com/seller/branches/14/bookings?page=2",
-        "label": "Next &raquo;",
-        "active": false
-      }
-    ],
-    "path": "https://portal.hermosaapp.com/seller/branches/14/bookings",
-    "per_page": 15,
-    "to": 15,
-    "total": 109576
-  },
-  "status": 200,
   "maintenance": null,
-  "today": "2026-05-10"
+  "today": "2026-05-17",
+  "status": 200,
+  "message": "",
+  "errors": [],
+  "data": {
+    "today": "2026-05-17",
+    "collection": {
+      "current_page": 1,
+      "data": [
+        {
+          "id": 1624,
+          "name": "مكياج خطوبة",
+          "image": null,
+          "minutes_format": "1.25 ساعة",
+          "minutes": 75,
+          "price_before_offer": null,
+          "price": "350.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1625,
+          "name": "مكياج وسط",
+          "image": null,
+          "minutes_format": "1.25 ساعة",
+          "minutes": 75,
+          "price_before_offer": null,
+          "price": "250.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1626,
+          "name": "مكياج ثقيل",
+          "image": null,
+          "minutes_format": "1.25 ساعة",
+          "minutes": 75,
+          "price_before_offer": null,
+          "price": "300.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1627,
+          "name": "مكياج فرنسي",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "180.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1628,
+          "name": "مكياج اطفال",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "100.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1629,
+          "name": "كحل مع اساس",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "100.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1630,
+          "name": "كحل بدون اساس",
+          "image": null,
+          "minutes_format": "10 دقيقة",
+          "minutes": 10,
+          "price_before_offer": null,
+          "price": "25.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1631,
+          "name": "تركيب فقط بدون رموش",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "11.01 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1632,
+          "name": "رموش قطعه وحده",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "30.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1633,
+          "name": "رموش اسبوعي كتله كتله",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "115.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1634,
+          "name": "رموش اسبوعي طرفي كتله كتله",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "57.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1635,
+          "name": "رموش طرفي كلاسيك",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "100.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1636,
+          "name": "رموش شعره شعره كلاسيك",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "149.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1637,
+          "name": "مكياج ام محمد",
+          "image": null,
+          "minutes_format": "1.33 ساعة",
+          "minutes": 80,
+          "price_before_offer": null,
+          "price": "1000.01 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1638,
+          "name": "بروتين جذور",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "500.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1639,
+          "name": "بروتين 2",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "550.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1640,
+          "name": "بروتين 3",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "747.50 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1641,
+          "name": "بروتين 4",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "750.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1642,
+          "name": "بروتين 5",
+          "image": null,
+          "minutes_format": "40 دقيقة",
+          "minutes": 40,
+          "price_before_offer": null,
+          "price": "850.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1643,
+          "name": "بروتين 6",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "950.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1644,
+          "name": "بروتين 7",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "1050.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1645,
+          "name": "بروتين 8",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "1150.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1646,
+          "name": "بروتين 9",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "1250.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1647,
+          "name": "حمام زيت عادي",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "85.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1648,
+          "name": "حمام زيت للشعر المتضرر",
+          "image": null,
+          "minutes_format": "20 دقيقة",
+          "minutes": 20,
+          "price_before_offer": null,
+          "price": "149.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1649,
+          "name": "حمام زيت علاجي 8 جلسات",
+          "image": null,
+          "minutes_format": "20 دقيقة",
+          "minutes": 20,
+          "price_before_offer": null,
+          "price": "1000.01 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1650,
+          "name": "صبغ اطراف الشعر كريزي",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "230.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1651,
+          "name": "صبغ جذور الشيب بدون مواد",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "50.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1652,
+          "name": "صبغ جذور الشيب- مقدمه فقط",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "60.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1653,
+          "name": "صبغ جذور الشيب- كامل",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "170.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1654,
+          "name": "صبغ الشعر لون بدون مواد",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "149.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1655,
+          "name": "تست خصله",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "15.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1656,
+          "name": "خصل ميش للحبه",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "17.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1657,
+          "name": "صبغ شعر 1",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "200.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1658,
+          "name": "صبغ شعر 2",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "300.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1659,
+          "name": "صبغ شعر 3",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "400.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1660,
+          "name": "صبغ شعر 4",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "500.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1661,
+          "name": "صبغ شعر 5",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "600.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1662,
+          "name": "صبغ شعر 6",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "700.01 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1663,
+          "name": "صبغ شعر 7",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "800.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1664,
+          "name": "صبغ شعر 8",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "900.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1665,
+          "name": "صبغ شعر 9",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "1000.01 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1666,
+          "name": "صبغ شعر 10",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "1100.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1667,
+          "name": "صبغ بلياج 1",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "300.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1668,
+          "name": "صبغ بلياج 2",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "350.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1669,
+          "name": "صبغ بلياج 3",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "450.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1670,
+          "name": "صبغ بلياج 4",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "550.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1671,
+          "name": "صبغ بلياج 5",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "650.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1672,
+          "name": "صبغ بلياج 6",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "750.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1673,
+          "name": "صبغ بلياج 7",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "850.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1674,
+          "name": "صبغ بلياج 8",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "950.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1675,
+          "name": "صبغ بلياج 9",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "1050.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1676,
+          "name": "صبغ بلياج 10",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "1150.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1677,
+          "name": "قص اطفال لعمر 7 سنوات",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "34.99 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1678,
+          "name": "قص غره للاطفال",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "10.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1679,
+          "name": "قص شعر",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "65.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1680,
+          "name": "قص غره",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "15.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1681,
+          "name": "قص اطراف الشعر مستقيم",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "21.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1682,
+          "name": "تسريحه شعر قصير",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "130.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1683,
+          "name": "تسريحه شعر وسط",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "140.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1684,
+          "name": "تسريحه شعر طويل",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "200.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1685,
+          "name": "تسريحه شعر طويل بدون استشوار",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "200.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1686,
+          "name": "تسريحه عروس",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "700.01 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1687,
+          "name": "تسريحه خطوبه",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "350.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1688,
+          "name": "تسريحه اطفال",
+          "image": null,
+          "minutes_format": "25 دقيقة",
+          "minutes": 25,
+          "price_before_offer": null,
+          "price": "100.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1689,
+          "name": "بف مقدمه",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "50.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1690,
+          "name": "استشوار شعر قصير",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "60.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1691,
+          "name": "استشوار شعر وسط",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "85.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1692,
+          "name": "استشوار شعر طويل",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "130.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1693,
+          "name": "استشوار شعر طويل جداً",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "149.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1694,
+          "name": "استشوار شعر اطفال",
+          "image": null,
+          "minutes_format": "25 دقيقة",
+          "minutes": 25,
+          "price_before_offer": null,
+          "price": "34.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1695,
+          "name": "سيراميك شعر قصير",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "30.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1696,
+          "name": "سيراميك شعر وسط",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "40.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1697,
+          "name": "سيسراميك شعر طويل",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "50.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1698,
+          "name": "ازالة وعلاج تقصف الشعر",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "149.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1699,
+          "name": "غسيل شعر",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "10.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1700,
+          "name": "بديكير يدين",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "50.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1701,
+          "name": "منيكير قدم",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "70.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1702,
+          "name": "قص ماكينه",
+          "image": null,
+          "minutes_format": "15 دقيقة",
+          "minutes": 15,
+          "price_before_offer": null,
+          "price": "100.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1703,
+          "name": "برافين يدين",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "34.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1704,
+          "name": "برافين قدم",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "45.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1705,
+          "name": "سكراب يدين",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "10.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1706,
+          "name": "سكراب قدم",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "10.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1707,
+          "name": "لون اظافر",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "10.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1708,
+          "name": "لون اظافر فرنسي",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "30.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1709,
+          "name": "تركيب اظافر عادي",
+          "image": null,
+          "minutes_format": "20 دقيقة",
+          "minutes": 20,
+          "price_before_offer": null,
+          "price": "70.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1710,
+          "name": "مناكير او بديكير قدم للاطفال لعمر 10 سنوات",
+          "image": null,
+          "minutes_format": "10 دقيقة",
+          "minutes": 10,
+          "price_before_offer": null,
+          "price": "30.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1711,
+          "name": "تركيب اظافر جل/ اكليرك",
+          "image": null,
+          "minutes_format": "40 دقيقة",
+          "minutes": 40,
+          "price_before_offer": null,
+          "price": "350.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1712,
+          "name": "تركيب اظافر جل /اكبيرك بدون مواد",
+          "image": null,
+          "minutes_format": "40 دقيقة",
+          "minutes": 40,
+          "price_before_offer": null,
+          "price": "230.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1713,
+          "name": "جل بولش",
+          "image": null,
+          "minutes_format": "10 دقيقة",
+          "minutes": 10,
+          "price_before_offer": null,
+          "price": "50.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1714,
+          "name": "جل بولش فرنسي",
+          "image": null,
+          "minutes_format": "10 دقيقة",
+          "minutes": 10,
+          "price_before_offer": null,
+          "price": "120.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1715,
+          "name": "مساج ساعه ريلاكس",
+          "image": null,
+          "minutes_format": "1.00 ساعة",
+          "minutes": 60,
+          "price_before_offer": null,
+          "price": "200.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1716,
+          "name": "مساج بالأحجارساعه ونصف",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "250.00 ر.س",
+          "is_favourite": true,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1717,
+          "name": "مساج تايلندي",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "300.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1718,
+          "name": "مساج كمادات الاعشاب التايلنديه",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "300.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1719,
+          "name": "الرسم على الاظافر",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "5.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1720,
+          "name": "مساج الاطراف( يدين / رجلين / راس )",
+          "image": null,
+          "minutes_format": "5 دقيقة",
+          "minutes": 5,
+          "price_before_offer": null,
+          "price": "149.99 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1721,
+          "name": "حمام مغربي",
+          "image": null,
+          "minutes_format": "30 دقيقة",
+          "minutes": 30,
+          "price_before_offer": null,
+          "price": "175.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1722,
+          "name": "حمام ملكي",
+          "image": null,
+          "minutes_format": "40 دقيقة",
+          "minutes": 40,
+          "price_before_offer": null,
+          "price": "275.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        },
+        {
+          "id": 1723,
+          "name": "سكراب كامل الجسم",
+          "image": null,
+          "minutes_format": "20 دقيقة",
+          "minutes": 20,
+          "price_before_offer": null,
+          "price": "115.00 ر.س",
+          "is_favourite": false,
+          "addons_groups": [],
+          "addons": []
+        }
+      ],
+      "first_page_url": "https://portal.hermosaapp.com/seller/branches/14/bookings/create?page=1",
+      "from": 1,
+      "last_page": 3,
+      "last_page_url": "https://portal.hermosaapp.com/seller/branches/14/bookings/create?page=3",
+      "links": [
+        {
+          "url": null,
+          "label": "&laquo; Previous",
+          "active": false
+        },
+        {
+          "url": "https://portal.hermosaapp.com/seller/branches/14/bookings/create?page=1",
+          "label": "1",
+          "active": true
+        },
+        {
+          "url": "https://portal.hermosaapp.com/seller/branches/14/bookings/create?page=2",
+          "label": "2",
+          "active": false
+        },
+        {
+          "url": "https://portal.hermosaapp.com/seller/branches/14/bookings/create?page=3",
+          "label": "3",
+          "active": false
+        },
+        {
+          "url": "https://portal.hermosaapp.com/seller/branches/14/bookings/create?page=2",
+          "label": "Next &raquo;",
+          "active": false
+        }
+      ],
+      "next_page_url": "https://portal.hermosaapp.com/seller/branches/14/bookings/create?page=2",
+      "path": "https://portal.hermosaapp.com/seller/branches/14/bookings/create",
+      "per_page": 100,
+      "prev_page_url": null,
+      "to": 100,
+      "total": 286
+    },
+    "has_favourite": false,
+    "pay_later": false,
+    "customer_required": false,
+    "pos_employee_selection": true,
+    "pos_time_selection": true
+  }
 }

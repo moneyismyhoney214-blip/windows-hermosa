@@ -323,7 +323,7 @@ class _HistoryCard extends StatelessWidget {
                   icon: LucideIcons.layoutGrid,
                   label: translationService.t(
                     'waitlist_notified_to',
-                    args: {'table': entry.assignedTableNumber!},
+                    args: {'table': entry.assignedTableNumber},
                   ),
                 ),
               _chip(

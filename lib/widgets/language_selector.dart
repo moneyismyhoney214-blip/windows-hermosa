@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../services/language_service.dart';
+
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
 
 class LanguageSelector extends StatefulWidget {
   const LanguageSelector({super.key});

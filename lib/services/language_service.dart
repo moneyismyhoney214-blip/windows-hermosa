@@ -109,20 +109,36 @@ class TranslationService {
 
   /// Initialize with saved language or default
   Future<void> initialize() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedLang = prefs.getString('app_language') ?? 'ar';
+    String savedLang = 'ar';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      savedLang = prefs.getString('app_language') ?? 'ar';
+    } catch (_) {
+      // Corrupt prefs file (seen on Linux when a giant cache write was
+      // interrupted) must NOT brick the UI — fall back to Arabic so the
+      // user sees real strings instead of raw translation keys.
+    }
     await setLanguage(savedLang);
   }
 
   /// Change language
   Future<void> setLanguage(String langCode) async {
     final supportedCode = SupportedLanguages.getByCode(langCode).code;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('app_language', supportedCode);
 
+    // Populate the in-memory map first so the UI is always usable, even
+    // if the prefs write below fails.
     _currentLocale = SupportedLanguages.getByCode(supportedCode).locale;
     _translations = _buildEffectiveTranslations(supportedCode);
     ApiConstants.setAcceptLanguage(supportedCode);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('app_language', supportedCode);
+    } catch (_) {
+      // Persistence failure shouldn't break the running session — the
+      // user's choice just won't survive a restart.
+    }
+
     _notifyListeners();
   }
 

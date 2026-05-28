@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../orders_screen.dart';
 
 extension OrdersScreenDetails on _OrdersScreenState {
@@ -17,7 +17,8 @@ extension OrdersScreenDetails on _OrdersScreenState {
       return await _orderService.getRefundedMeals(
         bookingId: orderId.toString(),
       );
-    } catch (_) {
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
       return const <Map<String, dynamic>>[];
     }
   }
@@ -41,7 +42,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
       final canEdit = selectedBooking != null
           ? _canCreateInvoiceForBooking(selectedBooking)
           : false;
-      showDialog(
+      unawaited(showDialog(
         context: context,
         builder: (context) => BookingDetailsDialog(
           bookingData: enrichedDetails,
@@ -49,7 +50,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
               ? () => _showEditOrderDialog(selectedBooking!)
               : null,
         ),
-      );
+      ));
     } catch (e) {
       if (!mounted) return;
       Booking? localBooking;
@@ -110,12 +111,14 @@ extension OrdersScreenDetails on _OrdersScreenState {
               }
             }
           }
-        } catch (_) {
-          // Keep local fallback only.
+        } catch (e) {
+          Log.d('catch', 'non-fatal: $e');
         }
 
         if (!mounted) return;
         final refundedMeals = await _loadRefundedMealsForBooking(orderId);
+        // Re-check mounted: refund lookup awaited a network round-trip.
+        if (!mounted) return;
         final rawItems = invoiceItems.isNotEmpty
             ? invoiceItems
             : localBooking.meals
@@ -149,7 +152,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
             if (refundedMeals.isNotEmpty) 'refunded_meals': refundedMeals,
           },
         };
-        showDialog(
+        unawaited(showDialog(
           context: context,
           builder: (context) => BookingDetailsDialog(
             bookingData: fallbackData,
@@ -158,31 +161,15 @@ extension OrdersScreenDetails on _OrdersScreenState {
                 ? () => _showEditOrderDialog(localBooking!)
                 : null,
           ),
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _tr(
-                'تعذر تحميل التفاصيل من السيرفر، تم عرض البيانات المحلية',
-                'Server details unavailable, local data is shown instead.',
-              ),
-            ),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        ));
+        UiFeedback.warning(context, translationService.t('server_details_unavailable_local'));
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _tr(
+      UiFeedback.info(context, _tr(
               'تعذر جلب تفاصيل الطلب: $e',
               'Unable to fetch order details: $e',
-            ),
-          ),
-        ),
-      );
+            ));
     }
   }
 
@@ -190,26 +177,14 @@ extension OrdersScreenDetails on _OrdersScreenState {
     final canEditPayLater = _canCreateInvoiceForBooking(booking);
     if (!canEditPayLater) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr(
-            'التعديل مسموح فقط لطلبات الدفع لاحقاً وغير مدفوعة',
-            'Editing is allowed only for unpaid pay-later orders',
-          )),
-        ),
-      );
+      UiFeedback.info(context, translationService.t('edit_pay_later_only'));
       return;
     }
     final locked = isOrderLockedValue(booking.status) ||
         isOrderLockedValue(booking.raw['status']);
     if (locked) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('لا يمكن تعديل الطلب بعد إغلاقه',
-              'Order can no longer be edited')),
-        ),
-      );
+      UiFeedback.info(context, translationService.t('order_no_edit'));
       return;
     }
 
@@ -247,14 +222,9 @@ extension OrdersScreenDetails on _OrdersScreenState {
       if (mounted) {
         final message = ErrorHandler.toUserMessage(
           e,
-          fallback: _tr(
-            'تعذر تحميل التفاصيل من السيرفر، تم عرض البيانات المحلية',
-            'Server details unavailable, local data is shown instead.',
-          ),
+          fallback: translationService.t('server_details_unavailable_local'),
         );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        UiFeedback.info(context, message);
       }
     }
 
@@ -269,26 +239,15 @@ extension OrdersScreenDetails on _OrdersScreenState {
     );
 
     if (updated == true) {
-      // Refresh the per-booking total override FIRST. The bookings-list
-      // endpoint can lag a few hundred ms behind the detail endpoint and
-      // sometimes returns the stale grand_total even after `?create_order`,
-      // so the card would show the OLD total until the background list
-      // fetch caught up. Pulling the detail directly is one fast GET and
-      // updates the card immediately; _loadData runs after to refresh
-      // status / counts / metadata.
+      // Refresh booking total override first; bookings-list can lag the detail endpoint by 100s of ms.
       await _refreshBookingRemainingFromDetail(booking);
       if (mounted) setState(() {});
       await _loadData();
-      // Pull detail one more time after the list refresh in case the
-      // backend overwrote the row totals during processing.
+      // Pull detail again post-list-refresh in case backend overwrote row totals.
       await _refreshBookingRemainingFromDetail(booking);
       if (!mounted) return;
       setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('تم تحديث الطلب', 'Order updated')),
-        ),
-      );
+      UiFeedback.info(context, translationService.t('order_updated_msg'));
     }
   }
 
@@ -299,8 +258,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
     var payload = details['data'] is Map
         ? Map<String, dynamic>.from(details['data'] as Map)
         : Map<String, dynamic>.from(details);
-    // API nests booking data inside 'booking' key — flatten it so the dialog
-    // can find id, booking_number, daily_order_number, etc. at the top level.
+    // API nests booking data inside 'booking' — flatten so dialog finds top-level fields.
     if (payload['booking'] is Map && payload['id'] == null) {
       final inner = Map<String, dynamic>.from(payload['booking'] as Map);
       for (final e in payload.entries) {
@@ -308,7 +266,6 @@ extension OrdersScreenDetails on _OrdersScreenState {
       }
       payload = inner;
     }
-    // Ensure orderId is always present
     payload['id'] ??= orderId;
 
     String? resolveLocalized(dynamic value) {
@@ -328,12 +285,14 @@ extension OrdersScreenDetails on _OrdersScreenState {
         }
         return null;
       }
-      var s = value.toString().trim();
+      final s = value.toString().trim();
       if (s.startsWith('{') && s.contains('"ar"')) {
         try {
           final parsed = Map<String, dynamic>.from(jsonDecode(s) as Map);
           return resolveLocalized(parsed);
-        } catch (_) {}
+        } catch (e) {
+          Log.d('OrdersScreenDetails', 'localized name JSON decode failed (non-fatal): $e');
+        }
       }
       return s.isNotEmpty ? s : null;
     }
@@ -353,7 +312,6 @@ extension OrdersScreenDetails on _OrdersScreenState {
           (serviceMap != null ? resolveLocalized(serviceMap['name']) : null);
     }
 
-    // Build a lookup from booking_meals by meal_id for price enrichment
     Map<String, Map<String, dynamic>> buildPriceLookup(dynamic source) {
       if (source is! Map) return const {};
       final m = source.map((k, v) => MapEntry(k.toString(), v));
@@ -374,7 +332,6 @@ extension OrdersScreenDetails on _OrdersScreenState {
     void enrichWithPrice(Map<String, dynamic> item, Map<String, Map<String, dynamic>> priceLookup) {
       final hasPrice = item['price'] != null || item['unit_price'] != null || item['total'] != null;
       if (hasPrice) return;
-      // Try to find price from booking_meals by meal_id or id
       final mealId = (item['meal_id'] ?? item['id'])?.toString();
       if (mealId != null && priceLookup.containsKey(mealId)) {
         final src = priceLookup[mealId]!;
@@ -382,7 +339,6 @@ extension OrdersScreenDetails on _OrdersScreenState {
         item['unit_price'] ??= src['unit_price'] ?? src['price'];
         item['total'] ??= src['total'] ?? src['price'];
       }
-      // Also try nested meal object
       if (item['price'] == null && item['meal'] is Map) {
         final mealObj = (item['meal'] as Map);
         item['price'] ??= mealObj['price'];
@@ -458,13 +414,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
     );
     final hasTax = currentTax > 0;
 
-    // Salon-only fast path: the refunded-meals lookup walks `/refunds` over
-    // up to 3 pages and fetches each CN's detail to match
-    // `original_invoice_number`, which can take 1-3 seconds. For bookings
-    // that have NO refund history (`has_cancelled=false` and no
-    // `is_refunded` items in the detail), the result is guaranteed empty,
-    // so the slow walk is pure overhead. Skipping it here drops dialog
-    // open latency to ~200ms in the common case.
+    // Salon fast path: skip refunded-meals walk (slow) when no refund signals; drops dialog latency to ~200ms.
     final isSalon = ApiConstants.branchModule == 'salons';
     bool needsRefundLookup = true;
     if (isSalon) {
@@ -490,15 +440,10 @@ extension OrdersScreenDetails on _OrdersScreenState {
       needsRefundLookup = hasCancelledFlag || hasRefundedItem;
     }
 
-    // Try to extract invoice_id directly from the already-fetched payload
-    // first — the salon booking detail nests `invoice_id` at the top level
-    // (e.g. booking 443608 → invoice_id 454239). Reading it here avoids a
-    // duplicate `getBookingDetails` call inside `_resolveInvoiceIdForBooking`.
-    int? invoiceIdFromPayload = _extractInvoiceId(payload, strict: false);
+    // Extract invoice_id from already-fetched payload (salon nests it top-level) to skip a redundant call.
+    final int? invoiceIdFromPayload = _extractInvoiceId(payload, strict: false);
 
-    // Run refund lookup + invoice id resolution in parallel — neither
-    // depends on the other, and waiting for them sequentially adds an
-    // extra round-trip on every dialog open.
+    // Refund lookup + invoice id resolution in parallel.
     final results = await Future.wait<dynamic>([
       needsRefundLookup
           ? _loadRefundedMealsForBooking(orderId)
@@ -515,7 +460,8 @@ extension OrdersScreenDetails on _OrdersScreenState {
         Map<String, dynamic> invoiceDetails;
         try {
           invoiceDetails = await _orderService.getInvoice(invoiceId.toString());
-        } catch (_) {
+        } catch (e) {
+          Log.d('catch', 'non-fatal: $e');
           invoiceDetails =
               await _orderService.getInvoiceHelper(invoiceId.toString());
         }
@@ -557,7 +503,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
         if (_parseNum(invoiceSubtotalValue) > 0) {
           payload['total'] = invoiceSubtotalValue;
         } else {
-          // Calculate subtotal = grand_total - tax when sub_total is missing
+          // subtotal = grand_total - tax when sub_total missing.
           final invoiceTotal = _parseNum(
             invoiceData['grand_total'] ??
                 invoiceData['invoice_total'] ??
@@ -612,12 +558,11 @@ extension OrdersScreenDetails on _OrdersScreenState {
         payload['invoice_id'] ??=
             invoiceData['id'] ?? invoicePayloadMap['id'] ?? invoiceId;
       }
-    } catch (_) {
-      // Keep available booking payload.
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
 
-    // Pass raw items + refunded_meals separately.
-    // BookingDetailsDialog._extractMeals handles the single merge.
+    // BookingDetailsDialog._extractMeals handles the merge of items + refunded_meals.
     if (refundedMeals.isNotEmpty) {
       payload['refunded_meals'] = refundedMeals;
     }
@@ -628,10 +573,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
   Future<int?> _resolveInvoiceIdForBooking(int orderId) async {
     final bookingIdText = orderId.toString();
 
-    // Cheap path first: every booking we've already loaded into the list
-    // carries its raw API row, which (for salon) includes `invoice_id`
-    // directly. Reading it here avoids any network round-trips and side-
-    // steps the rate limit. Restaurant rows usually carry it too.
+    // Cheap path: read invoice_id from cached raw row (no network, sidesteps rate limit).
     for (final cached in _bookings) {
       if (cached.id != orderId) continue;
       final rawInvoiceId = _extractInvoiceId(
@@ -644,14 +586,7 @@ extension OrdersScreenDetails on _OrdersScreenState {
 
     final isSalon = ApiConstants.branchModule == 'salons';
 
-    // For salon: the dedicated `/seller/invoices/branches/{id}/bookings/
-    // {bookingId}` endpoint returns an empty list, and the
-    // `/seller/branches/{id}/invoices?search={bookingId}` fallback hits
-    // the rate limiter hard (422 "Too Many Attempts.") because the
-    // search query doesn't match the invoice index by booking id.
-    // Booking detail's `invoice_id` is the only reliable source — verified
-    // against booking 443608 on a.lamal salon (has_invoice=false but
-    // invoice_id=454239). Skip the cashier endpoints entirely.
+    // Salon: dedicated invoice lookup endpoints return empty/rate-limit; booking detail's invoice_id is the only reliable source.
     if (isSalon) {
       try {
         final bookingDetails =
@@ -664,22 +599,23 @@ extension OrdersScreenDetails on _OrdersScreenState {
               _extractInvoiceId(normalized, strict: false);
           if (idFromDetails != null) return idFromDetails;
         }
-      } catch (_) {}
+      } catch (e) {
+        Log.d('OrdersScreenDetails', 'getBookingDetails for invoice lookup failed (non-fatal): $e');
+      }
       return null;
     }
 
-    // Restaurant flow keeps the original three-step resolution.
-    // 1) Dedicated booking->invoice endpoint.
+    // Restaurant: three-step resolution. (1) dedicated booking→invoice endpoint.
     try {
       final invoice = await _orderService.getBookingInvoice(bookingIdText);
       _orderInvoiceRawResponse = invoice;
       final directId = _extractInvoiceId(invoice, strict: false);
       if (directId != null) return directId;
-    } catch (_) {
-      // Continue with fallbacks.
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
 
-    // 2) Booking details may include invoice_id.
+    // (2) Booking details may include invoice_id.
     try {
       final bookingDetails =
           await _orderService.getBookingDetails(bookingIdText);
@@ -689,11 +625,11 @@ extension OrdersScreenDetails on _OrdersScreenState {
         final idFromDetails = _extractInvoiceId(normalized, strict: false);
         if (idFromDetails != null) return idFromDetails;
       }
-    } catch (_) {
-      // Continue with list fallback.
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
 
-    // 3) Search invoices list and match by booking/order id.
+    // (3) Search invoices list and match by booking/order id.
     try {
       final invoicesResponse = await _orderService.getInvoices(
         page: 1,
@@ -712,8 +648,8 @@ extension OrdersScreenDetails on _OrdersScreenState {
           }
         }
       }
-    } catch (_) {
-      // Final failure handled by caller.
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
 
     return null;
@@ -797,10 +733,10 @@ extension OrdersScreenDetails on _OrdersScreenState {
       final permissiveId = parseId(payload['id']);
       if (permissiveId != null) return permissiveId;
 
-      // Fallback: data.id when response has no typical invoice fields
+      // Fallback to data.id when response has no typical invoice fields.
       if (data is Map) {
         final dataId = parseId(
-          (data as Map).map((k, v) => MapEntry(k.toString(), v))['id'],
+          (data).map((k, v) => MapEntry(k.toString(), v))['id'],
         );
         if (dataId != null) return dataId;
       }

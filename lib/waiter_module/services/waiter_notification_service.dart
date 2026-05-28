@@ -2,6 +2,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:vibration/vibration.dart';
 
+import '../../services/logger_service.dart';
+
 /// Plays the request-waiter sound and triggers a vibration pattern.
 ///
 /// Used when another waiter sends a [WaiterMessage.isCall] to this device.
@@ -67,6 +69,8 @@ class WaiterNotificationService {
   Future<void> dispose() async {
     try {
       await _player.dispose();
-    } catch (_) {}
+    } catch (e) {
+      Log.d('WaiterNotification', 'dispose audio player failed (non-fatal): $e');
+    }
   }
 }

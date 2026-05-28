@@ -1,10 +1,11 @@
-import 'package:hermosa_pos/models.dart';
-import 'package:hermosa_pos/services/api/base_client.dart';
-import 'package:hermosa_pos/services/api/api_constants.dart';
-import 'package:hermosa_pos/services/cache_service.dart';
-import 'package:hermosa_pos/services/offline/offline_database_service.dart';
-import 'package:hermosa_pos/services/offline/connectivity_service.dart';
 import 'package:hermosa_pos/locator.dart';
+import 'package:hermosa_pos/models.dart';
+import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/api/base_client.dart';
+import 'package:hermosa_pos/services/cache_service.dart';
+import 'package:hermosa_pos/services/logger_service.dart';
+import 'package:hermosa_pos/services/offline/connectivity_service.dart';
+import 'package:hermosa_pos/services/offline/offline_database_service.dart';
 
 class TableService {
   final BaseClient _client = BaseClient();
@@ -58,7 +59,11 @@ class TableService {
       if (localData.isNotEmpty) {
         return localData.map((e) => TableItem.fromJson(e)).toList();
       }
-    } catch (_) {}
+    } catch (e) {
+      // Logged so a corrupted offline DB doesn't hide behind the
+      // memory cache fallback below.
+      Log.w('tables', 'offline DB tables read failed', error: e);
+    }
     final cached = await _cache.get('tables');
     if (cached is List) {
       return cached.map((e) => TableItem.fromJson(e)).toList();
@@ -73,16 +78,13 @@ class TableService {
       final endpoint = '${ApiConstants.tablesEndpoint}/$tableId?with=category';
       final response = await _client.get(endpoint);
 
-      // If data is null, table is deactivated by administrator
-      if (response['data'] == null) {
-        return null;
+      if (response is! Map) return null;
+      final data = response['data'];
+      // If data is null, table is deactivated by administrator.
+      if (data == null) return null;
+      if (data is Map) {
+        return TableItem.fromJson(Map<String, dynamic>.from(data));
       }
-
-      // If data exists, return the table
-      if (response['data'] is Map) {
-        return TableItem.fromJson(response['data'] as Map<String, dynamic>);
-      }
-
       return null;
     } catch (e) {
       // If error occurs, try to find it in cached list

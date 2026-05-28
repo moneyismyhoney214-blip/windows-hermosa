@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 
 /// Read-only viewer for a single booking session (تذكرة مراجعة).
 ///
@@ -17,13 +18,6 @@ class SessionDetailsDialog extends StatelessWidget {
   final Map<String, dynamic> sessionData;
 
   const SessionDetailsDialog({super.key, required this.sessionData});
-
-  bool get _useArabicUi {
-    final code = translationService.currentLanguageCode.trim().toLowerCase();
-    return code.startsWith('ar') || code.startsWith('ur');
-  }
-
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   Map<String, dynamic>? _asMap(dynamic v) {
     if (v is Map) return Map<String, dynamic>.from(v);
@@ -59,7 +53,9 @@ class SessionDetailsDialog extends StatelessWidget {
       if (commaIdx > 0) {
         try {
           qrBytes = base64Decode(qrBase64.substring(commaIdx + 1));
-        } catch (_) {}
+        } catch (e) {
+          Log.d('SessionDetailsDialog', 'QR base64 decode failed (non-fatal): $e');
+        }
       }
     }
 
@@ -83,7 +79,7 @@ class SessionDetailsDialog extends StatelessWidget {
                     if (client != null)
                       _buildPartyCard(
                         context,
-                        title: _tr('العميل', 'Client'),
+                        title: translationService.t('client'),
                         name: client['name']?.toString() ?? '',
                         mobile: client['mobile']?.toString() ?? '',
                       ),
@@ -91,14 +87,14 @@ class SessionDetailsDialog extends StatelessWidget {
                       const SizedBox(height: 8),
                       _buildPartyCard(
                         context,
-                        title: _tr('الكاشير', 'Cashier'),
+                        title: translationService.t('cashier'),
                         name: cashier['fullname']?.toString() ?? '',
                         mobile: cashier['mobile']?.toString() ?? '',
                       ),
                     ],
                     const SizedBox(height: 16),
                     Text(
-                      _tr('الخدمات', 'Items'),
+                      translationService.t('items'),
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         color: context.appText,
@@ -146,7 +142,7 @@ class SessionDetailsDialog extends StatelessWidget {
           Expanded(
             child: Text(
               invoiceNumber.isEmpty
-                  ? _tr('تذكرة مراجعة', 'Review Ticket')
+                  ? translationService.t('review_ticket')
                   : invoiceNumber,
               style: TextStyle(
                 fontSize: 18,
@@ -281,7 +277,7 @@ class SessionDetailsDialog extends StatelessWidget {
           ElevatedButton.icon(
             onPressed: () => Navigator.pop(context),
             icon: const Icon(LucideIcons.check, size: 16),
-            label: Text(_tr('إغلاق', 'Close')),
+            label: Text(translationService.t('close')),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFF58220),
               foregroundColor: Colors.white,

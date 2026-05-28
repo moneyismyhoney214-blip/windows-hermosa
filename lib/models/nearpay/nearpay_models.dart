@@ -1,5 +1,6 @@
 /// NearPay Terminal SDK Models
 /// Converted from Kotlin to Dart
+library;
 
 /// Transaction Status
 enum NearPayStatus { approved, declined }

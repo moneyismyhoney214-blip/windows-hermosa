@@ -1,14 +1,17 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../services/language_service.dart';
+
+import '../locator.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/salon_employee_service.dart';
-import '../locator.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../utils/ui_feedback.dart';
 
 /// Dialog for selecting employee, date, time, and quantity when adding a salon
 /// service to a booking cart.
@@ -50,6 +53,7 @@ class SalonServiceSelectionDialog extends StatefulWidget {
   final TimeOfDay? initialTime;
   final int? initialQuantity;
   final double? initialPrice;
+  final int? initialSessionNumbers;
 
   const SalonServiceSelectionDialog({
     super.key,
@@ -61,6 +65,7 @@ class SalonServiceSelectionDialog extends StatefulWidget {
     this.initialTime,
     this.initialQuantity,
     this.initialPrice,
+    this.initialSessionNumbers,
   });
 
   /// Convenience launcher. Shows the dialog and returns the booking-item map
@@ -75,6 +80,7 @@ class SalonServiceSelectionDialog extends StatefulWidget {
     TimeOfDay? initialTime,
     int? initialQuantity,
     double? initialPrice,
+    int? initialSessionNumbers,
   }) {
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -88,6 +94,7 @@ class SalonServiceSelectionDialog extends StatefulWidget {
         initialTime: initialTime,
         initialQuantity: initialQuantity,
         initialPrice: initialPrice,
+        initialSessionNumbers: initialSessionNumbers,
       ),
     );
   }
@@ -99,23 +106,19 @@ class SalonServiceSelectionDialog extends StatefulWidget {
 
 class _SalonServiceSelectionDialogState
     extends State<SalonServiceSelectionDialog> {
-  // ───────── brand palette (matches existing dialogs) ─────────
   static const _brand = Color(0xFFF58220);
   static const _brandLight = Color(0xFFFFF7ED);
 
-  // ───────── state ─────────
   Map<String, dynamic>? _selectedEmployee;
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
-  // Salon services are not multiplied — booking the same service N times is
-  // not a real workflow (sessions/review-tickets are tracked separately, not
-  // by quantity). The +/- selector was removed; we still send quantity=1 in
-  // the payload so the backend's `card[*][quantity]` contract stays valid.
+  // Quantity always 1; sessions/review-tickets track repeats, not qty.
   static const int _quantity = 1;
   late TextEditingController _priceController;
   bool _priceEdited = false;
+  // Redeemable sessions count for this service (`card[*][session_numbers]`).
+  int _sessionNumbers = 0;
 
-  // Parsed service fields
   late final int _serviceId;
   late final String _serviceName;
   late final double _originalPrice;
@@ -125,12 +128,11 @@ class _SalonServiceSelectionDialogState
   late final List<dynamic> _addonsGroups;
   late final List<dynamic> _addons;
 
-  // Available times from API
   List<Map<String, dynamic>> _availableTimes = [];
   String? _selectedTimeSlot;
   bool _isLoadingTimes = false;
 
-  // Addon selection: addonId -> quantity
+  // addonId -> quantity
   final Map<String, int> _selectedAddonQuantities = {};
 
   bool get _useArabicUi {
@@ -138,9 +140,6 @@ class _SalonServiceSelectionDialogState
     return code.startsWith('ar') || code.startsWith('ur');
   }
 
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
-
-  // ───────── lifecycle ─────────
   @override
   void initState() {
     super.initState();
@@ -161,8 +160,8 @@ class _SalonServiceSelectionDialogState
         text: priceSeed.toStringAsFixed(ApiConstants.digitsNumber));
     _priceEdited = widget.initialPrice != null &&
         (widget.initialPrice! - _originalPrice).abs() > 0.001;
+    _sessionNumbers = widget.initialSessionNumbers ?? 0;
 
-    // Pre-select the matching employee when editing; otherwise the first.
     if (widget.employees.isNotEmpty) {
       Map<String, dynamic>? match;
       if (widget.initialEmployeeId != null) {
@@ -175,9 +174,7 @@ class _SalonServiceSelectionDialogState
         }
       }
       _selectedEmployee = match ?? widget.employees.first;
-      // Each fresh open of the dialog must hit the network: stale slot cache
-      // was making employees appear unavailable after another booking
-      // happened in the same 2-min TTL window.
+      // Force-refresh every open: 2-min slot cache was leaking stale availability.
       _fetchAvailableTimes(
         preselectTime: widget.initialTime,
         forceRefresh: true,
@@ -191,7 +188,6 @@ class _SalonServiceSelectionDialogState
     super.dispose();
   }
 
-  // ───────── helpers ─────────
   static int _parseInt(dynamic v) {
     if (v is int) return v;
     if (v is double) return v.toInt();
@@ -202,9 +198,8 @@ class _SalonServiceSelectionDialogState
     if (v is double) return v;
     if (v is int) return v.toDouble();
     if (v is String) {
-      // Strip currency symbols/arabic text, keep numbers and dots
       var cleaned = v.replaceAll(RegExp(r'[^\d.\-]'), '');
-      // Handle multiple dots (e.g. "700.01 ر.س" → "700.01." after strip)
+      // Collapse multiple dots after currency strip (e.g. "700.01 ر.س" → "700.01.").
       final dotIndex = cleaned.indexOf('.');
       if (dotIndex >= 0) {
         cleaned = cleaned.substring(0, dotIndex + 1) +
@@ -296,7 +291,6 @@ class _SalonServiceSelectionDialogState
     return merged.values.toList();
   }
 
-  // ───────── addon selection ─────────
   void _toggleAddon(String id) {
     setState(() {
       if (_selectedAddonQuantities.containsKey(id)) {
@@ -323,7 +317,6 @@ class _SalonServiceSelectionDialogState
     });
   }
 
-  // ───────── actions ─────────
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -334,7 +327,7 @@ class _SalonServiceSelectionDialogState
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
+            colorScheme: const ColorScheme.light(
               primary: _brand,
               onPrimary: Colors.white,
               surface: Colors.white,
@@ -347,7 +340,7 @@ class _SalonServiceSelectionDialogState
     );
     if (picked != null) {
       setState(() => _selectedDate = picked);
-      _fetchAvailableTimes(forceRefresh: true);
+      unawaited(_fetchAvailableTimes(forceRefresh: true));
     }
   }
 
@@ -377,9 +370,7 @@ class _SalonServiceSelectionDialogState
         _isLoadingTimes = false;
         if (times.isEmpty) return;
 
-        // When editing, snap onto the existing booking's slot if it's still
-        // available so the user sees their current selection rather than the
-        // first slot of the day.
+        // When editing, snap onto the booking's existing slot if still available.
         String? matched;
         if (preselectTime != null) {
           final wanted =
@@ -411,7 +402,6 @@ class _SalonServiceSelectionDialogState
   }
 
   Future<void> _pickTime() async {
-    // If available times loaded, don't open native picker - use dropdown instead
     if (_availableTimes.isNotEmpty) return;
     final picked = await showTimePicker(
       context: context,
@@ -419,7 +409,7 @@ class _SalonServiceSelectionDialogState
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
+            colorScheme: const ColorScheme.light(
               primary: _brand,
               onPrimary: Colors.white,
               surface: Colors.white,
@@ -440,11 +430,9 @@ class _SalonServiceSelectionDialogState
 
   void _onConfirm() {
     if (_selectedEmployee == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('يرجى اختيار الموظف', 'Please select an employee')),
-          backgroundColor: Colors.red.shade600,
-        ),
+      UiFeedback.error(
+        context,
+        translationService.t('please_select_employee'),
       );
       return;
     }
@@ -462,14 +450,13 @@ class _SalonServiceSelectionDialogState
       'employee_id': _parseInt(_selectedEmployee!['id']),
       'date': dateStr,
       'time': timeStr,
-      'session_numbers': 0,
+      'session_numbers': _sessionNumbers,
       'quantity': _quantity,
       'price': _currentPrice * _quantity,
       'unitPrice': _currentPrice,
       'modified_unit_price': _modifiedUnitPrice,
     };
 
-    // Attach selected addons if any
     if (_selectedAddonQuantities.isNotEmpty) {
       final selectedAddons = <Map<String, dynamic>>[];
       for (final entry in _selectedAddonQuantities.entries) {
@@ -490,9 +477,6 @@ class _SalonServiceSelectionDialogState
     Navigator.pop(context, result);
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  BUILD
-  // ══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
@@ -524,7 +508,6 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ─────────────────────── HEADER ───────────────────────
   Widget _header() {
     return Container(
       height: 48,
@@ -573,7 +556,6 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ─────────────────────── WIDE BODY (tablet) ───────────────────────
   Widget _wideBody() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -585,7 +567,6 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ─────────────────────── NARROW BODY (phone) ───────────────────────
   Widget _narrowBody() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
@@ -600,13 +581,14 @@ class _SalonServiceSelectionDialogState
           const SizedBox(height: 14),
           _priceField(),
           const SizedBox(height: 14),
+          _sessionsStepper(),
+          const SizedBox(height: 14),
           ..._addonWidgets(),
         ],
       ),
     );
   }
 
-  // ─────────────────────── LEFT COLUMN ───────────────────────
   Widget _leftColumn() {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
@@ -616,7 +598,7 @@ class _SalonServiceSelectionDialogState
           _serviceInfoCard(),
           const SizedBox(height: 18),
           Text(
-            _tr('الموظف', 'Employee'),
+            translationService.t('employee'),
             style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
@@ -626,7 +608,7 @@ class _SalonServiceSelectionDialogState
           _employeeDropdown(),
           const SizedBox(height: 18),
           Text(
-            _tr('التاريخ والوقت', 'Date & Time'),
+            translationService.t('date_and_time'),
             style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
@@ -636,7 +618,7 @@ class _SalonServiceSelectionDialogState
           _dateTimeRow(),
           const SizedBox(height: 18),
           Text(
-            _tr('السعر', 'Price'),
+            translationService.t('price'),
             style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
@@ -644,12 +626,21 @@ class _SalonServiceSelectionDialogState
           ),
           const SizedBox(height: 8),
           _priceField(),
+          const SizedBox(height: 18),
+          Text(
+            translationService.t('sessions_label'),
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: context.appText),
+          ),
+          const SizedBox(height: 8),
+          _sessionsStepper(),
         ],
       ),
     );
   }
 
-  // ─────────────────────── RIGHT COLUMN ───────────────────────
   Widget _rightColumn() {
     final addons = _addonWidgets();
     if (addons.isEmpty) {
@@ -661,7 +652,7 @@ class _SalonServiceSelectionDialogState
                 size: 48, color: context.appTextSubtle),
             const SizedBox(height: 12),
             Text(
-              _tr('لا توجد إضافات', 'No add-ons available'),
+              translationService.t('no_addons_available'),
               style: TextStyle(fontSize: 14, color: context.appTextMuted),
             ),
           ],
@@ -677,9 +668,6 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ═══════════════════ COMPONENTS ═══════════════════
-
-  // ── Service info card with image, name, price, duration ──
   Widget _serviceInfoCard() {
     final img = _image;
     final hasImg = img != null && img.isNotEmpty;
@@ -692,7 +680,6 @@ class _SalonServiceSelectionDialogState
       ),
       child: Row(
         children: [
-          // Image / initials
           Container(
             width: 72,
             height: 72,
@@ -797,7 +784,6 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ── Employee dropdown ──
   Widget _employeeDropdown() {
     return Container(
       decoration: BoxDecoration(
@@ -812,7 +798,7 @@ class _SalonServiceSelectionDialogState
           isExpanded: true,
           dropdownColor: context.appCardBg,
           hint: Text(
-            _tr('اختر الموظف', 'Select employee'),
+            translationService.t('select_employee_label'),
             style: TextStyle(color: context.appTextSubtle, fontSize: 14),
           ),
           icon: Icon(LucideIcons.chevronDown,
@@ -835,20 +821,17 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ── Date and Time pickers row ──
   Widget _dateTimeRow() {
     final dateText = DateFormat('yyyy-MM-dd').format(_selectedDate);
 
     return Column(
       children: [
-        // Date picker
         _pickerTile(
           icon: LucideIcons.calendar,
           label: dateText,
           onTap: _pickDate,
         ),
         const SizedBox(height: 10),
-        // Time: dropdown of available slots (or manual picker fallback)
         _buildTimeSelector(),
       ],
     );
@@ -888,7 +871,7 @@ class _SalonServiceSelectionDialogState
             dropdownColor: context.appCardBg,
             icon: const Icon(LucideIcons.clock, size: 18, color: _brand),
             hint: Text(
-              _tr('اختر الوقت', 'Select time'),
+              translationService.t('select_time'),
               style: TextStyle(color: context.appTextSubtle, fontSize: 14),
             ),
             items: _availableTimes.map((t) {
@@ -911,7 +894,6 @@ class _SalonServiceSelectionDialogState
       );
     }
 
-    // Fallback: manual time picker
     final timeText =
         '${_selectedTime.hour.toString().padLeft(2, '0')}:${_selectedTime.minute.toString().padLeft(2, '0')}';
     return _pickerTile(
@@ -958,7 +940,6 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ── Price field (editable) ──
   Widget _priceField() {
     return TextField(
       controller: _priceController,
@@ -992,7 +973,69 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ── Addon sections ──
+  Widget _sessionsStepper() {
+    Widget btn(IconData icon, VoidCallback? onTap) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: onTap == null
+                ? context.appCardBg.withValues(alpha: 0.5)
+                : _brandLight,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: context.appBorder),
+          ),
+          child: Icon(icon,
+              size: 18,
+              color: onTap == null ? context.appTextSubtle : _brand),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: context.appCardBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: context.appBorder),
+      ),
+      child: Row(
+        children: [
+          const Icon(LucideIcons.repeat, size: 18, color: _brand),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              translationService.t('sessions_label'),
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: context.appText),
+            ),
+          ),
+          btn(LucideIcons.minus,
+              _sessionNumbers > 0
+                  ? () => setState(() => _sessionNumbers--)
+                  : null),
+          Container(
+            width: 44,
+            alignment: Alignment.center,
+            child: Text(
+              '$_sessionNumbers',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: context.appText),
+            ),
+          ),
+          btn(LucideIcons.plus, () => setState(() => _sessionNumbers++)),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _addonWidgets() {
     final allAddons = _allAddons;
     if (allAddons.isEmpty) return [];
@@ -1001,7 +1044,7 @@ class _SalonServiceSelectionDialogState
     widgets.add(Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
-        _tr('الإضافات', 'Add-ons'),
+        translationService.t('addons_word'),
         style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
@@ -1009,7 +1052,6 @@ class _SalonServiceSelectionDialogState
       ),
     ));
 
-    // If we have grouped addons, show by group
     if (_addonsGroups.isNotEmpty) {
       for (final group in _addonsGroups) {
         if (group is! Map<String, dynamic>) continue;
@@ -1041,7 +1083,6 @@ class _SalonServiceSelectionDialogState
       }
     }
 
-    // Flat addons list (not in groups)
     if (_addons.isNotEmpty) {
       final flatAddons = _addons
           .whereType<Map<String, dynamic>>()
@@ -1076,11 +1117,7 @@ class _SalonServiceSelectionDialogState
         itemBuilder: (_, i) {
           final addon = addons[i];
           final id = addon['id']?.toString() ?? '';
-          // PERF: RepaintBoundary + stable ValueKey per addon card. Parent
-          // setState on any addon change still rebuilds the grid, but each
-          // card becomes its own repaint region so unrelated cards are not
-          // repainted on every toggle. Framework compares keys to reuse
-          // element slots, eliminating layout/paint for untouched cards.
+          // PERF: RepaintBoundary + ValueKey isolates repaints to the toggled card.
           return RepaintBoundary(
             key: ValueKey('addon_$id'),
             child: _addonCard(addon),
@@ -1111,7 +1148,6 @@ class _SalonServiceSelectionDialogState
         ),
         child: Column(
           children: [
-            // Image area
             Expanded(
               flex: 6,
               child: Container(
@@ -1137,7 +1173,6 @@ class _SalonServiceSelectionDialogState
                 ),
               ),
             ),
-            // Text area
             Expanded(
               flex: 4,
               child: Padding(
@@ -1205,7 +1240,6 @@ class _SalonServiceSelectionDialogState
     );
   }
 
-  // ─────────────────────── FOOTER ───────────────────────
   Widget _footer() {
     return Container(
       width: double.infinity,
@@ -1214,7 +1248,6 @@ class _SalonServiceSelectionDialogState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Total summary
           if (_addonsTotal > 0 || _quantity > 1)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -1222,7 +1255,7 @@ class _SalonServiceSelectionDialogState
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    _tr('الإجمالي', 'Total'),
+                    translationService.t('total'),
                     style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -1238,7 +1271,6 @@ class _SalonServiceSelectionDialogState
                 ],
               ),
             ),
-          // Add button
           SizedBox(
             width: double.infinity,
             height: 48,
@@ -1252,7 +1284,7 @@ class _SalonServiceSelectionDialogState
                 elevation: 0,
               ),
               child: Text(
-                _tr('إضافة للحجز', 'Add to Booking'),
+                translationService.t('add_to_cart_btn'),
                 style:
                     const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
               ),

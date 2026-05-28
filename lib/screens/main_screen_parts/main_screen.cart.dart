@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenCart on _MainScreenState {
@@ -57,7 +57,6 @@ extension MainScreenCart on _MainScreenState {
       }
     }
 
-    // Fallback used when booking settings options are missing from backend.
     return 'restaurant_internal';
   }
 
@@ -85,19 +84,13 @@ extension MainScreenCart on _MainScreenState {
       return value;
     }
 
-    // Fallback used when booking settings options are missing from backend.
     return 'services';
   }
 
   String _normalizeOrderTypeValue(String value) =>
       ReceiptBuilderService.normalizeOrderTypeValue(value);
 
-  /// If the active menu list is a known delivery provider
-  /// (HungerStation, Talabat, Jahez), return a canonical order-type code
-  /// like `hungerstation_delivery` / `hungerstation_pickup` based on
-  /// `_menuListPriceType`. Returns null if no known provider matches.
-  /// Logic lives in [ReceiptBuilderService] so the waiter module stays
-  /// byte-identical.
+  /// Canonical delivery provider order-type code (HungerStation/Talabat/Jahez), or null.
   String? _resolveDeliveryProviderTypeCode() =>
       ReceiptBuilderService.resolveDeliveryProviderTypeCode(
         isMenuListActive: _isMenuListActive,
@@ -106,10 +99,7 @@ extension MainScreenCart on _MainScreenState {
       );
 
   String _resolveOrderTypeForBooking(TableItem? selectedTable) {
-    // Use the selected type as-is – the dropdown already holds the exact
-    // value the backend expects.  Do NOT run _normalizeOrderTypeValue here
-    // because it can map e.g. 'cars' → 'restaurant_parking' which the API
-    // rejects with 422.
+    // Use selected type as-is; normalize would map e.g. 'cars'→'restaurant_parking' which 422s.
     final selectedType = _selectedOrderType.trim();
     if (selectedTable == null) {
       if (_isTableOrderType(selectedType)) return _preferredNonTableOrderType();
@@ -122,7 +112,6 @@ extension MainScreenCart on _MainScreenState {
 
   double get _grossOrderTotal {
     if (_isOrderFree) return 0.0;
-    // Quick cache check: recompute only when cart changes
     final cartHash = Object.hashAll([
       _cart.length,
       for (final item in _cart) ...[item.quantity, item.totalPrice],
@@ -135,9 +124,7 @@ extension MainScreenCart on _MainScreenState {
       0,
       (sum, item) => sum + item.totalPrice,
     );
-    // Salon services are configured tax-inclusive on the backend, so the
-    // cart price already contains the VAT — adding it again would inflate
-    // the grand total (e.g. a 350 SAR service displayed as 402.50).
+    // Salon services are tax-inclusive on backend; don't re-add VAT.
     if (_isSalonMode) {
       _cachedGrossOrderTotal = cartSum;
     } else {
@@ -156,13 +143,12 @@ extension MainScreenCart on _MainScreenState {
     required bool clearCartOnSuccess,
     required bool isNearPayCardFlow,
   }) {
-    print(
-      '🧾 [PAY] queue pending type=$type showLoading=$showLoadingOverlay showSuccess=$showSuccessDialog clearCart=$clearCartOnSuccess nearPay=$isNearPayCardFlow',
-    );
+    Log.d('pay',
+        'queue pending type=$type showLoading=$showLoadingOverlay '
+        'showSuccess=$showSuccessDialog clearCart=$clearCartOnSuccess '
+        'nearPay=$isNearPayCardFlow');
     _pendingPaymentTypeAfterTableSelection = type;
-    _pendingPaymentPaysAfterTableSelection = pays == null
-        ? null
-        : pays.map((p) => Map<String, dynamic>.from(p)).toList(growable: false);
+    _pendingPaymentPaysAfterTableSelection = pays?.map((p) => Map<String, dynamic>.from(p)).toList(growable: false);
     _pendingPaymentShowLoadingAfterTableSelection = showLoadingOverlay;
     _pendingPaymentShowSuccessAfterTableSelection = showSuccessDialog;
     _pendingPaymentClearCartAfterTableSelection = clearCartOnSuccess;
@@ -171,9 +157,8 @@ extension MainScreenCart on _MainScreenState {
 
   void _clearPendingPaymentAfterTableSelection() {
     if (_pendingPaymentTypeAfterTableSelection != null) {
-      print(
-        '🧾 [PAY] clear pending type=$_pendingPaymentTypeAfterTableSelection',
-      );
+      Log.d('pay',
+          'clear pending type=$_pendingPaymentTypeAfterTableSelection');
     }
     _pendingPaymentTypeAfterTableSelection = null;
     _pendingPaymentPaysAfterTableSelection = null;
@@ -185,11 +170,8 @@ extension MainScreenCart on _MainScreenState {
 
   double _resolveEffectiveDiscountAmount(double grossTotal) {
     if (grossTotal <= 0) return 0.0;
-
-    // Free order = 100% discount
     if (_isOrderFree) return grossTotal;
 
-    // Start with manual discount (خصم إضافي)
     double discount;
     if (_orderDiscountType == DiscountType.percentage && _orderDiscount > 0) {
       discount = grossTotal * (_orderDiscount / 100);
@@ -197,7 +179,7 @@ extension MainScreenCart on _MainScreenState {
       discount = _orderDiscount;
     }
 
-    // ADD promo code discount on top (not replace)
+    // Promo code adds on top of manual discount, not replaces.
     if (_activePromoCode != null) {
       double promoDiscount;
       if (_activePromoCode!.type == DiscountType.percentage) {
@@ -222,9 +204,7 @@ extension MainScreenCart on _MainScreenState {
   }
 
   void _onProductTap(Product product) async {
-    // ── Salon mode ──
     if (_isSalonMode) {
-      // ── Package Services mode ──
       if (_salonServiceType == 'packageServices') {
         final packageData = _findSalonPackageById(product.id);
         if (packageData == null) {
@@ -241,9 +221,9 @@ extension MainScreenCart on _MainScreenState {
 
         if (results != null && results.isNotEmpty && mounted) {
           if (getIt.isRegistered<CashierSoundService>()) {
-            getIt<CashierSoundService>().playButtonSound();
+            unawaited(getIt<CashierSoundService>().playButtonSound());
           }
-          HapticFeedback.lightImpact();
+          unawaited(HapticFeedback.lightImpact());
           setState(() {
             for (final result in results) {
               final unitPrice = (result['unitPrice'] is num)
@@ -287,14 +267,13 @@ extension MainScreenCart on _MainScreenState {
         return;
       }
 
-      // ── Regular Services mode ──
       final serviceData = _findSalonServiceById(product.id);
       if (serviceData == null) {
         _addToCartWithExtras(product, const [], 1.0, '');
         return;
       }
 
-      // Get employees assigned to this specific service (fallback to all)
+      // Employees assigned to this service, fallback to all.
       final serviceId = int.tryParse(product.id) ?? 0;
       final serviceEmployees = _serviceEmployeeMap[serviceId];
       final employeesForDialog =
@@ -310,7 +289,6 @@ extension MainScreenCart on _MainScreenState {
       );
 
       if (result != null && mounted) {
-        // Convert dialog result to a CartItem via Product + extras
         final unitPrice = (result['unitPrice'] is num)
             ? (result['unitPrice'] as num).toDouble()
             : product.price;
@@ -327,7 +305,6 @@ extension MainScreenCart on _MainScreenState {
           image: product.image,
         );
 
-        // Build extras from addons if present
         final List<Extra> extras = [];
         if (result['addons'] is List) {
           for (final addon in result['addons'] as List) {
@@ -343,7 +320,6 @@ extension MainScreenCart on _MainScreenState {
           }
         }
 
-        // Build notes with employee + date/time info
         final employeeName = result['employee_name']?.toString() ?? '';
         final date = result['date']?.toString() ?? '';
         final time = result['time']?.toString() ?? '';
@@ -353,11 +329,11 @@ extension MainScreenCart on _MainScreenState {
           if (time.isNotEmpty) time,
         ].join(' | ');
 
-        // For salon: add directly (no merging) and attach salonData
+        // Salon: add directly (no merging) and attach salonData.
         if (getIt.isRegistered<CashierSoundService>()) {
-          getIt<CashierSoundService>().playButtonSound();
+          unawaited(getIt<CashierSoundService>().playButtonSound());
         }
-        HapticFeedback.lightImpact();
+        unawaited(HapticFeedback.lightImpact());
         setState(() {
           _cart.add(
             CartItem(
@@ -375,20 +351,12 @@ extension MainScreenCart on _MainScreenState {
       return;
     }
 
-    // ── Restaurant mode: existing product tap logic ──
     if (await _handleDisabledMealTap(product)) {
       return;
     }
     if (!mounted) return;
 
-    // Decide whether to open the customization dialog. The old logic only
-    // checked `product.extras` (the inline menu field) and missed meals
-    // whose add-ons live on the separate `meal_addons` endpoint, hiding
-    // them from the cashier. Now we also consult a cached presence check:
-    //   • inline extras present  → open dialog immediately.
-    //   • inline extras empty    → ask ProductService (cached per-meal).
-    //     - addons exist         → open dialog.
-    //     - no addons anywhere   → drop straight into cart (no friction).
+    // Open customization dialog when inline extras OR meal_addons exist.
     if (product.extras.isNotEmpty) {
       _openCustomizationDialog(product);
       return;
@@ -432,11 +400,10 @@ extension MainScreenCart on _MainScreenState {
     }
     HapticFeedback.lightImpact();
     setState(() {
-      // Check if the same product with same extras and notes already exists
+      // Merge if same product + extras + notes already in cart.
       final existingIndex = _cart.indexWhere((cartItem) {
         if (cartItem.product.id != product.id) return false;
         if (cartItem.notes != notes) return false;
-        // Compare extras by IDs
         final existingIds = cartItem.selectedExtras.map((e) => e.id).toList()..sort();
         final newIds = extras.map((e) => e.id).toList()..sort();
         if (existingIds.length != newIds.length) return false;
@@ -471,10 +438,7 @@ extension MainScreenCart on _MainScreenState {
     _mealAvailabilityService.applyKdsRealtimeUpdate(payload);
 
     if (mounted && mealName != null && mealName.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isDisabled
+      UiFeedback.info(context, isDisabled
                 ? _trUi(
                     'الوجبة "$mealName" أصبحت: نفذت',
                     'Meal "$mealName" is now sold out',
@@ -482,16 +446,9 @@ extension MainScreenCart on _MainScreenState {
                 : _trUi(
                     'تمت إعادة تفعيل الوجبة "$mealName"',
                     'Meal "$mealName" is available again',
-                  ),
-          ),
-          backgroundColor:
-              isDisabled ? const Color(0xFFB91C1C) : const Color(0xFF166534),
-          duration: const Duration(seconds: 2),
-        ),
-      );
+                  ));
     }
 
-    // Rebuild to reflect meal availability change in product grid
     if (mounted) setState(() {});
   }
 
@@ -502,7 +459,7 @@ extension MainScreenCart on _MainScreenState {
       return false;
     }
 
-    HapticFeedback.heavyImpact();
+    unawaited(HapticFeedback.heavyImpact());
     final alternatives = _mealAvailabilityService.suggestAlternatives(
       product,
       _filteredProducts,
@@ -557,16 +514,25 @@ extension MainScreenCart on _MainScreenState {
             child: Text(translationService.t('close')),
           ),
           ElevatedButton.icon(
-            onPressed: () async {
-              await _mealAvailabilityService.refreshFromApi(force: true);
-              if (!context.mounted) return;
+            onPressed: () {
+              _mealAvailabilityService.markMealAvailable(
+                product.id,
+                mealName: product.name,
+              );
+              _displayAppService.notifyMealAvailabilityChange(
+                mealId: product.id,
+                mealName: product.name,
+                categoryName: product.category,
+                isDisabled: false,
+              );
               Navigator.pop(context);
-              if (!_mealAvailabilityService.isMealDisabled(product.id)) {
-                _onProductTap(product);
-              }
             },
-            icon: const Icon(Icons.refresh),
-            label: Text(translationService.t('retry')),
+            icon: const Icon(Icons.power_settings_new),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF10B981),
+              foregroundColor: Colors.white,
+            ),
+            label: Text(translationService.t('activate_meal')),
           ),
         ],
       ),
@@ -612,14 +578,12 @@ extension MainScreenCart on _MainScreenState {
       _activePromoCode = null;
       _isOrderFree = false;
       _carNumberController.clear();
-      // Deposits are applied per-invoice — drop the selection when the cart
-      // is cleared so the next booking starts fresh.
+      // Deposits are per-invoice; clear on cart-clear so next booking starts fresh.
       if (_isSalonMode) {
         _selectedDepositId = null;
       }
     });
-    // Refetch the customer's deposits so a just-consumed one drops off the
-    // picker on the next booking.
+    // Refetch deposits so a just-consumed one drops off the picker.
     if (_isSalonMode && _selectedCustomer != null) {
       _loadCustomerDeposits(_selectedCustomer!.id);
     }
@@ -642,16 +606,20 @@ extension MainScreenCart on _MainScreenState {
   Future<bool> _syncTableReservationForOrder(
     TableItem table, {
     required bool reserved,
+    bool mirrorToMesh = true,
+    String? bookingId,
+    double? total,
+    int? itemCount,
   }) async {
+    bool ok;
     try {
       await _tableService.updateTable(
         table.id,
         _buildTableReservationPayload(table, reserved: reserved),
       );
-      print(
-        '✅ table reservation synced table=${table.id} reserved=$reserved',
-      );
-      return true;
+      Log.d('table',
+          'reservation synced table=${table.id} reserved=$reserved');
+      ok = true;
     } catch (e) {
       try {
         final latest = await _tableService.getTableDetails(table.id);
@@ -660,17 +628,32 @@ extension MainScreenCart on _MainScreenState {
           table.id,
           _buildTableReservationPayload(payloadSource, reserved: reserved),
         );
-        print(
-          '✅ table reservation synced on retry table=${table.id} reserved=$reserved',
-        );
-        return true;
+        Log.d('table',
+            'reservation synced on retry table=${table.id} reserved=$reserved');
+        ok = true;
       } catch (retryError) {
-        print(
-          '⚠️ table reservation sync failed table=${table.id} reserved=$reserved error=$e retry=$retryError',
-        );
-        return false;
+        Log.w('table',
+            'reservation sync failed table=${table.id} reserved=$reserved',
+            error: retryError);
+        ok = false;
       }
     }
+    // Mirror into the waiter mesh; best-effort so mesh hiccups can't fail payment.
+    if (mirrorToMesh) {
+      try {
+        getIt<CashierMeshBootstrap>().broadcastCashierTableState(
+          tableId: table.id,
+          tableNumber: table.number,
+          reserved: reserved,
+          bookingId: reserved ? bookingId : null,
+          total: reserved ? total : null,
+          itemCount: reserved ? itemCount : null,
+        );
+      } catch (e) {
+        Log.d('MainScreenCart', 'broadcast cashier table state to mesh failed (non-fatal): $e');
+      }
+    }
+    return ok;
   }
 
   void _syncDisplayCartFromMain() {
@@ -693,8 +676,7 @@ extension MainScreenCart on _MainScreenState {
     final cashFloatSnapshot = _buildCashFloatSnapshot();
     final cartSum =
         _cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
-    // Salon prices are tax-inclusive — derive the pre-tax subtotal/tax from
-    // the inclusive total instead of adding VAT on top.
+    // Salon prices are tax-inclusive — derive pre-tax subtotal/tax instead of adding VAT.
     final double subtotal;
     final double tax;
     if (_isSalonMode) {
@@ -750,11 +732,7 @@ extension MainScreenCart on _MainScreenState {
     final payload = {
       'items': _cart
           .map((item) {
-                // Merge every known translation for this meal so the CDS can
-                // resolve the receipt-primary / secondary language without
-                // guessing. Priority: product.localizedNames → cashier-side
-                // cache of per-language API fetches → the active `name` as a
-                // last-resort for the cashier's own language.
+                // Merge translations for CDS language resolution (product → cache → active name).
                 final merged = <String, String>{
                   ...item.product.localizedNames,
                   ...ProductService.cachedNamesFor(item.product.id),
@@ -768,6 +746,16 @@ extension MainScreenCart on _MainScreenState {
                 }
                 final nameAr = merged['ar'] ?? '';
                 final nameEn = merged['en'] ?? '';
+                final extrasTotal = item.selectedExtras
+                    .fold<double>(0.0, (s, e) => s + e.price);
+                final unitWithExtras = item.product.price + extrasTotal;
+                final itemQty = item.quantity > 0 ? item.quantity : 0.0;
+                final itemOriginalTotal = unitWithExtras * itemQty;
+                final itemFinalTotal = item.totalPrice;
+                final itemDiscountTypeStr =
+                    item.discountType == DiscountType.percentage
+                        ? 'percentage'
+                        : 'amount';
                 return {
                 'cartId': item.cartId,
                 'meal_id': item.product.id,
@@ -796,8 +784,14 @@ extension MainScreenCart on _MainScreenState {
                     'price': e.price,
                   };
                 }).toList(),
-                'totalPrice': item.totalPrice,
+                'totalPrice': itemFinalTotal,
                 'notes': item.notes,
+                'discount': item.discount,
+                'discount_type': itemDiscountTypeStr,
+                'is_free': item.isFree,
+                'original_unit_price': unitWithExtras,
+                'original_total': itemOriginalTotal,
+                'final_total': itemFinalTotal,
               };
               })
           .toList(),
@@ -838,6 +832,80 @@ extension MainScreenCart on _MainScreenState {
       return;
     }
     _lastMainCartFingerprint = fingerprint;
+
+    // Salon mode: mirror the per-service "turn slip" rows (customer + service
+    // + employee + price) so the Display App CDS can render them as ticket
+    // cards alongside the cart. Restaurant flow leaves this null.
+    List<Map<String, dynamic>>? salonTickets;
+    if (_isSalonMode) {
+      final lang = _resolveKitchenInvoiceLang();
+      final customerName =
+          (_selectedCustomer?.name.trim().isNotEmpty == true)
+              ? _selectedCustomer!.name
+              : '-';
+      final customerPhone =
+          (_selectedCustomer?.mobile?.trim().isNotEmpty == true)
+              ? _selectedCustomer!.mobile!
+              : '';
+      final employeeLookup = <int, String>{
+        for (final e in _salonEmployees)
+          if (e['id'] is num)
+            (e['id'] as num).toInt(): (e['name'] ?? '').toString(),
+      };
+      final bookingNumber = _lastCreatedBookingId ?? '';
+      salonTickets = <Map<String, dynamic>>[];
+      for (var i = 0; i < _cart.length; i++) {
+        final item = _cart[i];
+        final salon = item.salonData ?? const <String, dynamic>{};
+        final empRaw = salon['employee_id'];
+        final empId = empRaw is num
+            ? empRaw.toInt()
+            : (empRaw is String ? int.tryParse(empRaw) : null);
+        final employeeName = (salon['employee_name']?.toString().trim().isNotEmpty ==
+                true)
+            ? salon['employee_name'].toString()
+            : (empId != null ? (employeeLookup[empId] ?? '') : '');
+        final salonNote = (salon['notes'] ?? '').toString().trim();
+        final cartNote = item.notes.trim();
+        final mergedNotes = (salonNote.isNotEmpty &&
+                cartNote.isNotEmpty &&
+                salonNote != cartNote)
+            ? '$salonNote · $cartNote'
+            : (salonNote.isNotEmpty ? salonNote : cartNote);
+        final serviceName = _resolveSalonServiceName(
+          lang: lang,
+          translations: salon['service_name_translations'] ??
+              salon['name_translations'] ??
+              salon['meal_name_translations'],
+          productLocalized: item.product.nameForLang(lang),
+          snapshotName: salon['item_name']?.toString(),
+          productName: item.product.name,
+        );
+        final totalPrice = item.product.price * item.quantity;
+        final priceFormatted =
+            totalPrice.toStringAsFixed(ApiConstants.digitsNumber);
+        salonTickets.add(<String, dynamic>{
+          'service_index': i + 1,
+          'cart_id': item.cartId,
+          'customer_name': customerName,
+          if (customerPhone.isNotEmpty) 'customer_phone': customerPhone,
+          'service_name': serviceName,
+          'employee_name': employeeName.isNotEmpty ? employeeName : '-',
+          'price': totalPrice,
+          'price_formatted': priceFormatted,
+          'currency': ApiConstants.currency,
+          if (mergedNotes.isNotEmpty) 'notes': mergedNotes,
+          'date_str': (salon['date']?.toString().trim().isNotEmpty == true)
+              ? salon['date'].toString()
+              : '',
+          'time_str': (salon['time']?.toString().trim().isNotEmpty == true)
+              ? salon['time'].toString()
+              : '',
+          if (bookingNumber.isNotEmpty) 'booking_number': bookingNumber,
+        });
+      }
+    }
+
     displayService.updateCartDisplay(
       items: _cart.map((item) {
         final basePrice = item.product.price;
@@ -887,7 +955,6 @@ extension MainScreenCart on _MainScreenState {
           }).toList(),
           'totalPrice': item.totalPrice,
           'notes': item.notes,
-          // ✅ Discount info for CDS
           'original_unit_price': originalUnitPrice,
           'original_total': originalTotal,
           'final_total': item.totalPrice,
@@ -927,6 +994,8 @@ extension MainScreenCart on _MainScreenState {
       orderDiscountValue: orderDiscountValueForDisplay,
       orderDiscountPercent: effectiveDiscountPercentForDisplay,
       discountSource: discountSourceForDisplay,
+      salonTickets: salonTickets,
+      branchModule: ApiConstants.branchModule,
     );
   }
 
@@ -1012,20 +1081,15 @@ extension MainScreenCart on _MainScreenState {
     final orderId = _lastCreatedBookingId;
     if (orderId == null || orderId.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(translationService.t('no_saved_order_number')),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        UiFeedback.warning(context, translationService.t('no_saved_order_number'));
       }
       return;
     }
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       final orderService = getIt<OrderService>();
@@ -1034,21 +1098,16 @@ extension MainScreenCart on _MainScreenState {
       if (mounted) Navigator.pop(context);
 
       if (mounted) {
-        showDialog(
+        unawaited(showDialog(
           context: context,
           builder: (context) =>
               BookingDetailsDialog(bookingData: bookingDetails),
-        );
+        ));
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(translationService.t('failed_load_order', args: {'error': e.toString()})),
-            backgroundColor: Colors.red,
-          ),
-        );
+        UiFeedback.error(context, translationService.t('failed_load_order', args: {'error': e.toString()}));
       }
     }
   }

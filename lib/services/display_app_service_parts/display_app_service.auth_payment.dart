@@ -10,12 +10,10 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
 
     final authToken = BaseClient().getToken() ?? '';
     final branchId = ApiConstants.branchId;
-    final backendUrl = ApiConstants.baseUrl;
+    const backendUrl = ApiConstants.baseUrl;
     final nearpayEnabled = _profileNearPayEnabled;
 
-    // Send AUTH_RESPONSE immediately — never delay the handshake for a JWT fetch.
-    // If the JWT is already cached it travels with AUTH_RESPONSE; otherwise
-    // NEARPAY_INIT (sent after AUTH_SUCCESS) will deliver it.
+    // Don't delay handshake for JWT fetch; cached JWT rides AUTH_RESPONSE, else NEARPAY_INIT delivers it.
     final cachedJwt = NearPayService().cachedToken;
     _sendMessage({
       'type': 'AUTH_RESPONSE',
@@ -69,10 +67,7 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
       unawaited(_sendKdsContext());
     }
 
-    // If NearPay is enabled, always send NEARPAY_INIT after auth succeeds.
-    // This is belt-and-suspenders: AUTH_RESPONSE already carries the JWT, but
-    // if the profile loaded after the auth challenge fired (race condition),
-    // this guarantees the Display App receives the init regardless.
+    // Belt-and-suspenders re-init for the race where profile loaded after the auth challenge.
     if (_profileNearPayEnabled || _supportsNearPay) {
       unawaited(_sendNearPayInit());
     }
@@ -85,10 +80,9 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
   Future<void> _sendNearPayInit() async {
     final authToken = BaseClient().getToken() ?? '';
     final branchId = ApiConstants.branchId;
-    final backendUrl = ApiConstants.baseUrl;
+    const backendUrl = ApiConstants.baseUrl;
     if (authToken.isEmpty || backendUrl.isEmpty || branchId <= 0) return;
 
-    // Display App handles JWT + terminal config fetch internally
     _sendMessage({
       'type': 'NEARPAY_INIT',
       'auth_token': authToken,
@@ -104,7 +98,6 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
     _mirrorPaymentStatusToPresentation('success');
     notifyListeners();
 
-    // Automatically send order to kitchen after successful payment
     _sendOrderToKitchenAfterPayment();
 
     if (_onPaymentSuccess != null) {
@@ -113,7 +106,6 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
 
     _restoreModeAfterPaymentIfNeeded();
 
-    // Clear payment status after a delay
     Future.delayed(const Duration(seconds: 3), () {
       _paymentStatus = PaymentStatus.idle;
       _currentOrderData = null;
@@ -141,7 +133,6 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
       return;
     }
 
-    // Send to KDS
     sendOrderToKitchen(
       orderId: orderId,
       orderNumber: orderNumber,
@@ -151,7 +142,6 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
       total: total,
     );
 
-    // Call the callback if set
     if (_onOrderReady != null) {
       _onOrderReady!(
         orderId: orderId,
@@ -177,7 +167,6 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
 
     _restoreModeAfterPaymentIfNeeded();
 
-    // Clear payment status after a delay
     Future.delayed(const Duration(seconds: 2), () {
       _paymentStatus = PaymentStatus.idle;
       notifyListeners();
@@ -195,7 +184,6 @@ extension DisplayAppServiceAuthPayment on DisplayAppService {
 
     _restoreModeAfterPaymentIfNeeded();
 
-    // Clear payment status after a delay
     Future.delayed(const Duration(seconds: 2), () {
       _paymentStatus = PaymentStatus.idle;
       notifyListeners();

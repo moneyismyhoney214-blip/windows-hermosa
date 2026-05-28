@@ -8,25 +8,20 @@ extension OrderServiceBookingApis on OrderService {
     Map<String, dynamic> bookingData, {
     String paymentType = 'payment',
   }) async {
-    // OFFLINE MODE: Save locally and queue for sync
     if (_connectivity.isOffline) {
       return _createBookingOffline(bookingData, paymentType: paymentType);
     }
 
     final normalizedPayload = _normalizeBookingPayload(bookingData);
     Map<String, dynamic> applyCacheSideEffect(Map<String, dynamic> response) {
-      // Prepend the freshly-created booking to today's cached lists so the
-      // orders screen renders it instantly on next open. The screen
-      // otherwise paints stale cached data (without the new row) for 3-4s
-      // while the network refresh runs.
+      // Prepend to today's cache so orders screen renders the new row instantly.
       unawaited(_pushCreatedBookingToCache(response));
-      // Drop the (employee, service, date) slot cache too — the slot the
-      // cashier just consumed is still in there for up to 2 minutes, and
-      // without this purge the next customer sees the same time as
-      // available and the cashier ends up double-booking the employee.
+      // Drop slot cache — stale 2-min entries would let another customer double-book.
       try {
         getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-      } catch (_) {}
+      } catch (e) {
+        Log.d('OrderServiceBookingApis', 'invalidate salon slot cache after create failed (non-fatal): $e');
+      }
       return response;
     }
 
@@ -46,12 +41,16 @@ extension OrderServiceBookingApis on OrderService {
           return applyCacheSideEffect(
             await _createBookingWithJsonRetry(fallbackPayload),
           );
-        } on ApiException catch (_) {}
+        } on ApiException catch (err) {
+          Log.d('OrderServiceBookingApis', 'card-fallback JSON retry failed, trying multipart: $err');
+        }
         try {
           return applyCacheSideEffect(
             await _createBookingMultipart(fallbackPayload),
           );
-        } on ApiException catch (_) {}
+        } on ApiException catch (err) {
+          Log.d('OrderServiceBookingApis', 'card-fallback multipart retry failed: $err');
+        }
       }
 
       final normalizedType =
@@ -75,13 +74,17 @@ extension OrderServiceBookingApis on OrderService {
           return applyCacheSideEffect(
             await _createBookingWithJsonRetry(nullSafePayload),
           );
-        } on ApiException catch (_) {}
+        } on ApiException catch (err) {
+          Log.d('OrderServiceBookingApis', 'null-safe JSON retry failed, trying multipart: $err');
+        }
 
         try {
           return applyCacheSideEffect(
             await _createBookingMultipart(nullSafePayload),
           );
-        } on ApiException catch (_) {}
+        } on ApiException catch (err) {
+          Log.d('OrderServiceBookingApis', 'null-safe multipart retry failed: $err');
+        }
       }
 
       if (e.statusCode == 422 &&
@@ -95,12 +98,16 @@ extension OrderServiceBookingApis on OrderService {
           return applyCacheSideEffect(
             await _createBookingWithJsonRetry(deliveryFallback),
           );
-        } on ApiException catch (_) {}
+        } on ApiException catch (err) {
+          Log.d('OrderServiceBookingApis', 'delivery-coords JSON retry failed, trying multipart: $err');
+        }
         try {
           return applyCacheSideEffect(
             await _createBookingMultipart(deliveryFallback),
           );
-        } on ApiException catch (_) {}
+        } on ApiException catch (err) {
+          Log.d('OrderServiceBookingApis', 'delivery-coords multipart retry failed: $err');
+        }
       }
 
       if (e.statusCode == 422 && _isInvalidType422(e.message)) {
@@ -113,12 +120,16 @@ extension OrderServiceBookingApis on OrderService {
             return applyCacheSideEffect(
               await _createBookingWithJsonRetry(typeFallbackPayload),
             );
-          } on ApiException catch (_) {}
+          } on ApiException catch (err) {
+            Log.d('OrderServiceBookingApis', 'type-fallback($candidateType) JSON retry failed, trying multipart: $err');
+          }
           try {
             return applyCacheSideEffect(
               await _createBookingMultipart(typeFallbackPayload),
             );
-          } on ApiException catch (_) {}
+          } on ApiException catch (err) {
+            Log.d('OrderServiceBookingApis', 'type-fallback($candidateType) multipart retry failed: $err');
+          }
         }
       }
 
@@ -127,7 +138,9 @@ extension OrderServiceBookingApis on OrderService {
           return applyCacheSideEffect(
             await _createBookingMultipart(normalizedPayload),
           );
-        } on ApiException catch (_) {}
+        } on ApiException catch (err) {
+          Log.d('OrderServiceBookingApis', '422 multipart retry failed: $err');
+        }
       }
       rethrow;
     }
@@ -182,7 +195,7 @@ extension OrderServiceBookingApis on OrderService {
         }
       }
     } catch (e) {
-      print('⚠️ optimistic booking cache update failed: $e');
+      Log.w('booking', 'optimistic cache update failed', error: e);
     }
   }
 
@@ -192,7 +205,6 @@ extension OrderServiceBookingApis on OrderService {
     final data = response['data'];
     Map? candidate;
     if (data is Map) {
-      // Common shape: { data: { booking: { ... } } } or { data: { ... } }.
       if (data['booking'] is Map) {
         candidate = data['booking'] as Map;
       } else if (data['id'] != null || data['booking_number'] != null) {
@@ -264,15 +276,13 @@ extension OrderServiceBookingApis on OrderService {
     String platform = 'dashboard',
     bool skipGlobalAuth = false,
   }) async {
-    // OFFLINE MODE
     if (_connectivity.isOffline) {
       return _getBookingsOffline();
     }
 
-    // Check if token is available first
     final token = _client.getToken();
     if (token == null || token.isEmpty) {
-      print('⚠️ getBookings: No token available');
+      Log.w('booking', 'getBookings called with no token — refusing');
       throw UnauthorizedException('No authentication token');
     }
 
@@ -298,13 +308,11 @@ extension OrderServiceBookingApis on OrderService {
           await _client.get(endpoint, skipGlobalAuth: skipGlobalAuth);
       final normalized = _rememberResponse('get_all_orders', response);
       if (response != null && page == 1) {
-        // Cache the result for resilience
         await _cache.set(
           cacheKey,
           normalized,
           expiry: const Duration(minutes: 30),
         );
-        // Save to SQLite for offline
         if (normalized['data'] is List) {
           await _offlineDb.saveServerOrders(
             (normalized['data'] as List).cast<Map<String, dynamic>>(),
@@ -314,7 +322,6 @@ extension OrderServiceBookingApis on OrderService {
       }
       return normalized;
     } catch (e) {
-      // Fallback to offline
       final offline = await _getBookingsOffline();
       if ((offline['data'] as List?)?.isNotEmpty == true) return offline;
       if (page == 1) {
@@ -326,7 +333,7 @@ extension OrderServiceBookingApis on OrderService {
   }
 
   BookingSettings _emptyBookingSettings() {
-    // Safe runtime defaults when backend create-metadata endpoint is unstable.
+    // Defaults for when backend create-metadata endpoint is unstable.
     return BookingSettings(
       typeOptions: [
         OptionItem(label: 'محلي', value: 'services'),
@@ -340,10 +347,7 @@ extension OrderServiceBookingApis on OrderService {
   }
 
   String _buildBookingCreateMetadataEndpointWithDefaults() {
-    // Backend create endpoint expects these filters; calling without them
-    // may trigger "Unhandled match case NULL" on some branches. Salon
-    // branches need `type=services` — passing `meals` there returns an empty
-    // catalogue and the debug dump shows a misleading response.
+    // Required filters: salons need type=services (meals returns empty + misleading dump).
     final type = ApiConstants.branchModule == 'salons' ? 'services' : 'meals';
     final query = Uri(queryParameters: <String, String>{
       'type': type,
@@ -400,11 +404,11 @@ extension OrderServiceBookingApis on OrderService {
   Future<BookingSettings> getBookingSettings() async {
     final token = _client.getToken();
     if (token == null || token.isEmpty) {
-      print('⚠️ getBookingSettings: No token available');
+      Log.w('booking', 'getBookingSettings called with no token');
       return _emptyBookingSettings();
     }
     if (ApiConstants.branchId <= 0) {
-      print('⚠️ getBookingSettings: branchId is 0');
+      Log.w('booking', 'getBookingSettings called with branchId=0');
       return _emptyBookingSettings();
     }
 
@@ -424,25 +428,6 @@ extension OrderServiceBookingApis on OrderService {
     for (final endpoint in endpoints) {
       try {
         final response = await _client.get(endpoint);
-
-        // 🔍 DEBUG: Print and save raw API response
-        print('=' * 70);
-        print('🔍 DEBUG: Booking Settings Raw API Response');
-        print('📍 Endpoint: $endpoint');
-
-        // Save to file for analysis
-        try {
-          final file = File('BOOKING_SETTINGS_RAW_RESPONSE.json');
-          await file.writeAsString(
-            const JsonEncoder.withIndent('  ').convert(response),
-          );
-          print('💾 Response saved to: BOOKING_SETTINGS_RAW_RESPONSE.json');
-        } catch (e) {
-          print('⚠️  Could not save response to file: $e');
-        }
-
-        print('=' * 70);
-
         final parsed = _parseBookingSettingsResponse(response);
         if (parsed == null) continue;
 
@@ -469,12 +454,12 @@ extension OrderServiceBookingApis on OrderService {
               true,
               expiry: const Duration(hours: 6),
             );
-            print(
-              '⚠️ booking/create metadata endpoint disabled for this session due to backend 5xx.',
-            );
+            Log.w('booking',
+                'create-metadata endpoint disabled for this session (backend 5xx)');
           }
         }
-        print('⚠️ getBookingSettings failed endpoint=$endpoint error=$e');
+        Log.w('booking',
+            'getBookingSettings failed endpoint=$endpoint', error: e);
       }
     }
 
@@ -539,7 +524,6 @@ extension OrderServiceBookingApis on OrderService {
   Future<Map<String, dynamic>> createInvoice(
     Map<String, dynamic> invoiceData,
   ) async {
-    // OFFLINE MODE: Save invoice locally and queue for sync
     if (_connectivity.isOffline) {
       final localId = await _offlineDb.saveLocalInvoice(
           invoiceData, ApiConstants.branchId);
@@ -574,7 +558,6 @@ extension OrderServiceBookingApis on OrderService {
       final needsMultipart =
           status == 422 && message.contains('عناصر') && hasItems;
       if (!needsMultipart) rethrow;
-      // Retry using multipart/form-data
       return createInvoiceMultipart(enrichedInvoiceData);
     }
   }
@@ -642,8 +625,7 @@ extension OrderServiceBookingApis on OrderService {
         addField('modified_unit_price', item['modified_unit_price']);
         addField('note', item['note'] ?? item['notes']);
 
-        // Always send discount & discount_type per item (matching website
-        // behavior). Empty string = no discount.
+        // Always send discount/discount_type per item to match website (empty = no discount).
         fields['$keyName[$i][discount]'] =
             (item['discount'] ?? '').toString();
         fields['$keyName[$i][discount_type]'] =
@@ -763,10 +745,9 @@ extension OrderServiceBookingApis on OrderService {
     int page = 1,
     int perPage = 20,
   }) async {
-    // Check if token is available first
     final token = _client.getToken();
     if (token == null || token.isEmpty) {
-      print('⚠️ getInvoices: No token available');
+      Log.w('booking', 'getInvoices called with no token');
       throw UnauthorizedException('No authentication token');
     }
 
@@ -852,7 +833,6 @@ extension OrderServiceBookingApis on OrderService {
           final servicesResponse = await _client.get(servicesEndpoint);
           return _rememberResponse('get_order_details', servicesResponse);
         } on ApiException {
-          // Continue to graceful fallback below.
         }
       }
 
@@ -864,7 +844,6 @@ extension OrderServiceBookingApis on OrderService {
             return fromList;
           }
         } on ApiException {
-          // Continue to graceful fallback below.
         }
       }
 
@@ -898,7 +877,6 @@ extension OrderServiceBookingApis on OrderService {
         '/seller/status/branches/${ApiConstants.branchId}/bookings/$normalizedOrderId';
     final statusValue = status.toString();
 
-    // Keep attempts limited to avoid rate limiting.
     final attempts = <Future<dynamic> Function()>[
       () => _client.put(primaryEndpoint, {
             'status': statusValue,
@@ -924,39 +902,38 @@ extension OrderServiceBookingApis on OrderService {
       final hasMoreAttempts = i < attempts.length - 1;
       try {
         final response = await attempts[i]();
-        // Status changes (cancel / complete / archive) free up the slot
-        // the booking was holding. Drop the salon slot cache so the
-        // freshly-released time isn't still hidden behind 2-minute-old
-        // cached data when another customer asks for it.
+        // Status changes free the held slot — drop salon slot cache to avoid stale entries.
         try {
           getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-        } catch (_) {}
+        } catch (e) {
+          Log.d('OrderServiceBookingApis', 'invalidate salon slot cache after status change failed (non-fatal): $e');
+        }
         return _rememberResponse('update_order_status', response);
       } on ApiException catch (e) {
         lastApiError = e;
-        // Don't retry on rate limiting errors (422 with "Too Many Attempts")
         if (e.statusCode == 422 &&
             (e.message.contains('Too Many') ||
                 e.message.contains('محاولات كثيرة'))) {
-          print('⚠️ Rate limited on updateBookingStatus - skipping retries');
+          Log.w('booking',
+              'updateBookingStatus rate-limited — skipping retries');
           rethrow;
         }
         if (!hasMoreAttempts || !_shouldRetryStatusUpdate(e)) {
           rethrow;
         }
         final attemptNo = i + 1;
-        print(
-          '⚠️ updateBookingStatus attempt $attemptNo/${attempts.length} failed with ${e.statusCode}: ${e.message}. Trying alternate request format.',
-        );
+        Log.w('booking',
+            'updateBookingStatus attempt $attemptNo/${attempts.length} '
+            'failed (HTTP ${e.statusCode}) — trying alternate request format');
       } catch (e) {
         lastTransportError = e;
         if (!hasMoreAttempts || !_isRetryableBookingTransportError(e)) {
           rethrow;
         }
         final attemptNo = i + 1;
-        print(
-          '⚠️ updateBookingStatus transport issue on attempt $attemptNo/${attempts.length}: $e. Retrying with alternate request format.',
-        );
+        Log.w('booking',
+            'updateBookingStatus attempt $attemptNo/${attempts.length} '
+            'transport error — retrying with alternate format', error: e);
       }
     }
 
@@ -1063,13 +1040,13 @@ extension OrderServiceBookingApis on OrderService {
     if (employeeId != null) payload['employee_id'] = employeeId;
 
     final response = await _client.post(endpoint, payload);
-    // updateBookingData reschedules the booking_service (employee / date /
-    // time), so the slot graph just shifted. Drop the cache for the same
-    // reason the createBooking / updateBookingItems paths do.
+    // Rescheduling shifted the slot graph — drop cache like create/updateItems do.
     if (date != null || time != null || employeeId != null) {
       try {
         getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-      } catch (_) {}
+      } catch (e) {
+        Log.d('OrderServiceBookingApis', 'invalidate salon slot cache after reschedule failed (non-fatal): $e');
+      }
     }
     return _rememberResponse('update_order_data', response);
   }

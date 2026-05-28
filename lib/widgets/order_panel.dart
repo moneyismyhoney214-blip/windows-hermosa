@@ -5,26 +5,27 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
+import '../dialogs/customer_selection_dialog.dart';
+import '../locator.dart';
 import '../models.dart';
 import '../models/customer.dart';
-import '../dialogs/customer_selection_dialog.dart';
-import '../services/display_app_service.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/product_service.dart';
-import '../services/printer_language_settings_service.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
-import '../locator.dart';
-import 'connectivity_status_indicator.dart';
 import '../services/cashier_sound_service.dart';
+import '../services/display_app_service.dart';
+import '../services/language_service.dart';
+import '../services/printer_language_settings_service.dart';
+import '../utils/ui_feedback.dart';
+import 'connectivity_status_indicator.dart';
 
-
-part 'order_panel_parts/order_panel.helpers.dart';
+part 'order_panel_parts/order_panel.car_pad.dart';
 part 'order_panel_parts/order_panel.cart_display.dart';
 part 'order_panel_parts/order_panel.cart_widgets.dart';
-part 'order_panel_parts/order_panel.item_actions.dart';
-part 'order_panel_parts/order_panel.car_pad.dart';
 part 'order_panel_parts/order_panel.footer_and_menu.dart';
+part 'order_panel_parts/order_panel.helpers.dart';
+part 'order_panel_parts/order_panel.item_actions.dart';
 
 class OrderPanel extends StatefulWidget {
   final List<CartItem> cart;
@@ -50,13 +51,11 @@ class OrderPanel extends StatefulWidget {
   final Function(String)? onBookingLongPress;
   final Function(CartItem)? onShowItemDetails;
 
-  // Customer selection
   final Customer? selectedCustomer;
   final Function(Customer?) onSelectCustomer;
 
-  // Added Ecosystem fields
   final String selectedOrderType;
-  final List<Map<String, dynamic>> typeOptions; // Added real type options
+  final List<Map<String, dynamic>> typeOptions;
   final Function(String) onOrderTypeChanged;
   final Function(String) onApplyCoupon;
   final VoidCallback onBrowsePromocodes;
@@ -115,7 +114,7 @@ class OrderPanel extends StatefulWidget {
     this.selectedCustomer,
     required this.onSelectCustomer,
     required this.selectedOrderType,
-    required this.typeOptions, // Added
+    required this.typeOptions,
     required this.onOrderTypeChanged,
     required this.onApplyCoupon,
     required this.onBrowsePromocodes,
@@ -146,12 +145,10 @@ class _OrderPanelState extends State<OrderPanel> {
   DisplayMode? _lastDisplayMode;
   String? _lastSyncedCartFingerprint;
   bool _carPadArabicLetters = false;
-  // PERF: debounce the CDS/KDS cart sync. didUpdateWidget fires for every
-  // keystroke and every quantity tap. Without a debounce we re-encode the
-  // full cart JSON dozens of times per second; with a ~120ms debounce we
-  // coalesce bursts into a single send and the UI stays fluid.
+  // PERF: debounce CDS/KDS cart sync (~120ms) so keystrokes/qty taps coalesce.
   Timer? _cartSyncDebounce;
 
+  @override
   void initState() {
     super.initState();
     _displayService = getIt<DisplayAppService>();
@@ -177,6 +174,7 @@ class _OrderPanelState extends State<OrderPanel> {
   }
 
 
+  @override
   void dispose() {
     _longPressTimer?.cancel();
     _cartSyncDebounce?.cancel();
@@ -190,15 +188,12 @@ class _OrderPanelState extends State<OrderPanel> {
   Widget build(BuildContext context) {
     final cartSum =
         widget.cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
-    // Caller override wins; otherwise the branch-level VAT config decides
-    // (returns 0 when the branch has tax off, suppressing the tax line).
+    // Caller override wins; otherwise branch VAT config (0 when tax off).
     final effectiveTaxRate =
         (widget.taxRate ?? ApiConstants.effectiveTaxRate)
             .clamp(0.0, 1.0)
             .toDouble();
-    // Salon services come back from the API tax-inclusive — extract the
-    // pre-tax portion so the footer rows reconcile to the displayed total
-    // (e.g. 350 → subtotal 304.35 + tax 45.65) instead of adding VAT on top.
+    // Salon services are tax-inclusive — extract pre-tax to reconcile totals.
     final double subtotal;
     final double tax;
     if (widget.isSalonMode && effectiveTaxRate > 0) {
@@ -224,7 +219,6 @@ class _OrderPanelState extends State<OrderPanel> {
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  // Header
                   Padding(
                     padding: const EdgeInsets.all(20.0),
                     child: Column(
@@ -234,8 +228,8 @@ class _OrderPanelState extends State<OrderPanel> {
                           children: [
                             Text(
                                 widget.isSalonMode
-                                    ? _tr('الحجز الحالي', 'Current Booking')
-                                    : _tr('الطلب الحالي', 'Current Order'),
+                                    ? translationService.t('current_booking')
+                                    : translationService.t('current_order'),
                                 style: TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.bold,
@@ -247,7 +241,6 @@ class _OrderPanelState extends State<OrderPanel> {
                                   padding:
                                       EdgeInsets.symmetric(horizontal: 4),
                                 ),
-                                // Display Connection Button
                                 Material(
                                   color: Colors.transparent,
                                   borderRadius: BorderRadius.circular(8),
@@ -311,9 +304,9 @@ class _OrderPanelState extends State<OrderPanel> {
                             enableInteractiveSelection: false,
                             onTap: _openCarNumberPad,
                             decoration: InputDecoration(
-                              labelText: _tr('رقم السيارة', 'Car Number'),
+                              labelText: translationService.t('car_number_label'),
                               hintText:
-                                  _tr('مثال: ABC-1234', 'Example: ABC-1234'),
+                                  translationService.t('example_abc_1234'),
                               prefixIcon: const Icon(LucideIcons.car),
                               suffixIcon: const Icon(Icons.dialpad_outlined),
                               filled: true,
@@ -334,19 +327,16 @@ class _OrderPanelState extends State<OrderPanel> {
 
                         const SizedBox(height: 12),
 
-                        // Table/Customer Info
                         _buildCustomerInfo(),
                       ],
                     ),
                   ),
                   Divider(height: 1, color: context.appBorder),
 
-                  // Coupon Section
                   _buildCouponSection(),
 
                   Divider(height: 1, color: context.appBorder),
 
-                  // Cart Items
                   widget.cart.isEmpty
                       ? _buildEmptyCart()
                       : ListView.separated(
@@ -365,14 +355,12 @@ class _OrderPanelState extends State<OrderPanel> {
                           },
                         ),
 
-                  // Order Notes
                   _buildOrderNotes(),
                 ],
               ),
             ),
           ),
 
-          // Footer
           _buildFooter(subtotal, tax, hasItems),
         ],
       ),

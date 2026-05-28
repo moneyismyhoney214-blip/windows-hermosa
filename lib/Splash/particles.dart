@@ -2,7 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 class Particles extends StatefulWidget {
-  const Particles({Key? key}) : super(key: key);
+  const Particles({super.key});
 
   @override
   State<Particles> createState() => _ParticlesState();

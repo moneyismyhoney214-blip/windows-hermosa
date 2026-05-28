@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../order_panel.dart';
 
 extension OrderPanelFooterAndMenu on _OrderPanelState {
@@ -21,7 +21,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
   }
 
   Future<void> _ensureCustomer(VoidCallback onConfirmed) async {
-    // In salon mode, customer is ALWAYS required regardless of settings
+    // Salon mode forces customer selection regardless of settings.
     final requireCustomer =
         widget.isSalonMode || widget.requireCustomerSelection;
 
@@ -30,7 +30,6 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
       return;
     }
 
-    // Enforce explicit customer selection when required.
     if (widget.selectedCustomer != null) {
       onConfirmed();
       return;
@@ -43,22 +42,14 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
 
     if (customer != null) {
       widget.onSelectCustomer(customer);
-      // Small delay to let the state update
       Future.delayed(const Duration(milliseconds: 100), onConfirmed);
     } else {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-              _tr('يرجى اختيار عميل للمتابعة', 'Please select a customer')),
-          backgroundColor: Colors.red,
-        ),
-      );
+      UiFeedback.error(context, translationService.t('please_select_customer_to_continue'));
     }
   }
 
   Widget _buildFooter(double subtotal, double tax, bool hasItems) {
-    // Calculate promo discount if applied
     final promo = widget.appliedPromoCode;
     double promoDiscountAmount = 0.0;
     if (promo != null) {
@@ -81,20 +72,20 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
       child: Column(
         children: [
           _SummaryRow(
-              label: _tr('المجموع الفرعي', 'Subtotal'),
+              label: translationService.t('subtotal'),
               value: subtotal.toStringAsFixed(ApiConstants.digitsNumber)),
           if (ApiConstants.isTaxActive) ...[
             const SizedBox(height: 8),
             _SummaryRow(
-                label: _tr(
-                    'الضريبة (${ApiConstants.taxPercentage}%)',
-                    'Tax (${ApiConstants.taxPercentage}%)'),
+                label: translationService.t(
+                    'tax_pct_n',
+                    args: {'pct': ApiConstants.taxPercentage}),
                 value: tax.toStringAsFixed(ApiConstants.digitsNumber)),
           ],
           if (widget.orderDiscount > 0) ...[
             const SizedBox(height: 8),
             _SummaryRow(
-                label: _tr('خصم إضافي', 'Additional Discount'),
+                label: translationService.t('additional_discount_label'),
                 value: '- ${widget.orderDiscount.toStringAsFixed(ApiConstants.digitsNumber)}',
                 color: Colors.orange),
           ],
@@ -111,7 +102,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                       const SizedBox(width: 4),
                       Flexible(
                         child: Text(
-                          '${_tr('كوبون', 'Coupon')}: ${promo.code}'
+                          '${translationService.t('coupon_label_v2')}: ${promo.code}'
                           ' (${promo.type == DiscountType.percentage ? '${promo.discount.toStringAsFixed(0)}%' : '${promo.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}'})',
                           style: const TextStyle(
                               fontSize: 13,
@@ -144,7 +135,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(_tr('الإجمالي', 'Total'),
+              Text(translationService.t('total'),
                   style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 18,
@@ -160,14 +151,12 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
           const SizedBox(height: 20),
           Row(
             children: [
-              // Menu Button
               _buildMenuButton(),
               const SizedBox(width: 4),
-              // Pay Later
               Expanded(
                 flex: 2,
                 child: _buildActionButton(
-                  label: _tr('لاحق', 'Later'),
+                  label: translationService.t('later_word'),
                   icon: LucideIcons.clock,
                   color: Colors.orange,
                   onPressed: hasItems
@@ -177,13 +166,11 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
               ),
               if (widget.onAddBooking != null) ...[
                 const SizedBox(width: 4),
-                // Add Booking — salon-only. Confirms the cart as a booked
-                // appointment (`?book_appointment&create_order`) and the
-                // host screen routes to the "الحجوزات" tab.
+                // Add Booking — salon-only; routes to "الحجوزات" tab.
                 Expanded(
                   flex: 2,
                   child: _buildActionButton(
-                    label: _tr('إضافة حجز', 'Add Booking'),
+                    label: translationService.t('add_booking_btn'),
                     icon: LucideIcons.calendarCheck,
                     color: const Color(0xFF6366F1),
                     onPressed: hasItems
@@ -193,11 +180,10 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                 ),
               ],
               const SizedBox(width: 4),
-              // Pay Now
               Expanded(
                 flex: 3,
                 child: _buildActionButton(
-                  label: _tr('دفع', 'Pay'),
+                  label: translationService.t('pay_label'),
                   icon: LucideIcons.checkCircle,
                   color: const Color(0xFF10B981),
                   onPressed: hasItems
@@ -235,22 +221,126 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
         if (value == 'clear') widget.onClear();
         if (value == 'discount') _showOrderDiscountDialog();
         if (value == 'free') widget.onToggleOrderFree();
+        if (value == 'sessions') _showSessionsDialog();
       },
       itemBuilder: (context) => [
         PopupMenuItem(
             value: 'clear',
-            child: Text(_tr('مسح السلة', 'Clear Cart'),
+            child: Text(translationService.t('clear_cart_btn'),
                 style: const TextStyle(color: Colors.red))),
         PopupMenuItem(
             value: 'discount',
-            child: Text(_tr('خصم على الإجمالي', 'Order Discount'))),
+            child: Text(translationService.t('order_discount_label'))),
         PopupMenuItem(
             value: 'free',
             child: Text(widget.isOrderFree
-                ? _tr('إلغاء المجاني', 'Cancel Free')
-                : _tr('الطلب مجاني', 'Free Order'))),
+                ? translationService.t('cancel_free')
+                : translationService.t('free_order_label'))),
+        if (widget.isSalonMode)
+          PopupMenuItem(
+              value: 'sessions',
+              child: Text(translationService.t('change_sessions_btn'))),
       ],
     );
+  }
+
+  static int _sessionCountOf(CartItem item) {
+    final v = item.salonData?['session_numbers'];
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
+  Future<void> _showSessionsDialog() async {
+    final salonItems =
+        widget.cart.where((c) => c.salonData != null).toList();
+    if (salonItems.isEmpty) {
+      UiFeedback.info(context, translationService.t('no_salon_services_in_cart'));
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          Widget stepBtn(IconData icon, VoidCallback? onTap) => InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: onTap == null
+                        ? Colors.grey.withValues(alpha: 0.15)
+                        : const Color(0xFFFFF7ED),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: context.appBorder),
+                  ),
+                  child: Icon(icon,
+                      size: 16,
+                      color: onTap == null
+                          ? context.appTextSubtle
+                          : const Color(0xFFF58220)),
+                ),
+              );
+
+          return AlertDialog(
+            title: Text(translationService.t('sessions_per_service')),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: salonItems.length,
+                separatorBuilder: (_, __) => const Divider(height: 16),
+                itemBuilder: (_, i) {
+                  final item = salonItems[i];
+                  final count = _sessionCountOf(item);
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.product.name,
+                          style: TextStyle(
+                              fontSize: 14, color: context.appText),
+                        ),
+                      ),
+                      stepBtn(
+                        LucideIcons.minus,
+                        count > 0
+                            ? () => setDialogState(() => item
+                                .salonData!['session_numbers'] = count - 1)
+                            : null,
+                      ),
+                      Container(
+                        width: 38,
+                        alignment: Alignment.center,
+                        child: Text('$count',
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: context.appText)),
+                      ),
+                      stepBtn(
+                        LucideIcons.plus,
+                        () => setDialogState(() =>
+                            item.salonData!['session_numbers'] = count + 1),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(translationService.t('done_label')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   void _showOrderDiscountDialog() {
@@ -264,11 +354,10 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text(_tr('خصم على الطلب', 'Order Discount')),
+          title: Text(translationService.t('order_discount_label')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Discount type toggle
               Row(
                 children: [
                   Expanded(
@@ -281,7 +370,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          _tr('قيمة', 'Amount'),
+                          translationService.t('amount_label'),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
@@ -302,7 +391,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          _tr('نسبة %', 'Percentage %'),
+                          translationService.t('percentage_pct'),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
@@ -320,15 +409,14 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
                   labelText: selectedType == DiscountType.percentage
-                      ? _tr('نسبة الخصم %', 'Discount %')
-                      : _tr('قيمة الخصم', 'Discount Amount'),
+                      ? translationService.t('discount_pct')
+                      : translationService.t('discount_amount_label'),
                   suffixText: selectedType == DiscountType.percentage ? '%' : ApiConstants.currency,
                 ),
               ),
             ],
           ),
           actions: [
-            // Remove discount button
             if (widget.orderDiscount > 0)
               TextButton(
                 onPressed: () {
@@ -336,18 +424,18 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                   Navigator.pop(context);
                 },
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: Text(_tr('إزالة الخصم', 'Remove Discount')),
+                child: Text(translationService.t('remove_discount_btn')),
               ),
             TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: Text(_tr('إلغاء', 'Cancel'))),
+                child: Text(translationService.t('cancel'))),
             ElevatedButton(
               onPressed: () {
                 final value = double.tryParse(controller.text) ?? 0.0;
                 widget.onOrderDiscount(value, type: selectedType);
                 Navigator.pop(context);
               },
-              child: Text(_tr('حفظ', 'Save')),
+              child: Text(translationService.t('save')),
             ),
           ],
         ),
@@ -380,7 +468,6 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
     final noDepositsAvailable = deposits.isEmpty;
     final customerSelected = widget.selectedCustomer != null;
 
-    // No customer: show a quiet hint so the cashier knows the feature exists.
     if (!customerSelected) {
       return Row(
         children: [
@@ -389,7 +476,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              _tr('اختر عميل لعرض العرابين', 'Select a customer to view deposits'),
+              translationService.t('select_customer_to_view_deposits'),
               style: TextStyle(
                   fontSize: 12,
                   color: context.appTextMuted.withValues(alpha: 0.7)),
@@ -400,13 +487,12 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
     }
 
     if (noDepositsAvailable && !hasSelection) {
-      // Customer chosen but has no deposits. Keep the row quiet — no action.
       return Row(
         children: [
           Icon(LucideIcons.wallet, size: 14, color: context.appTextMuted),
           const SizedBox(width: 6),
           Text(
-            _tr('لا يوجد عرابين لهذا العميل', 'No deposits for this customer'),
+            translationService.t('no_deposits_for_customer'),
             style: TextStyle(fontSize: 12, color: context.appTextMuted),
           ),
         ],
@@ -448,10 +534,10 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                       Flexible(
                         child: Text(
                           hasSelection
-                              ? '${_tr('عربون', 'Deposit')}: $depositLabel'
-                              : _tr(
-                                  'استخدام عربون (${deposits.length})',
-                                  'Use deposit (${deposits.length})',
+                              ? '${translationService.t('deposit_label')}: $depositLabel'
+                              : translationService.t(
+                                  'use_deposit_n',
+                                  args: {'count': deposits.length},
                                 ),
                           style: TextStyle(
                             fontSize: 13,
@@ -480,7 +566,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                     iconSize: 16,
                     icon: const Icon(LucideIcons.x),
                     color: context.appTextMuted,
-                    tooltip: _tr('إزالة العربون', 'Remove deposit'),
+                    tooltip: translationService.t('remove_deposit_btn'),
                     onPressed: () => widget.onSelectDeposit?.call(null),
                   ),
                 ] else
@@ -494,10 +580,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
           Padding(
             padding: const EdgeInsets.only(top: 4, right: 20, left: 20),
             child: Text(
-              _tr(
-                'قيمة العربون تتجاوز إجمالي الفاتورة — لن يتم تطبيقه',
-                'Deposit exceeds invoice total — it will not be applied',
-              ),
+              translationService.t('deposit_exceeds_msg'),
               style: const TextStyle(
                   fontSize: 11, color: Color(0xFFEF4444)),
             ),
@@ -525,7 +608,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                _tr('اختر عربون للخصم', 'Apply a deposit'),
+                translationService.t('apply_a_deposit_label'),
                 style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
@@ -533,10 +616,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
               ),
               const SizedBox(height: 4),
               Text(
-                _tr(
-                  'قيمة العربون يجب ألا تتجاوز إجمالي الفاتورة',
-                  'A deposit cannot exceed the invoice total',
-                ),
+                translationService.t('deposit_exceeds_invoice_msg'),
                 style: TextStyle(
                     fontSize: 11, color: context.appTextMuted),
               ),
@@ -572,11 +652,14 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                         title: Text(label),
                         subtitle: Text(
                           exceedsCart
-                              ? _tr(
-                                  'المبلغ: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — أكبر من الفاتورة',
-                                  'Amount: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — exceeds invoice',
+                              ? translationService.t(
+                                  'amount_exceeds_invoice_n',
+                                  args: {
+                                    'amount': price.toStringAsFixed(
+                                        ApiConstants.digitsNumber),
+                                  },
                                 )
-                              : '${_tr('المبلغ', 'Amount')}: ${price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
+                              : '${translationService.t('amount_label')}: ${price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                           style: TextStyle(
                             color: exceedsCart
                                 ? const Color(0xFFEF4444)
@@ -605,7 +688,7 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
                     Navigator.pop(ctx);
                   },
                   icon: const Icon(LucideIcons.x, size: 16),
-                  label: Text(_tr('إزالة العربون', 'Remove deposit')),
+                  label: Text(translationService.t('remove_deposit_btn')),
                   style: TextButton.styleFrom(foregroundColor: Colors.red),
                 ),
               ],
@@ -653,9 +736,15 @@ extension OrderPanelFooterAndMenu on _OrderPanelState {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(label,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 13)),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(label,
+                      maxLines: 1,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+              ),
               if (showAmount) ...[
                 const SizedBox(width: 4),
                 Container(

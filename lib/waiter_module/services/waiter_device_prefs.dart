@@ -24,6 +24,15 @@ class WaiterDevicePrefKeys {
   static const String printKitchenInvoices =
       'cashier_print_kitchen_invoices_v1';
   static const String allowPrintWithKds = 'cashier_allow_print_with_kds_v1';
+
+  /// Waiter-only toggle (NOT mirrored from the cashier): when on, every
+  /// table must be linked to a customer before the waiter can send an
+  /// order to the kitchen or take payment. Mirrors the restaurant's
+  /// `cashier_require_customer_selection` behaviour but kept independent
+  /// so the merchant can enforce it on the waiter floor without changing
+  /// the cashier register's own setting.
+  static const String requireCustomerSelection =
+      'waiter_require_customer_selection_v1';
 }
 
 /// Snapshot of every device-scope toggle the waiter settings UI cares
@@ -38,6 +47,7 @@ class WaiterDevicePrefs {
     required this.autoPrintCustomerSecondCopy,
     required this.printKitchenInvoices,
     required this.allowPrintWithKds,
+    required this.requireCustomerSelection,
   });
 
   final bool cdsEnabled;
@@ -47,6 +57,7 @@ class WaiterDevicePrefs {
   final bool autoPrintCustomerSecondCopy;
   final bool printKitchenInvoices;
   final bool allowPrintWithKds;
+  final bool requireCustomerSelection;
 
   /// Defaults match `_loadCashierSettings` in main_screen.settings.dart
   /// — if either module ever disagrees on the default, first-run
@@ -67,7 +78,25 @@ class WaiterDevicePrefs {
           prefs.getBool(WaiterDevicePrefKeys.printKitchenInvoices) ?? true,
       allowPrintWithKds:
           prefs.getBool(WaiterDevicePrefKeys.allowPrintWithKds) ?? false,
+      requireCustomerSelection:
+          prefs.getBool(WaiterDevicePrefKeys.requireCustomerSelection) ??
+              false,
     );
+  }
+
+  /// Quick single-key read for callsites (e.g. the order screen) that
+  /// only need the "require customer" flag and don't want to load the
+  /// whole snapshot.
+  static Future<bool> isRequireCustomerSelectionEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(WaiterDevicePrefKeys.requireCustomerSelection) ??
+        false;
+  }
+
+  /// Persist the "require customer" flag.
+  static Future<void> setRequireCustomerSelection(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(WaiterDevicePrefKeys.requireCustomerSelection, value);
   }
 
   WaiterDevicePrefs copyWith({
@@ -78,6 +107,7 @@ class WaiterDevicePrefs {
     bool? autoPrintCustomerSecondCopy,
     bool? printKitchenInvoices,
     bool? allowPrintWithKds,
+    bool? requireCustomerSelection,
   }) {
     return WaiterDevicePrefs(
       cdsEnabled: cdsEnabled ?? this.cdsEnabled,
@@ -89,6 +119,8 @@ class WaiterDevicePrefs {
       printKitchenInvoices:
           printKitchenInvoices ?? this.printKitchenInvoices,
       allowPrintWithKds: allowPrintWithKds ?? this.allowPrintWithKds,
+      requireCustomerSelection:
+          requireCustomerSelection ?? this.requireCustomerSelection,
     );
   }
 }

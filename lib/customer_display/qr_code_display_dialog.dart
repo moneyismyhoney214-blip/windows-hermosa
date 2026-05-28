@@ -6,6 +6,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../services/app_themes.dart';
+import '../utils/ui_feedback.dart';
 
 class QRCodeDisplayDialog extends StatelessWidget {
   final String ipAddress;
@@ -31,12 +32,7 @@ class QRCodeDisplayDialog extends StatelessWidget {
 
   void _copyToClipboard(BuildContext context) {
     Clipboard.setData(ClipboardData(text: _connectionData));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('تم نسخ بيانات الاتصال', style: GoogleFonts.tajawal()),
-        backgroundColor: Colors.green,
-      ),
-    );
+    UiFeedback.success(context, 'تم نسخ بيانات الاتصال');
   }
 
   @override
@@ -54,7 +50,7 @@ class QRCodeDisplayDialog extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Color(0xFFF58220).withValues(alpha: 0.1),
+                  color: const Color(0xFFF58220).withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(

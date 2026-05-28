@@ -62,7 +62,7 @@ class InvoiceHtmlTemplate {
     final s = secondaryLang;
     final a = allowSecondary;
     // تحويل نوع الطلب للغة المختارة
-    String orderTypeAr = _getOrderTypeLabel(orderType ?? '', p);
+    final String orderTypeAr = _getOrderTypeLabel(orderType ?? '', p);
     final hasLogo = data.sellerLogo != null && data.sellerLogo!.isNotEmpty;
     final resolvedDailyOrderNumber =
         (dailyOrderNumber != null && dailyOrderNumber.trim().isNotEmpty)
@@ -141,9 +141,9 @@ class InvoiceHtmlTemplate {
     }
 
     // حساب الخصم
-    double discountAmount =
+    final double discountAmount =
         data.totalExclVat - (data.totalInclVat - data.vatAmount);
-    double totalAfterDiscount = data.totalExclVat - discountAmount;
+    final double totalAfterDiscount = data.totalExclVat - discountAmount;
 
     return '''
 <!DOCTYPE html>
@@ -178,8 +178,8 @@ class InvoiceHtmlTemplate {
     .w-full { width: 100%; }
     .w-24 { width: 96px; }
     .h-24 { height: 96px; }
-    .w-1\/3 { width: 33.333%; }
-    .w-7\/12 { width: 58.333%; }
+    .w-1/3 { width: 33.333%; }
+    .w-7/12 { width: 58.333%; }
     .object-contain { object-fit: contain; }
     .border { border: 1px solid; }
     .border-2 { border: 2px solid #000; }

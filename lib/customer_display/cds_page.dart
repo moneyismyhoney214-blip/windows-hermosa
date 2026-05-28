@@ -3,10 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'models.dart';
-import 'display_language_service.dart';
 import '../services/api/api_constants.dart';
 import '../services/app_themes.dart';
+import 'display_language_service.dart';
+import 'models.dart';
 
 class CustomerFacingScreen extends StatelessWidget {
   const CustomerFacingScreen({
@@ -40,6 +40,7 @@ class CustomerFacingScreen extends StatelessWidget {
     this.disabledMealIds = const <String>{},
     required this.onToggleMealAvailability,
     this.onClose,
+    this.orderNote,
   });
 
   final List<CartItem> cart;
@@ -72,6 +73,10 @@ class CustomerFacingScreen extends StatelessWidget {
   final void Function(Map<String, dynamic> product, bool isDisabled)
   onToggleMealAvailability;
   final VoidCallback? onClose;
+
+  /// Free-text cart-level note from the cashier — surfaces beneath the
+  /// financial highlights inside the cart panel.
+  final String? orderNote;
 
   Widget _buildBrandMark({double size = 40, bool useRemoteLogo = true}) {
     final hasRemoteLogo = useRemoteLogo && sellerLogoUrl.trim().isNotEmpty;
@@ -220,9 +225,7 @@ class CustomerFacingScreen extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  // Order screen header always shows the Hermosa brand — the
-                  // restaurant identity is only rendered on the welcome /
-                  // idle screen.
+                  // Order header always shows Hermosa brand; restaurant identity only on welcome/idle.
                   _buildBrandMark(size: 32, useRemoteLogo: false),
                   const SizedBox(width: 12),
                   Expanded(
@@ -316,7 +319,7 @@ class CustomerFacingScreen extends StatelessWidget {
             children: [
               Text(
                 DisplayLanguageService.t('cds_cart_list', languageCode: lang),
-                style: TextStyle(fontFamily: 'Cairo',
+                style: const TextStyle(fontFamily: 'Cairo',
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF1B2538),
@@ -341,7 +344,7 @@ class CustomerFacingScreen extends StatelessWidget {
                           : '-',
                     },
                   ),
-                  style: TextStyle(fontFamily: 'Cairo',
+                  style: const TextStyle(fontFamily: 'Cairo',
                     color: Colors.grey,
                     fontWeight: FontWeight.w500,
                   ),
@@ -352,6 +355,10 @@ class CustomerFacingScreen extends StatelessWidget {
           if (isOrderFree || _showPromo || _showDiscount) ...[
             const SizedBox(height: 16),
             _buildFinancialHighlights(lang, compact: compact),
+          ],
+          if (orderNote != null && orderNote!.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildOrderNoteBanner(lang),
           ],
           const SizedBox(height: 16),
           Expanded(
@@ -413,7 +420,7 @@ class CustomerFacingScreen extends StatelessWidget {
             children: [
               Text(
                 DisplayLanguageService.t('cds_total_final', languageCode: lang),
-                style: TextStyle(fontFamily: 'Cairo',
+                style: const TextStyle(fontFamily: 'Cairo',
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF1B2538),
@@ -425,7 +432,7 @@ class CustomerFacingScreen extends StatelessWidget {
                 children: [
                   Text(
                     _afterDiscountTotal.toStringAsFixed(ApiConstants.digitsNumber),
-                    style: TextStyle(fontFamily: 'Cairo',
+                    style: const TextStyle(fontFamily: 'Cairo',
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
                       color: Color(0xFFF27D26),
@@ -434,7 +441,7 @@ class CustomerFacingScreen extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     _resolvedCurrency(lang),
-                    style: TextStyle(fontFamily: 'Cairo',
+                    style: const TextStyle(fontFamily: 'Cairo',
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
                       color: Colors.grey,
@@ -495,7 +502,7 @@ class CustomerFacingScreen extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(fontFamily: 'Cairo',
+        style: const TextStyle(fontFamily: 'Cairo',
           color: Color(0xFF5E6673),
           fontWeight: FontWeight.w600,
           fontSize: 12,
@@ -509,7 +516,6 @@ class CustomerFacingScreen extends StatelessWidget {
     final unavailable = _isUnavailable(item.product.id, productMap);
     final hasDiscount = item.hasDiscount;
     final rawTotal = item.finalTotal ?? item.totalPrice;
-    // عرض السعر شامل الضريبة
     final effectiveFinalTotal = rawTotal + (rawTotal * _resolvedTaxRate);
 
     return InkWell(
@@ -553,7 +559,7 @@ class CustomerFacingScreen extends StatelessWidget {
                       item.quantity % 1 == 0
                           ? item.quantity.toStringAsFixed(0)
                           : item.quantity.toString(),
-                      style: TextStyle(fontFamily: 'Cairo',
+                      style: const TextStyle(fontFamily: 'Cairo',
                         color: Color(0xFFF27D26),
                         fontWeight: FontWeight.bold,
                       ),
@@ -610,7 +616,6 @@ class CustomerFacingScreen extends StatelessWidget {
                             );
                           },
                         ),
-                        // عرض الإضافات (extras)
                         if (item.selectedExtras.isNotEmpty && !unavailable)
                           Padding(
                             padding: const EdgeInsets.only(top: 4),
@@ -631,18 +636,21 @@ class CustomerFacingScreen extends StatelessWidget {
                               'cds_status_unavailable',
                               languageCode: lang,
                             ),
-                            style: TextStyle(fontFamily: 'Cairo',
+                            style: const TextStyle(fontFamily: 'Cairo',
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: Color(0xFFB42318),
                             ),
                           ),
-                        // ✅ عرض بيانات الخصم للمنتج
+                        // Per-item note stamped by the cashier.
+                        if (item.notes.trim().isNotEmpty && !unavailable) ...[
+                          const SizedBox(height: 6),
+                          _buildItemNoteChip(item.notes.trim()),
+                        ],
                         if (hasDiscount && !unavailable) ...[
                           const SizedBox(height: 6),
                           Row(
                             children: [
-                              // عرض السعر الأصلي شامل الضريبة مشطوب
                               if (item.originalPrice > rawTotal)
                                 Text(
                                   (item.originalPrice + (item.originalPrice * _resolvedTaxRate)).toStringAsFixed(ApiConstants.digitsNumber),
@@ -654,7 +662,6 @@ class CustomerFacingScreen extends StatelessWidget {
                                   ),
                                 ),
                               const SizedBox(width: 8),
-                              // شارة الخصم
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 6,
@@ -673,7 +680,7 @@ class CustomerFacingScreen extends StatelessWidget {
                                             DiscountType.percentage
                                       ? '-${item.discount.toStringAsFixed(0)}%'
                                       : '-${_formatMoney(item.discountValue, lang)}',
-                                  style: TextStyle(fontFamily: 'Cairo',
+                                  style: const TextStyle(fontFamily: 'Cairo',
                                     fontSize: 11,
                                     fontWeight: FontWeight.w600,
                                     color: Color(0xFF2D9F7F),
@@ -690,7 +697,6 @@ class CustomerFacingScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            // ✅ عرض السعر النهائي مع الخصم
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -710,7 +716,7 @@ class CustomerFacingScreen extends StatelessWidget {
                 if (hasDiscount && !unavailable)
                   Text(
                     _resolvedCurrency(lang),
-                    style: TextStyle(fontFamily: 'Cairo',
+                    style: const TextStyle(fontFamily: 'Cairo',
                       fontSize: 10,
                       color: Color(0xFF2D9F7F),
                     ),
@@ -719,6 +725,96 @@ class CustomerFacingScreen extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildOrderNoteBanner(String lang) {
+    final text = orderNote?.trim() ?? '';
+    if (text.isEmpty) return const SizedBox.shrink();
+    final code = DisplayLanguageService.normalizeLanguageCode(lang);
+    final label = code == 'ar' ? 'ملاحظة الطلب' : 'Order note';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFFFBBF24).withValues(alpha: 0.45),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.sticky_note_2_rounded,
+            size: 20,
+            color: Color(0xFFB45309),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.cairo(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFFB45309),
+                    letterSpacing: 0.4,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  text,
+                  style: GoogleFonts.cairo(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF92400E),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItemNoteChip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: const Color(0xFFFBBF24).withValues(alpha: 0.5),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.sticky_note_2_outlined,
+            size: 14,
+            color: Color(0xFFB45309),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.cairo(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF92400E),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -742,7 +838,7 @@ class CustomerFacingScreen extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: TextStyle(fontFamily: 'Cairo',
+              style: const TextStyle(fontFamily: 'Cairo',
                 color: Colors.grey,
                 fontWeight: FontWeight.w500,
               ),
@@ -782,7 +878,7 @@ class CustomerFacingScreen extends StatelessWidget {
             'cds_current_order_subtitle',
             languageCode: lang,
           ),
-          style: TextStyle(fontFamily: 'Cairo',
+          style: const TextStyle(fontFamily: 'Cairo',
             fontSize: 18,
             color: Colors.grey,
             fontWeight: FontWeight.w500,
@@ -860,9 +956,7 @@ class CustomerFacingScreen extends StatelessWidget {
   }
 
   String _groupExtras(List<ProductExtra> extras) {
-    // Group by id so repeated addons collapse to a single label with a count.
-    // Name resolution follows the invoice language pair: primary first,
-    // secondary only when allowed and distinct.
+    // Group by id so repeated addons collapse to a single labelled count, using invoice language pair.
     final grouped = <String, _ExtraGroupEntry>{};
     for (final e in extras) {
       final key = e.id.isNotEmpty ? e.id : e.name;
@@ -911,11 +1005,7 @@ class CustomerFacingScreen extends StatelessWidget {
 
   bool get _showPromo => promoCode?.trim().isNotEmpty == true;
 
-  // Welcome-screen fallback only — when the cashier pushes a cart, the
-  // real `taxRate` arrives via display_app_service's `pushToDisplay`
-  // (which sources `ApiConstants.taxRate` and `taxPercentage` from the
-  // active branch). The 0.15 here just keeps the label readable on the
-  // very first welcome frame before a cart push happens.
+  // Welcome-screen fallback only; real taxRate arrives via display_app_service's pushToDisplay.
   double get _resolvedTaxRate => (taxRate ?? 0.15).clamp(0.0, 1.0).toDouble();
 
   String get _taxRateLabel {
@@ -926,23 +1016,18 @@ class CustomerFacingScreen extends StatelessWidget {
     return percent.toStringAsFixed(ApiConstants.digitsNumber);
   }
 
-  // ✅ الإجمالي الفرعي الأصلي قبل الخصم (للعرض)
   double get _subtotal {
     if (subtotalAmount != null && subtotalAmount! > 0) {
       return subtotalAmount!;
     }
-    // حساب من المنتجات - نستخدم originalPrice قبل الخصم
     return cart.fold<double>(0.0, (sum, item) => sum + item.originalPrice);
   }
 
-  // الإجمالي الفرعي بعد الخصم (للحسابات الداخلية)
   double get _discountedSubtotal =>
       cart.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
 
-  // ✅ الضريبة محسوبة على الإجمالي بعد الخصم (الطريقة الشائعة)
   double get _tax => taxAmount ?? (_discountedSubtotal * _resolvedTaxRate);
 
-  // ✅ الإجمالي الإجمالي (subtotal + tax) قبل الخصم
   double get _grossTotal =>
       totalAmount ?? (_subtotal + (_subtotal * _resolvedTaxRate));
 
@@ -952,12 +1037,10 @@ class CustomerFacingScreen extends StatelessWidget {
       return stackedOrderDiscount;
     }
 
-    // أولوية للخصم الصريح على الطلب كله
     if ((discountAmount ?? 0) > 0) {
       return discountAmount!;
     }
 
-    // لو في originalTotal و discountedTotal من السيرفر، استخدم الفرق
     if (originalTotal != null && discountedTotal != null) {
       final diff = originalTotal! - discountedTotal!;
       if (diff > 0) {
@@ -965,8 +1048,7 @@ class CustomerFacingScreen extends StatelessWidget {
       }
     }
 
-    // ✅ حساب خصومات المنتجات الفردية (نسبة أو سعر أو مجاني)
-    // لما السيرفر مش بيبعت discountedTotal صريح
+    // Sum per-item discounts when server doesn't send an explicit discountedTotal.
     final itemsDiscount = cart.fold<double>(
       0.0,
       (sum, item) => sum + item.discountValue,
@@ -996,13 +1078,10 @@ class CustomerFacingScreen extends StatelessWidget {
   }
 
   double get _beforeDiscountTotal {
-    // لو السيرفر بيبعت originalTotal صريح، استخدمه
     final original = originalTotal;
     if (original != null && original > 0) {
       return original;
     }
-
-    // ✅ استخدم _grossTotal اللي بيحسب الإجمالي قبل الخصم
     return _grossTotal;
   }
 
@@ -1120,7 +1199,6 @@ class _AutoScrollCartListState extends State<_AutoScrollCartList> {
   @override
   void didUpdateWidget(covariant _AutoScrollCartList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Scroll to bottom when a new item is added
     if (widget.cart.length > _previousLength) {
       _scrollToBottom();
     }

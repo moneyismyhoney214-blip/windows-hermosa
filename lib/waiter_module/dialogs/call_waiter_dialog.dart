@@ -3,6 +3,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../services/app_themes.dart';
 import '../../services/language_service.dart';
+import '../../utils/ui_feedback.dart';
 import '../services/waiter_controller.dart';
 
 /// Broadcast-call dialog: the cashier (or a waiter) rings the bell and
@@ -34,13 +35,25 @@ class _CallWaiterDialogState extends State<CallWaiterDialog> {
   }
 
   void _broadcast() {
-    widget.controller.sendMessage(
-      text: _messageCtrl.text.trim(),
-      tableId: widget.tableId,
-      tableNumber: widget.tableNumber,
-      isCall: true,
-    );
-    Navigator.of(context).pop(true);
+    var ok = true;
+    try {
+      widget.controller.sendMessage(
+        text: _messageCtrl.text.trim(),
+        tableId: widget.tableId,
+        tableNumber: widget.tableNumber,
+        isCall: true,
+      );
+    } catch (e) {
+      // sendMessage throws if there's no active (viewer) session — don't
+      // leave the dialog stuck open; pop with `false` and surface a hint.
+      debugPrint('⚠️ CallWaiterDialog: sendMessage failed: $e');
+      ok = false;
+    }
+    if (!mounted) return;
+    if (!ok) {
+      UiFeedback.info(context, translationService.t('waiter_call_failed'));
+    }
+    Navigator.of(context).pop(ok);
   }
 
   @override
@@ -48,7 +61,7 @@ class _CallWaiterDialogState extends State<CallWaiterDialog> {
     final title = widget.tableNumber != null
         ? translationService.t(
             'waiter_call_for_table',
-            args: {'table': widget.tableNumber!},
+            args: {'table': widget.tableNumber},
           )
         : translationService.t('waiter_call_broadcast_title');
 

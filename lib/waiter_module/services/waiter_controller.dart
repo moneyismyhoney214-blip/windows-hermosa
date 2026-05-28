@@ -8,6 +8,8 @@ import '../../models/waitlist_mesh_event.dart';
 import '../../services/api/api_constants.dart';
 import '../../services/api/branch_service.dart';
 import '../../services/api/order_service.dart';
+import '../../services/logger_service.dart';
+import '../../services/whatsapp_service.dart';
 import '../models/network_message.dart';
 import '../models/table_migrate_event.dart';
 import '../models/table_pickup_request.dart';
@@ -17,16 +19,19 @@ import '../models/waiter_table_event.dart';
 import 'mesh_auth_service.dart';
 import 'waiter_billing_service.dart';
 import 'waiter_cart_store.dart';
-import 'waiter_order_outbox.dart';
 import 'waiter_config_store.dart';
 import 'waiter_discovery_service.dart';
 import 'waiter_message_store.dart';
 import 'waiter_network_service.dart';
 import 'waiter_notification_service.dart';
+import 'waiter_order_outbox.dart';
 import 'waiter_pickup_store.dart';
 import 'waiter_roster_service.dart';
 import 'waiter_session_service.dart';
+import 'waiter_table_customer_store.dart';
 import 'waiter_table_registry.dart';
+
+part 'waiter_controller_parts/waiter_controller.broadcasts.dart';
 
 /// How often we send a [WireMessageType.heartbeat] to every connected peer.
 /// 15s is well under [WaiterRosterService.staleThreshold] (45s) so a peer
@@ -158,8 +163,25 @@ class WaiterController extends ChangeNotifier {
   Stream<WaitlistMeshSnapshot> get onWaitlistSnapshot =>
       _waitlistSnapshotStream.stream;
 
+  final StreamController<String> _openTableStream =
+      StreamController<String>.broadcast();
+
+  /// Emits a table id when this device should jump straight into the
+  /// order-composition screen for that table — fired when the waiter
+  /// accepts a cashier "pickup" request or a call pinned to a table, so
+  /// they can start taking the order immediately instead of hunting for
+  /// the table on the grid. The shell switches to the tables tab and the
+  /// tables screen pushes the order screen.
+  Stream<String> get onOpenTableRequest => _openTableStream.stream;
+
   bool _running = false;
   bool get isRunning => _running;
+
+  /// Bumped on every [stop] / [clearSessionStores]. Fire-and-forget work
+  /// kicked off during one session (e.g. the background pay-later
+  /// reconcile) captures this on entry and bails the moment it changes,
+  /// so a stale reconcile can't resurrect rows the next session cleared.
+  int _sessionGeneration = 0;
 
   /// Single-flight guard: if two callers hit [start] back-to-back while the
   /// first is still awaiting mDNS/Bonsoir, the second mustn't spin up a
@@ -180,14 +202,26 @@ class WaiterController extends ChangeNotifier {
 
   /// Mark the waiter as actively composing an order for [tableId].
   /// Clears any previous value so a nav hop from table A → B doesn't
-  /// leak the stale id.
+  /// leak the stale id. Also flips this waiter's presence to `busy` and
+  /// broadcasts it so the cashier's roster shows who's tied up.
   void setActiveOrderingTable(String tableId) {
     _activeOrderingTableId = tableId;
+    final self = session.self;
+    if (self != null && !self.isViewer && self.status != WaiterStatus.busy) {
+      session.setStatus(WaiterStatus.busy);
+      _broadcastStatus();
+    }
   }
 
   void clearActiveOrderingTable([String? tableId]) {
     if (tableId != null && _activeOrderingTableId != tableId) return;
     _activeOrderingTableId = null;
+    // Back to free only if we were busy for this; don't stomp manual on-break/offline.
+    final self = session.self;
+    if (self != null && !self.isViewer && self.status == WaiterStatus.busy) {
+      session.setStatus(WaiterStatus.free);
+      _broadcastStatus();
+    }
   }
 
   WaiterController({
@@ -200,9 +234,7 @@ class WaiterController extends ChangeNotifier {
     required this.pickupStore,
   });
 
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
+  // --- Lifecycle ---
 
   /// Ensure the controller is running as a read-only viewer (used by the
   /// cashier so its tables screen can mirror waiter state). Safe to call
@@ -220,11 +252,7 @@ class WaiterController extends ChangeNotifier {
       debugPrint(
           '🔄 ensureViewer: branch switched ($current → $branchId), restarting');
       await stop();
-      // Previous branch's mesh state must not leak into the new one.
-      // tableRegistry, messageStore, pickupStore all hold data scoped
-      // to the prior branch — clear before the new identity goes live.
-      // Await so the registry's disk wipe completes before the fresh
-      // identity's hydrate races against the same SharedPreferences.
+      // Clear prior-branch mesh state before the new identity hydrates from disk.
       await clearSessionStores();
     }
     debugPrint('👁️ ensureViewer starting on branch $branchId');
@@ -244,91 +272,60 @@ class WaiterController extends ChangeNotifier {
   /// await this so a fast re-login's hydrate doesn't race the disk
   /// wipe and resurrect state the user explicitly cleared.
   Future<void> clearSessionStores() async {
+    _sessionGeneration++;
     messages.clear();
     pickupStore.clear();
     await tableRegistry.clearAll();
     roster.clear();
     try {
       await getIt<WaiterCartStore>().clearAll();
-    } catch (_) {}
-    // Wipe the offline order outbox too. Without this, a waiter signing
-    // out mid-shift while the KDS is unreachable would leave their
-    // queued orders sitting in SharedPreferences; the next waiter to
-    // sign in on this device would see them flushed under their OWN
-    // session id once connectivity returns — corrupting revenue/tip
-    // attribution and confusing the kitchen with stale tickets.
+    } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
+    // Drop outbox: prevents next signed-in waiter from flushing prior waiter's orders.
     try {
       await getIt<WaiterOrderOutbox>().clearAll();
-    } catch (_) {}
-    // Drop the waiter billing cache (pay methods + tax rate). On a
-    // shared tablet, the next waiter may be on a different branch
-    // with different settings — the cached `card` enabled flag would
-    // otherwise show a card option on a cash-only branch.
+    } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
+    // Drop billing cache: cross-branch shared tablet may have different pay-methods/tax.
     try {
       getIt<WaiterBillingService>().clearSessionCaches();
-    } catch (_) {}
-    // Wipe BranchService caches too — they're mostly cashier-owned but
-    // the waiter module reads them for tax/pay-methods/branch settings.
-    // Cross-branch handoff on a shared tablet would otherwise serve
-    // stale pay-method config from the previous shift.
+    } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
+    // Drop BranchService caches: prevents stale pay-method config across branch switch.
     try {
       getIt<BranchService>().clearSessionCaches();
-    } catch (_) {}
-    // Drop the mesh MAC key so a different branch's session derives a
-    // fresh one on next start(). Without this, a cashier switching
-    // branches without restarting the app would keep the old branch's
-    // key in memory and accept/sign with the wrong identity.
+    } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
+    // Drop mesh MAC key so next start() derives a fresh per-branch key.
     try {
       getIt<MeshAuthService>().clear();
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
     debugPrint('🧹 waiter session stores cleared');
   }
 
   Future<void> start() async {
     if (_running) return;
-    // Join an in-flight start instead of spawning a second broadcast.
-    // Without this, two rapid `ensureViewer` calls (e.g. Tables screen
-    // rebuilt twice during login) each initialize discovery — producing
-    // the duplicate `waiter-Cashier-viewer (2)` service we see on the
-    // LAN and two socket listeners racing to HELLO the same peers.
+    // Single-flight: rapid back-to-back start() calls must share one broadcast.
     if (_starting != null) return _starting!;
     final self = session.self;
     if (self == null) {
       throw StateError('WaiterController.start() called before session init');
     }
 
+    // Captured so a stop() during awaits below won't re-flip _running back to true.
+    final startGen = _sessionGeneration;
+
     final completer = Completer<void>();
     _starting = completer.future;
 
-    // Guard against partial-startup wedges: if any step throws, the
-    // resources we already brought up must be released so a retry isn't
-    // blocked by `_running=true` holding a dead controller.
+    // Partial-startup guard: release any resources we brought up if a step throws.
     try {
-      // Rehydrate the table registry from disk BEFORE the network fires
-      // up. Without this, a waiter reopening the app would see an empty
-      // grid (no ownership, no pay-later bookings) until peers re-push
-      // their state — which never happens if this waiter is alone on
-      // the LAN. Scoped by waiterId so a second waiter on the same
-      // device doesn't inherit the first one's tables. Viewer sessions
-      // (cashier mirror) don't persist — only real waiters do.
+      // Hydrate registry from disk before network so the waiter doesn't see an empty grid.
+      // Scoped by branch+name (not deviceId) for correct shared-tablet handoff.
       if (!self.isViewer && self.name.trim().isNotEmpty) {
         try {
-          // Scope by branch+name, not deviceId — a shared tablet
-          // handing off from waiter Ahmed to waiter Sara would
-          // otherwise feed Sara Ahmed's pay-later rows on her first
-          // login if Ahmed force-killed without signing out. Also
-          // skip hydrate when name is empty (partially-initialized
-          // session) — an empty-name scope would collapse two
-          // different waiters into the same persistence slot.
           await tableRegistry.hydrate(
             branchId: self.branchId,
             name: self.name,
             selfId: self.id,
           );
-          // Rehydrate the cart store too so drafts the waiter was
-          // mid-composing when the app died come back intact. Same
-          // branch+name scoping as the registry so they can never
-          // disagree on which waiter the local state belongs to.
+          // Hydrate cart store so mid-composition drafts survive an app crash.
           try {
             await getIt<WaiterCartStore>().hydrate(
               branchId: self.branchId,
@@ -337,26 +334,14 @@ class WaiterController extends ChangeNotifier {
           } catch (e) {
             debugPrint('⚠️ cartStore.hydrate failed: $e');
           }
-          // Backend reconcile — covers the tiny window where
-          // createBooking succeeded but the app died before the local
-          // broadcast landed. Without this the bookingId would survive
-          // on the server with no local trace, leaving the waiter
-          // unable to edit / close it. Fire-and-forget so a slow
-          // network doesn't delay the grid.
+          // Backend reconcile: covers createBooking-succeeded-but-app-died window.
           unawaited(_reconcileFromBackendPayLaterBookings(self));
         } catch (e) {
           debugPrint('⚠️ tableRegistry.hydrate failed: $e');
         }
       }
 
-      // Prewarm the branch receipt cache (seller nested map, tax number,
-      // commercial register, uploaded logo URL from /seller/branches) so
-      // the waiter's thermal receipt gets the same header data the
-      // cashier prints. Without this, `getInvoice` is the only source
-      // and any payload missing `branch.seller.logo` leaves the printed
-      // receipt header blank. Fire-and-forget — the dispatcher reads
-      // whatever is cached at print time and falls back gracefully if
-      // the fetch is still in flight.
+      // Prewarm branch receipt cache so waiter's receipt header matches cashier's.
       try {
         unawaited(getIt<BranchService>().fetchAndCacheBranchReceiptInfo());
         unawaited(getIt<BranchService>().refreshTaxConfig());
@@ -364,14 +349,7 @@ class WaiterController extends ChangeNotifier {
         debugPrint('⚠️ waiter: fetchAndCacheBranchReceiptInfo failed: $e');
       }
 
-      // Derive the per-branch shared MAC key BEFORE the network
-      // service comes up — both signing (outbound) and verification
-      // (inbound) need it. ApiConstants.sellerId is set by AuthService
-      // on login; if it's still 0 (rare boot race) we fall back to
-      // an empty seller scope. The waiter and the cashier on the
-      // same branch derive identical keys without any handshake
-      // because both feed the same (branchId, sellerId) pair into
-      // MeshAuthService.deriveKey().
+      // Derive per-branch MAC key before network so signing/verification both have it.
       try {
         getIt<MeshAuthService>().deriveKey(
           branchId: self.branchId,
@@ -380,14 +358,28 @@ class WaiterController extends ChangeNotifier {
       } catch (e) {
         debugPrint('⚠️ MeshAuth deriveKey failed (non-fatal): $e');
       }
+      // Boot-race: sellerId=0 → key scoped to branchId:0 silently HMAC-rejects peers.
+      if (ApiConstants.sellerId == 0) {
+        Timer(const Duration(seconds: 3), () {
+          if (!_running) return;
+          final s = session.self;
+          if (s == null || ApiConstants.sellerId == 0) return;
+          try {
+            getIt<MeshAuthService>().deriveKey(
+              branchId: s.branchId,
+              sellerId: ApiConstants.sellerId.toString(),
+            );
+            _announceSelf();
+            debugPrint('🔐 MeshAuth key re-derived after sellerId resolved');
+          } catch (e) {
+            debugPrint('⚠️ MeshAuth re-derive failed: $e');
+          }
+        });
+      }
 
       _net = WaiterNetworkService(
         selfProvider: () => session.self!,
-        // Application-layer mesh auth — every outgoing WireMessage
-        // gets HMAC-signed and every incoming one verified. The key
-        // was derived above; without this wire-up a rogue device on
-        // the same wifi could inject forged events. See
-        // MeshAuthService for the threat model.
+        // App-layer HMAC on every WireMessage; see MeshAuthService for threat model.
         auth: getIt<MeshAuthService>(),
       );
       final port = await _net!.startServer();
@@ -399,12 +391,19 @@ class WaiterController extends ChangeNotifier {
       _foundSub = _discovery!.onFound.listen(_handlePeerFound);
       _lostSub = _discovery!.onLost.listen((_) {});
 
+      // stop()/clear ran mid-await — unwind and stay stopped.
+      if (_sessionGeneration != startGen) {
+        await _tearDownPartialStart();
+        completer.complete();
+        return;
+      }
+
       _heartbeatTimer =
           Timer.periodic(_kHeartbeatInterval, (_) => _heartbeat());
       _staleSweepTimer =
           Timer.periodic(_kStaleSweepInterval, (_) => _sweepStalePeers());
 
-      _running = true; // commit AFTER successful setup
+      _running = true;
       _announceSelf();
       notifyListeners();
       completer.complete();
@@ -430,33 +429,27 @@ class WaiterController extends ChangeNotifier {
   /// newer than the HTTP snapshot, and `registry.apply` on new events
   /// will naturally update the injected rows.
   Future<void> _reconcileFromBackendPayLaterBookings(Waiter self) async {
+    // Captured: abandon paging if session generation bumps mid-flight.
+    final gen = _sessionGeneration;
+    bool sessionChanged() => gen != _sessionGeneration;
     try {
       final orderService = getIt<OrderService>();
-      // Walk up to 4 pages (200 bookings total) — plenty for a single
-      // waiter's shift but bounded so a pathological result never
-      // hammers the backend. A busy fine-dining venue with long pay-
-      // later tabs might have >50 rows on page 1; one-page would miss
-      // the rest.
+      // Bounded to 4×50 = 200 rows max so a pathological result never hammers backend.
       const maxPages = 4;
       const perPage = 50;
       var injected = 0;
       final selfNameNormalized = self.name.trim();
-      // Guard against an API that returns overlapping pages — inject
-      // each booking id at most once even if it appears on page 2
-      // AND page 3. Without this, `broadcastTableEvent` would fire
-      // twice and the kitchen / cashier could see duplicate pending
-      // states (harmless in practice since `apply` is idempotent, but
-      // noisy in the mesh).
+      // Dedupe across overlapping pages.
       final seenBookingIds = <String>{};
       for (var page = 1; page <= maxPages; page++) {
+        if (sessionChanged()) return;
         final resp = await orderService.getBookings(
           page: page,
           perPage: perPage,
-          // Best-effort background reconcile — a 401 here (e.g. WAITER
-          // role isn't allowed to list bookings on this branch) must not
-          // tear down the freshly-established session.
+          // 401 here (WAITER role denied) must not tear down the fresh session.
           skipGlobalAuth: true,
         );
+        if (sessionChanged()) return;
         final data = resp['data'];
         if (data is! List) break;
         if (data.isEmpty) break;
@@ -466,11 +459,11 @@ class WaiterController extends ChangeNotifier {
           try {
             booking = Booking.fromJson(
                 raw.map((k, v) => MapEntry(k.toString(), v)));
-          } catch (_) {
+          } catch (e) {
+            Log.d('catch', 'non-fatal: $e');
             continue;
           }
-          // Only pay-later + not paid + not cancelled — mirror the
-          // cashier's `_canCreateInvoiceForBooking` filter.
+          // Mirror cashier's `_canCreateInvoiceForBooking` filter.
           if (booking.isPaid) continue;
           final statusLower = booking.status.toLowerCase();
           if (statusLower == '8' ||
@@ -478,9 +471,7 @@ class WaiterController extends ChangeNotifier {
               statusLower == 'canceled') {
             continue;
           }
-          // The booking has to be OURS — backend tags the creator as
-          // `cashier_name` on the raw blob. Without this filter we'd
-          // inject every waiter's pay-later tables on this device.
+          // Filter to OUR bookings only (backend tags creator as `cashier_name`).
           final cashier = (booking.raw['cashier_name'] ??
                   raw['cashier_name'])
               ?.toString()
@@ -494,15 +485,9 @@ class WaiterController extends ChangeNotifier {
           if (tableId == null || tableId.isEmpty) continue;
           final bookingIdStr = booking.id.toString();
           if (!seenBookingIds.add(bookingIdStr)) continue;
-          // Already accounted for — whether by disk-hydrate or a live
-          // mesh broadcast between the fetch and now. Skip.
           if (tableRegistry.lookup(tableId) != null) continue;
-          // Inject via `broadcastTableEvent` (not raw `apply`) so any
-          // online peers learn about this orphan booking immediately.
-          // Without the broadcast, peers would only converge on next
-          // HELLO or when they poll getBookings themselves — leaving
-          // the cashier's tables screen showing stale state for
-          // potentially minutes.
+          if (sessionChanged()) return;
+          // Broadcast (not raw apply) so online peers converge immediately.
           broadcastTableEvent(TableLifecycleEvent(
             kind: TableLifecycleKind.paymentPending,
             tableId: tableId,
@@ -515,7 +500,7 @@ class WaiterController extends ChangeNotifier {
           ));
           injected += 1;
         }
-        if (data.length < perPage) break; // last page reached
+        if (data.length < perPage) break;
       }
       if (injected > 0) {
         debugPrint(
@@ -531,14 +516,14 @@ class WaiterController extends ChangeNotifier {
     _heartbeatTimer = null;
     _staleSweepTimer?.cancel();
     _staleSweepTimer = null;
-    try { await _msgSub?.cancel(); } catch (_) {}
-    try { await _foundSub?.cancel(); } catch (_) {}
-    try { await _lostSub?.cancel(); } catch (_) {}
+    try { await _msgSub?.cancel(); } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
+    try { await _foundSub?.cancel(); } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
+    try { await _lostSub?.cancel(); } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
     _msgSub = null;
     _foundSub = null;
     _lostSub = null;
-    try { await _discovery?.dispose(); } catch (_) {}
-    try { await _net?.dispose(); } catch (_) {}
+    try { await _discovery?.dispose(); } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
+    try { await _net?.dispose(); } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
     _discovery = null;
     _net = null;
     _running = false;
@@ -547,13 +532,13 @@ class WaiterController extends ChangeNotifier {
   Future<void> stop() async {
     if (!_running) return;
     _running = false;
+    _sessionGeneration++;
 
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _staleSweepTimer?.cancel();
     _staleSweepTimer = null;
 
-    // Notify peers we're leaving.
     _broadcastLeave();
 
     await _msgSub?.cancel();
@@ -571,6 +556,13 @@ class WaiterController extends ChangeNotifier {
   void dispose() {
     _heartbeatTimer?.cancel();
     _staleSweepTimer?.cancel();
+    // Defensive: dispose() may be called without a prior stop().
+    unawaited(_msgSub?.cancel());
+    unawaited(_foundSub?.cancel());
+    unawaited(_lostSub?.cancel());
+    _msgSub = null;
+    _foundSub = null;
+    _lostSub = null;
     _callStream.close();
     _tableEventStream.close();
     _peerHelloStream.close();
@@ -578,12 +570,13 @@ class WaiterController extends ChangeNotifier {
     _pickupRequestStream.close();
     _pickupUpdateStream.close();
     _tableMigrateStream.close();
+    _waitlistEventStream.close();
+    _waitlistSnapshotStream.close();
+    _openTableStream.close();
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // Outbound actions
-  // ---------------------------------------------------------------------------
+  // --- Outbound actions ---
 
   /// Change this waiter's status and let everyone know.
   Future<void> setStatus(WaiterStatus status) async {
@@ -635,7 +628,6 @@ class WaiterController extends ChangeNotifier {
       branchId: self.branchId,
       data: msg.toJson(),
     );
-    // Broadcast target → fan out to everyone on the LAN. Directed → one.
     if (targetId == kBroadcastWaiterId) {
       _net?.broadcast(wire);
     } else {
@@ -650,7 +642,7 @@ class WaiterController extends ChangeNotifier {
   void acceptCall(String messageId) {
     final self = session.self;
     if (self == null) return;
-    // Update our local copy first for instant UI feedback.
+    // Optimistic local update for instant UI feedback.
     messages.markAccepted(
       messageId: messageId,
       waiterId: self.id,
@@ -668,156 +660,24 @@ class WaiterController extends ChangeNotifier {
         'accepted_at': DateTime.now().toIso8601String(),
       },
     ));
+    // If pinned to a table, jump the waiter straight to the order screen.
+    if (!self.isViewer) {
+      WaiterMessage? msg;
+      for (final m in messages.all) {
+        if (m.id == messageId) {
+          msg = m;
+          break;
+        }
+      }
+      final tableId = msg?.tableId;
+      if (tableId != null && tableId.isNotEmpty) {
+        _openTableStream.add(tableId);
+      }
+    }
   }
 
-  void broadcastTableEvent(TableLifecycleEvent event) {
-    // Apply locally first so our own registry is up-to-date even
-    // without a round-trip from a peer. Matches incoming semantics in
-    // _handleIncoming.
-    tableRegistry.apply(event);
-    _tableEventStream
-        .add(WaiterTableEventEnvelope(event: event, fromSelf: true));
-    final self = session.self!;
-    _net?.broadcast(WireMessage(
-      type: WireMessageType.tableUpdate,
-      senderId: self.id,
-      senderName: self.name,
-      branchId: self.branchId,
-      data: event.toJson(),
-    ));
-  }
 
-  /// Broadcast a waitlist delta to every connected peer. The local
-  /// [WaitlistService] calls this via the mesh bridge for every mutation
-  /// so both the cashier and every waiter see the same queue.
-  ///
-  /// A self-echo is emitted on [onWaitlistEvent] so any other local
-  /// listener (e.g. a badge counter that watches the stream rather than
-  /// the service directly) gets a uniform signal regardless of origin.
-  void broadcastWaitlistEvent(WaitlistMeshEvent event) {
-    _waitlistEventStream.add(
-      WaitlistMeshEventEnvelope(event: event, fromSelf: true),
-    );
-    final self = session.self;
-    if (self == null) return;
-    _net?.broadcast(WireMessage(
-      type: WireMessageType.waitlistEvent,
-      senderId: self.id,
-      senderName: self.name,
-      branchId: self.branchId,
-      data: event.toJson(),
-    ));
-  }
-
-  /// Send a full-queue snapshot to a specific peer. Used as HELLO
-  /// catch-up so a freshly joined device starts with the same waitlist
-  /// the rest of the LAN already has — without waiting for the next
-  /// mutation.
-  void pushWaitlistSnapshotTo(
-    String peerId,
-    WaitlistMeshSnapshot snapshot,
-  ) {
-    final self = session.self;
-    if (self == null) return;
-    _net?.sendTo(
-      peerId,
-      WireMessage(
-        type: WireMessageType.waitlistSnapshot,
-        senderId: self.id,
-        senderName: self.name,
-        branchId: self.branchId,
-        data: snapshot.toJson(),
-      ),
-    );
-  }
-
-  /// Fan out a fresh kitchen-printer snapshot to every connected waiter.
-  /// Only the cashier (viewer) should call this; waiters produce no
-  /// authoritative config. `payload` is the full JSON map from
-  /// [SyncedKitchenPrintersConfig.toJson].
-  void broadcastKitchenPrintersConfig(Map<String, dynamic> payload) {
-    final self = session.self;
-    if (self == null) return;
-    if (!self.isViewer) return;
-    _net?.broadcast(WireMessage(
-      type: WireMessageType.configKitchenPrinters,
-      senderId: self.id,
-      senderName: self.name,
-      branchId: self.branchId,
-      data: payload,
-    ));
-  }
-
-  /// Same as [broadcastKitchenPrintersConfig] but targets a single peer —
-  /// used for the push-on-HELLO catch-up so late joiners match state
-  /// without flooding the network.
-  void pushKitchenPrintersConfigTo(
-    String peerId,
-    Map<String, dynamic> payload,
-  ) {
-    final self = session.self;
-    if (self == null) return;
-    if (!self.isViewer) return;
-    _net?.sendTo(
-      peerId,
-      WireMessage(
-        type: WireMessageType.configKitchenPrinters,
-        senderId: self.id,
-        senderName: self.name,
-        branchId: self.branchId,
-        data: payload,
-      ),
-    );
-  }
-
-  /// Broadcast the KDS host/port the cashier is connected to.
-  void broadcastKdsEndpoint(Map<String, dynamic> payload) {
-    final self = session.self;
-    if (self == null) return;
-    if (!self.isViewer) return;
-    _net?.broadcast(WireMessage(
-      type: WireMessageType.configKdsEndpoint,
-      senderId: self.id,
-      senderName: self.name,
-      branchId: self.branchId,
-      data: payload,
-    ));
-  }
-
-  void pushKdsEndpointTo(String peerId, Map<String, dynamic> payload) {
-    final self = session.self;
-    if (self == null) return;
-    if (!self.isViewer) return;
-    _net?.sendTo(
-      peerId,
-      WireMessage(
-        type: WireMessageType.configKdsEndpoint,
-        senderId: self.id,
-        senderName: self.name,
-        branchId: self.branchId,
-        data: payload,
-      ),
-    );
-  }
-
-  /// Ask the nearest cashier (viewer) to replay its latest config
-  /// snapshots. Intended for a future waiter-side "refresh" action —
-  /// unused in the Phase 1 happy path because the cashier already pushes
-  /// on every HELLO.
-  void requestConfigSync() {
-    final self = session.self;
-    if (self == null) return;
-    _net?.broadcast(WireMessage(
-      type: WireMessageType.configSyncRequest,
-      senderId: self.id,
-      senderName: self.name,
-      branchId: self.branchId,
-    ));
-  }
-
-  // ---------------------------------------------------------------------------
-  // Table pickup ("استلام") — Uber-style broadcast/claim.
-  // ---------------------------------------------------------------------------
+  // --- Table pickup ("استلام") — Uber-style broadcast/claim. ---
 
   /// Broadcast a pickup request for [tableId]. Cashier-only: waiters
   /// must not call this (there's no UI for it, and it would bypass the
@@ -863,8 +723,7 @@ class WaiterController extends ChangeNotifier {
     final self = session.self;
     if (self == null) return null;
     if (self.isViewer) {
-      // Cashiers can't claim their own broadcasts. Silent no-op: a
-      // cashier tapping the accept button by mistake shouldn't crash.
+      // Cashiers can't claim their own broadcasts; silent no-op.
       return null;
     }
     final stored = pickupStore.byId(requestId);
@@ -893,9 +752,7 @@ class WaiterController extends ChangeNotifier {
             (claimed.claimedAt ?? DateTime.now()).toIso8601String(),
       },
     ));
-    // Fold the claim into the existing table-lifecycle plumbing so the
-    // cashier's tables screen reuses the standard "assigned" visual
-    // and the claimer's own tableRegistry reflects ownership.
+    // Reuse the standard "assigned" lifecycle event for cashier UI + registry.
     broadcastTableEvent(TableLifecycleEvent(
       kind: TableLifecycleKind.assigned,
       tableId: claimed.tableId,
@@ -903,12 +760,14 @@ class WaiterController extends ChangeNotifier {
       waiterId: self.id,
       waiterName: self.name,
     ));
+    // Clock-skew tie-break: navigate only if we actually won.
+    if (claimed.claimedByWaiterId == self.id) {
+      _openTableStream.add(claimed.tableId);
+    }
     return claimed;
   }
 
-  // ---------------------------------------------------------------------------
-  // Table migration — cashier moves a seated party to a different table.
-  // ---------------------------------------------------------------------------
+  // --- Table migration — cashier moves a seated party to another table. ---
 
   /// Broadcast a migration. Cashier-only. Every peer (including the
   /// waiter that owned `oldTableId`) reacts in [_handleIncoming] — the
@@ -923,9 +782,7 @@ class WaiterController extends ChangeNotifier {
   }) {
     final self = session.self;
     if (self == null) return null;
-    // Both the cashier (viewer) and the owning waiter may initiate —
-    // if a waiter initiates, enforce that they actually own the source
-    // table so one waiter can't relocate another's table.
+    // Waiter initiator must own source table (prevent relocating another's table).
     if (!self.isViewer) {
       final owner = tableRegistry.ownerIdFor(oldTableId);
       if (owner != null && owner != self.id) {
@@ -951,79 +808,95 @@ class WaiterController extends ChangeNotifier {
       branchId: self.branchId,
       data: event.toJson(),
     ));
-    // If the initiator *is* the owner of the old table (waiter-driven
-    // migrate), apply the cart/registry shuffle locally — peers only
-    // handle this when they're the owner, and the initiator's own
-    // broadcast doesn't loop back through _handleIncoming.
+    // Live owner handles the shuffle in _handleIncoming; otherwise initiator does it.
     final ownerId = tableRegistry.ownerIdFor(oldTableId);
-    if (ownerId != null && ownerId == self.id) {
+    final liveWaiterOwnerId =
+        (ownerId != null && ownerId.trim().isNotEmpty && roster.byId(ownerId) != null)
+            ? ownerId
+            : null;
+    if (liveWaiterOwnerId != null) {
+      if (liveWaiterOwnerId == self.id) _applyMigrateAsOwner(event);
+    } else {
       _applyMigrateAsOwner(event);
     }
     return event;
   }
 
-  /// Called internally (by [_handleIncoming]) when an incoming migrate
-  /// names a table *this* device owns. Moves cart state and broadcasts
-  /// a release + assign so every other peer's registry converges.
+  /// Carry a seated party's full registry state from the old table to the
+  /// new one and tell every peer. Called either by the owning waiter (via
+  /// [_handleIncoming]) or — when no live waiter owns the table — by
+  /// whoever initiated the migrate (see [migrateTable]). The new table
+  /// keeps the SAME owner (a waiter id, or '' for a cashier-created
+  /// order), the SAME booking id, the SAME items/guests, and the SAME
+  /// billing phase (pay-later / paid) — only the table number changes.
   void _applyMigrateAsOwner(TableMigrateEvent event) {
     final self = session.self;
     if (self == null) return;
 
-    // Move the local cart (drafts + sent + guests) to the new table.
     WaiterCartStore? cart;
     try {
       cart = getIt<WaiterCartStore>();
-    } catch (_) {}
+    } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
     cart?.moveTableCart(event.oldTableId, event.newTableId);
+    try {
+      getIt<WaiterTableCustomerStore>().moveTable(
+        event.oldTableId,
+        event.newTableId,
+      );
+    } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
 
     final snapshot = tableRegistry.lookup(event.oldTableId);
     final guests = snapshot?.guestCount;
     final total = snapshot?.total;
     final itemCount = snapshot?.itemCount;
     final items = snapshot?.items;
-    // Carry the booking id over to the new table — without this, the
-    // destination's registry would lose the pay-later orderId and
-    // the next "Create Invoice" on the moved table would create a
-    // brand-new booking on the backend instead of invoicing the one
-    // the guests originally placed.
+    // Carry booking id so order actions stay reachable and no new booking is created.
     final carriedOrderId = snapshot?.orderId;
+    // Destination keeps the source's owner, NOT the migrator.
+    final ownerWaiterId = snapshot?.waiterId ?? self.id;
+    final ownerWaiterName = snapshot?.waiterName ?? self.name;
 
-    // Release the old table so the cashier's tables screen flips it to
-    // available + clears our own registry entry.
     broadcastTableEvent(TableLifecycleEvent(
       kind: TableLifecycleKind.released,
       tableId: event.oldTableId,
       tableNumber: event.oldTableNumber,
-      waiterId: self.id,
-      waiterName: self.name,
+      waiterId: ownerWaiterId,
+      waiterName: ownerWaiterName,
     ));
 
-    // Re-assign the new table with the carried-over order state so the
-    // cashier sees exactly what the party already ordered, but under
-    // the new table number.
     broadcastTableEvent(TableLifecycleEvent(
       kind: TableLifecycleKind.assigned,
       tableId: event.newTableId,
       tableNumber: event.newTableNumber,
-      waiterId: self.id,
-      waiterName: self.name,
+      waiterId: ownerWaiterId,
+      waiterName: ownerWaiterName,
       guestCount: guests,
       total: total,
       itemCount: itemCount,
       items: items,
       orderId: carriedOrderId,
     ));
-    // If the original booking was already past pay-later (the
-    // paymentPending flag was set), re-establish that state on the
-    // new tableId so "Edit Order" / "Create Invoice" remain reachable
-    // after the migrate.
-    if (snapshot?.paymentPending == true && carriedOrderId != null) {
+    // Re-emit billing phase so Edit/Invoice/Refund stay reachable on the new tableId.
+    if (snapshot?.paid == true && carriedOrderId != null) {
+      broadcastTableEvent(TableLifecycleEvent(
+        kind: TableLifecycleKind.paid,
+        tableId: event.newTableId,
+        tableNumber: event.newTableNumber,
+        waiterId: ownerWaiterId,
+        waiterName: ownerWaiterName,
+        guestCount: guests,
+        total: total,
+        itemCount: itemCount,
+        items: items,
+        orderId: carriedOrderId,
+      ));
+    } else if (snapshot?.paymentPending == true && carriedOrderId != null) {
       broadcastTableEvent(TableLifecycleEvent(
         kind: TableLifecycleKind.paymentPending,
         tableId: event.newTableId,
         tableNumber: event.newTableNumber,
-        waiterId: self.id,
-        waiterName: self.name,
+        waiterId: ownerWaiterId,
+        waiterName: ownerWaiterName,
         guestCount: guests,
         total: total,
         itemCount: itemCount,
@@ -1059,9 +932,7 @@ class WaiterController extends ChangeNotifier {
     return cancelled;
   }
 
-  // ---------------------------------------------------------------------------
-  // Inbound handling
-  // ---------------------------------------------------------------------------
+  // --- Inbound handling ---
 
   void _handlePeerFound(Waiter peer) {
     final self = session.self;
@@ -1069,42 +940,31 @@ class WaiterController extends ChangeNotifier {
     if (peer.branchId.isNotEmpty &&
         self.branchId.isNotEmpty &&
         peer.branchId != self.branchId) {
-      return; // Different branch — ignore
+      return;
     }
     roster.upsert(peer);
-    // Only connect once we have host+port. For outbound we initiate from the
-    // lower id to avoid both sides dialling each other.
+    // Lower id initiates to avoid both sides dialling each other.
     if (peer.host != null && peer.port != null && self.id.compareTo(peer.id) < 0) {
       _net?.connectToPeer(peer);
     }
   }
 
   void _handleIncoming(WireMessage msg) {
-    // If we're mid-shutdown, don't touch any streams — they may be
-    // closed already and .add() on a closed StreamController throws.
-    // Network callbacks can arrive after we cancel our own subscription
-    // so this guard isn't theoretical.
+    // Shutdown guard: late network callbacks may arrive after we cancel.
     if (!_running) return;
 
     final self = session.self;
     if (self == null) return;
-    if (msg.senderId == self.id) return; // ignore self-loop
+    if (msg.senderId == self.id) return;
 
-    // Cross-branch isolation: mDNS discovery already filters by branch,
-    // but a peer that connects directly (e.g. a stale cached IP after a
-    // branch switch) would bypass that filter. Drop any message whose
-    // envelope disagrees with ours so branches never bleed into each
-    // other's rosters or table state.
+    // Cross-branch isolation: drop messages whose envelope disagrees with ours.
     if (self.branchId.isNotEmpty &&
         msg.branchId.isNotEmpty &&
         msg.branchId != self.branchId) {
       return;
     }
 
-    // Any inbound message proves the peer is alive — refresh lastSeen so
-    // the sweep doesn't mark it offline. This works for every message
-    // type (not just HEARTBEAT) so quiet peers stay online as long as
-    // they're exchanging table/messages/etc.
+    // Any inbound traffic proves liveness; refresh lastSeen for all message types.
     roster.touch(msg.senderId);
 
     switch (msg.type) {
@@ -1117,22 +977,12 @@ class WaiterController extends ChangeNotifier {
           branchId: msg.branchId,
           status: WaiterStatusX.fromWire(msg.data['status']?.toString()),
         ));
-        // Late joiner: snapshot every table I currently own and push the
-        // TABLE_UPDATE events to just this peer so their registry matches
-        // ours without them having to wait for an edit. Only on first
-        // sight so duplicate HELLOs during reconnect don't re-flood.
+        // First-sight late-joiner: push owned tables + replay our claims.
         if (isNewPeer) {
           _pushOwnedTablesSnapshotTo(msg.senderId);
-          // Waiter-side: re-announce my own claimed pickups to the new
-          // peer so a claim whose original broadcast dropped (cashier
-          // restart, Wi-Fi glitch) still converges once both ends see
-          // each other. Viewers never claim, so this is a no-op there.
           if (!self.isViewer) _replayOwnClaimsTo(msg.senderId);
         }
-        // Emit on every HELLO (not just first sight). The cashier side
-        // listens on [onPeerHello] and pushes its current printer + KDS
-        // snapshots; the waiter's [WaiterConfigStore] version-gates the
-        // payload so repeated pushes are idempotent.
+        // Emit on every HELLO; cashier pushes printer/KDS snapshots (version-gated).
         _peerHelloStream.add(msg.senderId);
         break;
 
@@ -1159,20 +1009,17 @@ class WaiterController extends ChangeNotifier {
         if (forMe || isBroadcastForWaiter) {
           messages.record(message: incoming, incoming: true);
           if (incoming.isCall) {
-            notifications.playCall();
-            _callStream.add(incoming);
+            // Suppress ring while composing an order (FR-CTL-7 / NFR-USE-3).
+            if (!isTakingOrderNow) {
+              notifications.playCall();
+              _callStream.add(incoming);
+            }
           }
         }
         break;
 
       case WireMessageType.waiterCallAccepted:
-        // A peer claimed a broadcast. Update our local copy so the
-        // accept button turns into "تم الاستلام بواسطة X" on every
-        // device that's still showing the notification.
-        //
-        // Anti-spoof: the payload's `waiter_id` must match the wire
-        // envelope's `sender_id` — otherwise a malicious peer could
-        // forge "X accepted" on X's behalf.
+        // Anti-spoof: payload waiter_id must equal envelope sender_id.
         final mid = msg.data['message_id']?.toString();
         final wid = msg.data['waiter_id']?.toString();
         final wname = msg.data['waiter_name']?.toString();
@@ -1198,28 +1045,31 @@ class WaiterController extends ChangeNotifier {
       case WireMessageType.tablePaymentStatus:
         try {
           final event = TableLifecycleEvent.fromJson(msg.data);
-          // Keep the registry authoritative on every device (waiter or
-          // viewer/cashier). Without this the cashier's registry stays
-          // empty and `_hydrateFromRegistry` on re-mount can't replay
-          // state. Done BEFORE the stream emit so listeners see a
-          // registry that already reflects the new event.
+          // Apply before stream emit so listeners see an already-updated registry.
           tableRegistry.apply(event);
           _tableEventStream.add(WaiterTableEventEnvelope(
             event: event,
             fromSelf: false,
           ));
-        } catch (_) {}
+        } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
         break;
 
       case WireMessageType.heartbeat:
-        // Keep-alive only — already refreshed lastSeen above.
+        // Re-assert status so missed WAITER_STATUS broadcasts self-heal within one interval.
+        final hb = roster.byId(msg.senderId);
+        if (hb != null) {
+          final s = WaiterStatusX.fromWire(msg.data['status']?.toString());
+          if (s != hb.status) roster.upsert(hb.copyWith(status: s));
+        }
         break;
 
       case WireMessageType.configKitchenPrinters:
-        // Cashier echoes its snapshot back to itself if a second cashier
-        // broadcasts; isViewer guard on the store would accept valid
-        // newer versions. On the waiter device this populates the store
-        // so future direct-print-from-waiter can resolve printers.
+        // Anti-spoof: only cashiers (viewer- prefix) push printer config.
+        if (!msg.senderId.startsWith(Waiter.viewerIdPrefix)) {
+          debugPrint(
+              '⚠️ dropping CONFIG_KITCHEN_PRINTERS from non-viewer sender=${msg.senderId}');
+          break;
+        }
         if (self.isViewer) break;
         unawaited(
           configStore.applyKitchenPrinters(msg.data, sourceId: msg.senderId),
@@ -1227,28 +1077,46 @@ class WaiterController extends ChangeNotifier {
         break;
 
       case WireMessageType.configKdsEndpoint:
+        // Anti-spoof: only cashiers may repoint KDS endpoint.
+        if (!msg.senderId.startsWith(Waiter.viewerIdPrefix)) {
+          debugPrint(
+              '⚠️ dropping CONFIG_KDS_ENDPOINT from non-viewer sender=${msg.senderId}');
+          break;
+        }
         if (self.isViewer) break;
         unawaited(
           configStore.applyKdsEndpoint(msg.data, sourceId: msg.senderId),
         );
         break;
 
+      case WireMessageType.configWhatsApp:
+        // Anti-spoof: only cashiers hand out WAWP credentials.
+        if (!msg.senderId.startsWith(Waiter.viewerIdPrefix)) {
+          debugPrint(
+              '⚠️ dropping CONFIG_WHATSAPP from non-viewer sender=${msg.senderId}');
+          break;
+        }
+        if (self.isViewer) break;
+        final waId = msg.data['instance_id']?.toString();
+        final waTok = msg.data['access_token']?.toString();
+        if (waId != null && waId.trim().isNotEmpty &&
+            waTok != null && waTok.trim().isNotEmpty) {
+          whatsAppService.applyBackendCredentials(
+            instanceId: waId,
+            accessToken: waTok,
+          );
+          debugPrint('📥 CONFIG_WHATSAPP applied (instance="$waId")');
+        }
+        break;
+
       case WireMessageType.configSyncRequest:
-        // Only viewers respond. Re-emit so the cashier bootstrap can
-        // decide whether to honor the request.
+        // Only viewers respond; re-emit for cashier bootstrap.
         if (!self.isViewer) break;
         _configSyncRequestStream.add(msg.senderId);
         break;
 
       case WireMessageType.tablePickupRequest:
-        // Cashier echoes its own broadcast (self-loop already filtered
-        // above). For a viewer the best action is to record — a second
-        // cashier on the LAN shouldn't silently diverge.
-        //
-        // Anti-spoof: only a viewer (cashier) legitimately issues
-        // pickup requests. Reject if the sender isn't one, otherwise
-        // any waiter could fabricate "cashier X requested a pickup"
-        // and every tablet would ring.
+        // Anti-spoof: only cashiers issue pickup requests.
         if (!msg.senderId.startsWith(Waiter.viewerIdPrefix)) {
           debugPrint(
               '⚠️ dropping TABLE_PICKUP_REQUEST from non-viewer sender=${msg.senderId}');
@@ -1258,12 +1126,7 @@ class WaiterController extends ChangeNotifier {
           final req = TablePickupRequest.fromJson(msg.data);
           final recorded = pickupStore.recordRequest(req);
           if (recorded && !self.isViewer) {
-            // Only a real waiter gets the audible alert — cashiers
-            // watching the tables screen already see the card change.
-            // Suppress the bell while the waiter is composing an order
-            // so their workflow isn't interrupted. The request is still
-            // persisted in pickupStore so it appears in the feed once
-            // they exit the order screen.
+            // Suppress ring while composing an order; request still persists in pickupStore.
             if (!isTakingOrderNow) {
               notifications.playCall();
             }
@@ -1271,7 +1134,7 @@ class WaiterController extends ChangeNotifier {
           } else if (recorded && self.isViewer) {
             _pickupRequestStream.add(req);
           }
-        } catch (_) {}
+        } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
         break;
 
       case WireMessageType.tablePickupClaimed:
@@ -1281,9 +1144,7 @@ class WaiterController extends ChangeNotifier {
           final wname = msg.data['waiter_name']?.toString() ?? '';
           if (rid.isEmpty || wid.isEmpty) break;
 
-          // Anti-spoof: the claimer in the payload must be the sender.
-          // Without this a peer can forge "Waiter X claimed" on X's
-          // behalf and every device would accept it.
+          // Anti-spoof: payload waiter_id must equal envelope sender_id.
           if (wid != msg.senderId) {
             debugPrint(
                 '⚠️ dropping TABLE_PICKUP_CLAIMED: waiter_id=$wid != sender_id=${msg.senderId}');
@@ -1294,11 +1155,7 @@ class WaiterController extends ChangeNotifier {
             msg.data['claimed_at']?.toString() ?? '',
           );
 
-          // Orphan claim recovery: if the cashier restarted while a
-          // pickup was in flight, it no longer has the original request
-          // in memory. Synthesize a minimal record from what the claim
-          // carries so the tables screen still flips the card and the
-          // claim is visible in the notifications feed.
+          // Orphan claim recovery after cashier restart: synthesize from payload.
           if (self.isViewer && pickupStore.byId(rid) == null) {
             final synthTableId = msg.data['table_id']?.toString() ?? '';
             final synthTableNumber =
@@ -1321,14 +1178,11 @@ class WaiterController extends ChangeNotifier {
             at: claimedAt,
           );
           if (updated != null) _pickupUpdateStream.add(updated);
-        } catch (_) {}
+        } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
         break;
 
       case WireMessageType.tablePickupCancelled:
-        // Anti-spoof: only cashiers can cancel. Without this a rogue
-        // waiter could dismiss a pending request from other waiters'
-        // banners. We enforce viewer-prefix on the sender id since
-        // that's the LAN-level marker for "this peer is a cashier".
+        // Anti-spoof: only cashiers may cancel pickups.
         if (!msg.senderId.startsWith(Waiter.viewerIdPrefix)) {
           debugPrint(
               '⚠️ dropping TABLE_PICKUP_CANCELLED from non-viewer sender=${msg.senderId}');
@@ -1339,21 +1193,19 @@ class WaiterController extends ChangeNotifier {
           if (rid.isEmpty) break;
           final updated = pickupStore.markCancelled(rid);
           if (updated != null) _pickupUpdateStream.add(updated);
-        } catch (_) {}
+        } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
         break;
 
       case WireMessageType.tableMigrate:
         try {
           final event = TableMigrateEvent.fromJson(msg.data);
           _tableMigrateStream.add(event);
-          // Only the waiter that currently owns the old table needs to
-          // do the cart shuffle + re-broadcast release/assign — every
-          // other peer picks up the state change from those echoes.
+          // Only the owner does the cart shuffle; other peers pick up via echoes.
           final ownerId = tableRegistry.ownerIdFor(event.oldTableId);
           if (ownerId != null && ownerId == self.id) {
             _applyMigrateAsOwner(event);
           }
-        } catch (_) {}
+        } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
         break;
 
       case WireMessageType.waitlistEvent:
@@ -1362,14 +1214,14 @@ class WaiterController extends ChangeNotifier {
           _waitlistEventStream.add(
             WaitlistMeshEventEnvelope(event: event, fromSelf: false),
           );
-        } catch (_) {}
+        } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
         break;
 
       case WireMessageType.waitlistSnapshot:
         try {
           final snapshot = WaitlistMeshSnapshot.fromJson(msg.data);
           _waitlistSnapshotStream.add(snapshot);
-        } catch (_) {}
+        } catch (e) { Log.w('waiter-ctrl', 'cleanup/dispatch catch swallowed', error: e); }
         break;
 
       case WireMessageType.helloAck:
@@ -1379,14 +1231,12 @@ class WaiterController extends ChangeNotifier {
       case WireMessageType.updateCart:
       case WireMessageType.orderEdit:
       case WireMessageType.orderCancel:
-        // Waiter peers don't act on these; the KDS handles kitchen traffic.
+        // KDS handles kitchen traffic; waiter peers ignore.
         break;
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Keep-alive
-  // ---------------------------------------------------------------------------
+  // --- Keep-alive ---
 
   void _heartbeat() {
     final self = session.self;
@@ -1401,18 +1251,12 @@ class WaiterController extends ChangeNotifier {
   }
 
   void _sweepStalePeers() {
-    // Roster is a ChangeNotifier — subscribers (tables screen, home
-    // shell) will re-render automatically when peers flip to offline.
-    // No need for a separate event stream.
     final flipped = roster.sweepStale();
-    // Tear down any half-dead socket so the next HELLO from this peer
-    // starts fresh: if we kept the old conn, `connectToPeer` would
-    // short-circuit on `_peers.containsKey(...)` and we'd never pick
-    // up their reconnect. _scheduleReconnect fires on drop for
-    // outbound conns, so this also re-establishes the link
-    // autonomously when they come back.
+    // Tear down half-dead sockets so a fresh HELLO isn't short-circuited.
     for (final id in flipped) {
       _net?.closeConnectionTo(id);
+      // Drop transient "taking order" rows; committed pay-later/paid tables stay.
+      tableRegistry.dropTakingOrderForWaiter(id);
     }
   }
 
@@ -1482,9 +1326,7 @@ class WaiterController extends ChangeNotifier {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Broadcast helpers
-  // ---------------------------------------------------------------------------
+  // --- Broadcast helpers ---
 
   void _announceSelf() {
     final self = session.self!;

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../models/receipt_data.dart';
+import 'logger_service.dart';
 
 /// Extract [ReceiptAddon]s from a single API invoice-line item map.
 ///
@@ -41,15 +42,23 @@ List<ReceiptAddon> extractReceiptAddonsFromItem(Map<dynamic, dynamic> item) {
     return null;
   }
 
-  final rawAddons = pickList(const [
+  const addonKeys = <String>[
     'addons',
     'meal_addons',
     'extras',
     'selected_addons',
     'addon_options',
-  ]);
+  ];
+  final rawAddons = pickList(addonKeys);
   if (rawAddons == null) {
-    if (kDebugMode) {
+    // Most invoice lines have no addons — silence the log unless none of
+    // the known addon keys are present at all. That way we still surface
+    // a genuine schema mismatch (new backend route returning a key we
+    // don't know) but skip the per-line noise for plain items.
+    final hasAnyKnownKey = item.keys
+        .map((k) => k.toString())
+        .any(addonKeys.contains);
+    if (kDebugMode && !hasAnyKnownKey) {
       final keys = item.keys.map((k) => k.toString()).toList();
       debugPrint(
           '[addon-extractor] no addon list found. item keys: $keys');
@@ -183,6 +192,8 @@ Map<String, dynamic>? _tryDecodeJsonMap(String s) {
     if (decoded is Map) {
       return decoded.map((k, v) => MapEntry(k.toString(), v));
     }
-  } catch (_) {}
+  } catch (e) {
+    Log.d('ReceiptAddonExtractor', 'tryDecodeJsonMap failed (non-fatal): $e');
+  }
   return null;
 }

@@ -4,14 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
-import '../services/printer_language_settings_service.dart';
-import 'display_provider.dart';
-import 'models.dart';
-import 'display_language_service.dart';
-import 'app_error_handler.dart';
-import 'cds_page.dart';
+
 import '../services/api/api_constants.dart';
 import '../services/app_themes.dart';
+import '../services/printer_language_settings_service.dart';
+import 'app_error_handler.dart';
+import 'cds_page.dart';
+import 'display_language_service.dart';
+import 'display_provider.dart';
+import 'models.dart';
 
 class CdsPageWrapper extends StatefulWidget {
   const CdsPageWrapper({super.key});
@@ -26,14 +27,11 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
   bool _hasPinnedLastFrame = false;
   DisplayProvider? _provider;
 
-  // Merchant name + logo mirrored from BranchService via SharedPreferences
-  // (same source the secondary CDS engine reads — keeps parity).
+  // Merchant name + logo mirrored from BranchService prefs (parity with secondary CDS engine).
   String _sellerNameAr = '';
   String _sellerNameEn = '';
   String _sellerLogoUrl = '';
-  // Tax/currency snapshot pulled from prefs (written by AuthService at
-  // login + by BranchService.refreshTaxConfig). Lets the welcome screen
-  // render the correct VAT label & currency before any cart push lands.
+  // Tax/currency snapshot from prefs so welcome screen renders correct VAT/currency before first cart push.
   bool _prefsHasTax = true;
   int _prefsTaxPercentage = 15;
   String _prefsCurrency = 'ر.س';
@@ -42,18 +40,11 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
   @override
   void initState() {
     super.initState();
-    // Initialize video immediately
     _initSuccessAnimation();
     _loadSellerName();
-    // Rebuild immediately when the cashier flips invoice language settings
-    // so the welcome screen / idle preview reflects the change without
-    // waiting for a cart push.
+    // Rebuild on invoice language change so welcome/idle reflects it without waiting for a cart push.
     printerLanguageSettings.addListener(_onPrinterLangChanged);
-    // Poll SharedPreferences on a gentle cadence so:
-    //   1. Branch name / logo snap in once BranchService finishes its fetch.
-    //   2. Any live change to the invoice language pair (cashier UI →
-    //      `PrinterLanguageSettingsService`) reflects on the CDS within a
-    //      couple of seconds, without requiring a cold restart.
+    // Poll prefs so branch name/logo + invoice language changes reflect within ~2s without cold restart.
     _sellerNamePoll = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (!mounted) {
         timer.cancel();
@@ -69,15 +60,11 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
       final ar = prefs.getString('cds_seller_name_ar') ?? '';
       final en = prefs.getString('cds_seller_name_en') ?? '';
       final logo = prefs.getString('cds_seller_logo_url') ?? '';
-      // Tax/currency mirror — picked up so the welcome screen reflects the
-      // active branch's VAT config even before the first cart push.
       final hasTax = prefs.getBool('has_tax') ?? _prefsHasTax;
       final taxPct = prefs.getInt('tax_percentage') ?? _prefsTaxPercentage;
       final currency = prefs.getString('currency') ?? _prefsCurrency;
       if (!mounted) return;
-      // Invoice language state is sourced live from the cart payload (see
-      // [build]), not from prefs — the cashier and CDS share this engine so
-      // the payload is authoritative and can't race with a stale disk read.
+      // Invoice language comes from the live cart payload (authoritative, race-free), not prefs.
       final same = ar == _sellerNameAr &&
           en == _sellerNameEn &&
           logo == _sellerLogoUrl &&
@@ -94,21 +81,18 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         _prefsCurrency = currency;
       });
     } catch (_) {
-      // Fall back to default brand rendering.
     }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Get provider reference and add listener
     _provider = context.read<DisplayProvider>();
     _provider?.removeListener(_onProviderChanged);
     _provider?.addListener(_onProviderChanged);
   }
 
   void _onProviderChanged() {
-    // Force rebuild when provider changes
     if (mounted && _provider != null) {
       setState(() {});
     }
@@ -140,10 +124,9 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         final controller = VideoPlayerController.asset(assetPath);
         await controller.initialize();
         debugPrint('✅ Loaded: $assetPath (size: ${controller.value.size})');
-        controller
-          ..setLooping(false)
-          ..setVolume(0)
-          ..play();
+        unawaited(controller.setLooping(false));
+        unawaited(controller.setVolume(0));
+        unawaited(controller.play());
         controller.addListener(() {
           if (_hasPinnedLastFrame) return;
           if (!controller.value.isInitialized) return;
@@ -207,9 +190,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         final subtotalAmount = _extractSubtotal(cartData);
         final taxAmount = _extractTax(cartData);
         final totalAmount = _extractTotal(cartData);
-        // Cart payload first, then SharedPreferences mirror (set by cashier
-        // engine at login + by getTax refresh) — keeps the welcome screen
-        // honest for branches that toggle VAT off.
+        // Cart payload first, then prefs mirror — keeps welcome screen honest for branches with VAT off.
         final taxRate = _extractTaxRate(cartData) ??
             (_prefsHasTax ? (_prefsTaxPercentage / 100.0) : 0.0);
         final isOrderFree = _extractIsOrderFree(cartData);
@@ -218,20 +199,14 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         final orderDiscountPercent = _extractOrderDiscountPercent(cartData);
         final discountSource = _extractDiscountSource(cartData);
         final cartCurrency = _extractCurrencySymbol(cartData, catalogContext);
-        // When the cart payload is empty (welcome screen), fall back to the
-        // mirrored branch currency so the price example renders correctly.
+        // Fall back to mirrored branch currency when cart is empty (welcome screen).
         final currencySymbol = (cartCurrency.trim().isEmpty)
             ? _prefsCurrency
             : cartCurrency;
         final showPayment = provider.isShowingPayment;
         final showStatusOverlay = provider.hasStatusOverlay && !showPayment;
 
-        // Prefer invoice language settings from the cart payload — they
-        // arrive atomically with the cart push so the CDS flips instantly
-        // when the cashier changes the setting. Fall back to the live
-        // `printerLanguageSettings` singleton for the welcome screen (cart
-        // empty) — we're in the same engine as the settings service so the
-        // values are always fresh, no polling required.
+        // Prefer invoice language from cart payload (atomic with cart push); fall back to singleton for empty/welcome.
         final payloadPrimary =
             cartData['invoice_primary_lang']?.toString().trim().toLowerCase();
         final payloadSecondary = cartData['invoice_secondary_lang']
@@ -323,7 +298,6 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
                 currentStatus: currentStatus,
               ),
             ),
-            // Reconnect banner removed per UX request.
           ],
         );
       },
@@ -498,7 +472,6 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Show video animation for success, icon for other states
             if (isSuccess && isSuccessAnimationReady && successController != null)
               Container(
                 width: 150,
@@ -558,7 +531,6 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
     return items.whereType<Map>().map((item) {
       final itemMap = Map<String, dynamic>.from(item);
 
-      // Parse extras
       final rawExtras = itemMap['extras'];
       final extrasRaw = rawExtras is List ? rawExtras : const [];
       final extras = extrasRaw.whereType<Map>().map((e) {
@@ -579,7 +551,6 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         );
       }).toList();
 
-      // Parse price - handle both number and string formats (e.g. "6.00 SAR")
       final unitPrice = _parseDouble(itemMap['price'] ?? itemMap['unitPrice']);
       final localizedProductName = _localizedText(
         itemMap['name'],
@@ -590,7 +561,6 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         languageCode: languageCode,
       );
 
-      // Create Product from the data
       String resolvedNameEn = '';
       final rawNameEn = itemMap['nameEn'];
       if (rawNameEn is String && rawNameEn.trim().isNotEmpty) {
@@ -622,7 +592,6 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
         localizedNames: _harvestLocalizedNames(itemMap),
       );
 
-      // ✅ استخراج بيانات الخصم للمنتج
       final discountData = _asMap(
         itemMap['discount_data'] ?? itemMap['discountData'],
       );
@@ -680,19 +649,10 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
     if (value == null) return 0.0;
     if (value is num) return value.toDouble();
     if (value is String) {
-      // Remove currency suffix (e.g. "6.00 SAR" -> "6.00")
       final cleaned = value.replaceAll(RegExp(r'[^0-9.]'), '');
       return double.tryParse(cleaned) ?? 0.0;
     }
     return 0.0;
-  }
-
-  int _parseInt(dynamic value) {
-    if (value == null) return 1;
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 1;
-    return 1;
   }
 
   Map<String, dynamic>? _asMap(dynamic value) {
@@ -964,8 +924,7 @@ class _CdsPageWrapperState extends State<CdsPageWrapper> {
     if (ar.isNotEmpty) out.putIfAbsent('ar', () => ar);
     final en = source['nameEn']?.toString().trim() ?? '';
     if (en.isNotEmpty) out.putIfAbsent('en', () => en);
-    // When the cashier tells us which language the raw `name` is in, use it
-    // as the final fallback for that language.
+    // Use `name_lang` as final fallback for whatever language the raw `name` is in.
     final nameLang = source['name_lang']?.toString().trim().toLowerCase();
     final rawNameStr = source['name'];
     if (nameLang != null &&

@@ -1,16 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import '../models.dart';
-import 'settings/printers_tab_view.dart';
-import 'settings/display_devices_tab_view.dart';
-import 'settings/profile_view.dart';
-import 'settings/cashier_settings_view.dart';
-import 'language_selector.dart';
-import 'printer_language_settings_view.dart';
+import '../screens/login_screen.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/auth_service.dart';
-import '../services/language_service.dart';
-import '../screens/login_screen.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import 'language_selector.dart';
+import 'printer_language_settings_view.dart';
+import 'settings/cashier_settings_view.dart';
+import 'settings/display_devices_tab_view.dart';
+import 'settings/printers_tab_view.dart';
+import 'settings/profile_view.dart';
 
 class SettingsView extends StatefulWidget {
   final List<DeviceConfig> devices;
@@ -19,6 +22,7 @@ class SettingsView extends StatefulWidget {
   final Future<void> Function(String) onRemoveDevice;
   final bool requireCustomerSelection;
   final ValueChanged<bool> onRequireCustomerSelectionChanged;
+  final bool customerRequirementLocked;
   final bool cdsEnabled;
   final bool kdsEnabled;
   final ValueChanged<bool> onCdsEnabledChanged;
@@ -50,6 +54,7 @@ class SettingsView extends StatefulWidget {
     required this.onRemoveDevice,
     required this.requireCustomerSelection,
     required this.onRequireCustomerSelectionChanged,
+    this.customerRequirementLocked = false,
     required this.cdsEnabled,
     required this.kdsEnabled,
     required this.onCdsEnabledChanged,
@@ -119,6 +124,7 @@ class _SettingsViewState extends State<SettingsView> {
           requireCustomerSelection: widget.requireCustomerSelection,
           onRequireCustomerSelectionChanged:
               widget.onRequireCustomerSelectionChanged,
+          customerRequirementLocked: widget.customerRequirementLocked,
           cdsEnabled: widget.cdsEnabled,
           kdsEnabled: widget.kdsEnabled,
           onCdsEnabledChanged: widget.onCdsEnabledChanged,
@@ -144,9 +150,9 @@ class _SettingsViewState extends State<SettingsView> {
       case 3:
         return SingleChildScrollView(
           padding: EdgeInsets.all(isSmallScreen ? 12 : 24),
-          child: Column(
+          child: const Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: const [
+            children: [
               LanguageSelector(),
               SizedBox(height: 16),
               PrinterLanguageSettingsView(),
@@ -325,7 +331,10 @@ class _SettingsViewState extends State<SettingsView> {
 
           return Scaffold(
             backgroundColor: context.appBg,
-            body: Row(
+            // Wide layout has no AppBar — keep the sidebar + content clear of
+            // the status-bar inset on notched/gesture-nav devices.
+            body: SafeArea(
+              child: Row(
               children: [
                 // Sidebar for settings tabs
                 Container(
@@ -541,6 +550,7 @@ class _SettingsViewState extends State<SettingsView> {
                 ),
               ],
             ),
+            ),
           );
         },
       ),
@@ -602,12 +612,12 @@ class _SettingsViewState extends State<SettingsView> {
         onTap: () async {
           await AuthService().logout();
           if (!mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(
+          unawaited(Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(
               builder: (_) => const LoginScreen(),
             ),
             (route) => false,
-          );
+          ));
         },
         borderRadius: BorderRadius.circular(12),
         child: Container(

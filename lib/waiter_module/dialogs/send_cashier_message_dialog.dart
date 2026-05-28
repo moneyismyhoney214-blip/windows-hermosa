@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../services/app_themes.dart';
+import '../../services/language_service.dart';
+import '../../utils/ui_feedback.dart';
 import '../models/waiter.dart';
 import '../services/waiter_controller.dart';
 
@@ -90,12 +92,12 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
         !online.any((w) => w.id == _recipient)) {
       setState(() => _recipient = _broadcastKey);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'النادل المحدد غير متصل — تم التحويل إلى "جميع النوادل". اضغط إرسال مرة أخرى للتأكيد.',
+            translationService.t('waiter_msg_recipient_offline'),
           ),
           backgroundColor: Colors.orange,
-          duration: Duration(seconds: 4),
+          duration: const Duration(seconds: 4),
         ),
       );
       return;
@@ -105,9 +107,9 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
     if (text.isEmpty && !_ring) {
       // Nothing to deliver — at least one of text or ring should land.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('اكتب رسالة أو فعّل الجرس على الأقل.'),
-          duration: Duration(seconds: 2),
+        SnackBar(
+          content: Text(translationService.t('waiter_msg_empty_validation')),
+          duration: const Duration(seconds: 2),
         ),
       );
       return;
@@ -125,8 +127,9 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
       Navigator.of(context).pop(true);
     } on StateError catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر الإرسال: $e')),
+      UiFeedback.info(
+        context,
+        translationService.t('waiter_msg_send_failed', args: {'reason': '$e'}),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -150,7 +153,9 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              isBroadcast ? 'رسالة لجميع النوادل' : 'رسالة لنادل محدد',
+              translationService.t(
+                isBroadcast ? 'waiter_msg_to_all_title' : 'waiter_msg_to_one_title',
+              ),
               style: TextStyle(color: context.appText, fontSize: 17),
             ),
           ),
@@ -176,7 +181,10 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
                         size: 14, color: context.appTextMuted),
                     const SizedBox(width: 6),
                     Text(
-                      'الطاولة ${widget.tableNumber}',
+                      translationService.t(
+                        'waiter_msg_table_label',
+                        args: {'table': widget.tableNumber ?? ''},
+                      ),
                       style: TextStyle(
                         color: context.appText,
                         fontSize: 13,
@@ -192,7 +200,7 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
               maxLines: 5,
               style: TextStyle(color: context.appText),
               decoration: InputDecoration(
-                hintText: 'اكتب الرسالة (اختياري)',
+                hintText: translationService.t('waiter_msg_input_hint'),
                 filled: true,
                 fillColor: context.appSurfaceAlt,
                 border: OutlineInputBorder(
@@ -208,9 +216,9 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
               value: _ring,
               onChanged: (v) => setState(() => _ring = v ?? false),
               dense: true,
-              title: const Text('تشغيل نغمة التنبيه'),
+              title: Text(translationService.t('waiter_msg_ring_title')),
               subtitle: Text(
-                'يرنّ الجهاز المستهدف ويهتز',
+                translationService.t('waiter_msg_ring_subtitle'),
                 style: TextStyle(color: context.appTextMuted, fontSize: 11),
               ),
             ),
@@ -221,7 +229,7 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
         TextButton(
           onPressed:
               _sending ? null : () => Navigator.of(context).pop(false),
-          child: const Text('إلغاء'),
+          child: Text(translationService.t('waiter_cancel')),
         ),
         FilledButton.icon(
           onPressed: _sending ? null : _send,
@@ -239,7 +247,7 @@ class _SendCashierMessageDialogState extends State<SendCashierMessageDialog> {
                   ),
                 )
               : const Icon(LucideIcons.send, size: 16),
-          label: const Text('إرسال'),
+          label: Text(translationService.t('waiter_send')),
         ),
       ],
     );

@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../invoices_screen.dart';
 
 extension InvoicesScreenActions on _InvoicesScreenState {
@@ -7,9 +7,9 @@ extension InvoicesScreenActions on _InvoicesScreenState {
     final dailyOrder =
         _formatOrderNumberDisplay(_resolveDailyOrderNumber(invoice));
     final invoiceLabel =
-        invoiceId.isNotEmpty ? '${_tr('فاتورة', 'Invoice')} $invoiceId' : '';
+        invoiceId.isNotEmpty ? '${translationService.t('invoice_label')} $invoiceId' : '';
     final orderLabel =
-        dailyOrder.isNotEmpty ? '${_tr('طلب', 'Order')} $dailyOrder' : '';
+        dailyOrder.isNotEmpty ? '${translationService.t('order')} $dailyOrder' : '';
 
     if (invoiceLabel.isNotEmpty && orderLabel.isNotEmpty) {
       return Column(
@@ -42,7 +42,7 @@ extension InvoicesScreenActions on _InvoicesScreenState {
 
     final singleLabel = orderLabel.isNotEmpty ? orderLabel : invoiceLabel;
     return Text(
-      singleLabel.isNotEmpty ? singleLabel : _tr('فاتورة', 'Invoice'),
+      singleLabel.isNotEmpty ? singleLabel : translationService.t('invoice_label'),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
@@ -57,7 +57,7 @@ extension InvoicesScreenActions on _InvoicesScreenState {
     final raw = invoice.date.trim().isNotEmpty
         ? invoice.date
         : invoice.createdAt;
-    if (raw.isEmpty) return _tr('بدون تاريخ', 'No date');
+    if (raw.isEmpty) return translationService.t('no_date_label');
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return raw;
     final hasTime = raw.contains(':');
@@ -73,16 +73,7 @@ extension InvoicesScreenActions on _InvoicesScreenState {
     return const Color(0xFF64748B);
   }
 
-  // The old text-only WhatsApp flow (`_showWhatsAppMessageDialog`,
-  // `_normalizeWhatsAppMessage`, `_sendWhatsAppForOrder`) was removed.
-  // It used `OrderService.sendOrderWhatsApp` which goes through the
-  // backend (gated by `whatsapp_status`) and asked the cashier for a
-  // free-text message. The replacement is `SendInvoiceWhatsAppButton`,
-  // wired in the invoice row, which renders the invoice PDF locally
-  // and sends it to WAWP directly — same architecture as the waiter
-  // waitlist. It also drops the "@@" suffix `_normalizeWhatsAppMessage`
-  // used to splice into outgoing text, which surfaced in the customer's
-  // WhatsApp as a stray `@@`.
+  // The text-only WhatsApp flow was replaced by `SendInvoiceWhatsAppButton` (PDF direct to WAWP, no "@@" suffix).
 
   int? _resolveOrderIdFromInvoice(Invoice invoice) {
     int? parseInt(dynamic value) {
@@ -172,8 +163,8 @@ extension InvoicesScreenActions on _InvoicesScreenState {
       final details = await _orderService.getInvoice(invoice.id.toString());
       final extracted = _extractOrderIdFromPayload(details);
       if (extracted != null && extracted > 0) return extracted;
-    } catch (_) {
-      // Continue to helper endpoint
+    } catch (e) {
+      Log.d('catch', 'non-fatal: $e');
     }
     if (!_invoiceHelperSupported) return null;
     try {
@@ -188,7 +179,9 @@ extension InvoicesScreenActions on _InvoicesScreenState {
           _invoiceHelperSupported = false;
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.d('InvoicesScreenActions', 'getInvoiceHelper failed (non-fatal): $e');
+    }
     return null;
   }
 
@@ -202,22 +195,22 @@ extension InvoicesScreenActions on _InvoicesScreenState {
     final statusOptions = <Map<String, dynamic>>[
       {
         'value': 5,
-        'label': _tr('جاهز للتوصيل', 'Ready for delivery'),
+        'label': translationService.t('ready_for_delivery'),
         'color': const Color(0xFF16A34A),
       },
       {
         'value': 6,
-        'label': _tr('قيد التوصيل', 'On the way'),
+        'label': translationService.t('on_the_way'),
         'color': const Color(0xFF0EA5E9),
       },
       {
         'value': 7,
-        'label': _tr('مكتمل', 'Completed'),
+        'label': translationService.t('completed_label2'),
         'color': const Color(0xFF15803D),
       },
       {
         'value': 8,
-        'label': _tr('ملغي', 'Cancelled'),
+        'label': translationService.t('cancelled_done'),
         'color': const Color(0xFFEF4444),
       },
     ];
@@ -226,9 +219,9 @@ extension InvoicesScreenActions on _InvoicesScreenState {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(
-          _tr(
-            'تحديث حالة الطلب $orderLabel',
-            'Update order status $orderLabel',
+          translationService.t(
+            'update_order_status_n',
+            args: {'label': orderLabel},
           ),
         ),
         content: StatefulBuilder(
@@ -267,21 +260,20 @@ extension InvoicesScreenActions on _InvoicesScreenState {
           ),
           ElevatedButton(
             onPressed: () async {
-              // Extra confirm step when the user picks "Cancelled" —
-              // cancellation is destructive and not reversible from here.
+              // Cancellation is destructive — confirm explicitly.
               if (selectedStatus == 8) {
                 final confirmed = await showDialog<bool>(
                   context: context,
                   builder: (confirmCtx) => AlertDialog(
-                    title: Text(_tr('تأكيد إلغاء الطلب', 'Confirm cancel order')),
-                    content: Text(_tr(
-                      'هل أنت متأكد من إلغاء الطلب $orderLabel؟ لا يمكن التراجع عن هذا الإجراء.',
-                      'Are you sure you want to cancel order $orderLabel? This action cannot be undone.',
+                    title: Text(translationService.t('confirm_cancel_order_title')),
+                    content: Text(translationService.t(
+                      'confirm_cancel_order_n',
+                      args: {'label': orderLabel},
                     )),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(confirmCtx, false),
-                        child: Text(_tr('تراجع', 'Back')),
+                        child: Text(translationService.t('back')),
                       ),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
@@ -289,7 +281,7 @@ extension InvoicesScreenActions on _InvoicesScreenState {
                           foregroundColor: Colors.white,
                         ),
                         onPressed: () => Navigator.pop(confirmCtx, true),
-                        child: Text(_tr('نعم، إلغاء الطلب', 'Yes, cancel')),
+                        child: Text(translationService.t('yes_cancel_order')),
                       ),
                     ],
                   ),
@@ -313,24 +305,16 @@ extension InvoicesScreenActions on _InvoicesScreenState {
         status: result,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('تم تحديث حالة الطلب بنجاح',
-              'Order status updated successfully')),
-        ),
-      );
+      UiFeedback.info(context, translationService.t('order_status_updated_msg'));
       _displayAppService.sendOrderStatusUpdateToDisplay(
         orderId: orderId.toString(),
         status: result,
       );
-      _loadInvoices(reset: true);
+      unawaited(_loadInvoices(reset: true));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(_tr('تعذر تحديث حالة الطلب: $e',
-                'Unable to update order status: $e'))),
-      );
+      UiFeedback.info(context, translationService.t(
+        'order_status_update_failed_n', args: {'error': '$e'}));
     }
   }
 
@@ -377,11 +361,11 @@ extension InvoicesScreenActions on _InvoicesScreenState {
 
 
   Future<void> _showRefundedMealsForInvoice(Invoice invoice) async {
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       final refundedMeals = await _orderService.getRefundedMeals(
@@ -391,18 +375,11 @@ extension InvoicesScreenActions on _InvoicesScreenState {
       Navigator.pop(context); // dismiss loading
 
       if (refundedMeals.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_tr(
-              'لا توجد مرتجعات لهذه الفاتورة',
-              'No refunds for this invoice',
-            )),
-          ),
-        );
+        UiFeedback.info(context, translationService.t('no_refunds_for_invoice'));
         return;
       }
 
-      showDialog(
+      unawaited(showDialog(
         context: context,
         builder: (context) => _RefundedMealsDialog(
           title: _tr(
@@ -411,23 +388,20 @@ extension InvoicesScreenActions on _InvoicesScreenState {
           ),
           refundedMeals: refundedMeals,
         ),
-      );
+      ));
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context); // dismiss loading
       final userMessage = ErrorHandler.toUserMessage(
         e,
-        fallback: _tr('تعذر جلب المرتجعات', 'Failed to load refunds'),
+        fallback: translationService.t('refunds_load_failed'),
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(userMessage)),
-      );
+      UiFeedback.info(context, userMessage);
     }
   }
 
   Future<void> _showInvoiceRefundOptions(Invoice invoice) async {
     if (_refundingInvoiceIds.contains(invoice.id)) return;
-    // Allow refund for paid or partially-refunded invoices
     if (!_isInvoicePaid(invoice) && !_hasPartialRefund(invoice)) return;
     if (_isInvoiceFullyRefunded(invoice)) return;
     setState(() => _refundingInvoiceIds.add(invoice.id));
@@ -438,17 +412,14 @@ extension InvoicesScreenActions on _InvoicesScreenState {
         invoiceId: invoice.id.toString(),
         invoiceLabel: _formatInvoiceNumber(invoice),
       );
-      // Always reload to sync state across cashiers
       await _loadInvoices(reset: true);
     } catch (e) {
       if (!mounted) return;
       final userMessage = ErrorHandler.toUserMessage(
         e,
-        fallback: _tr('تعذر تنفيذ الاسترجاع', 'Failed to process refund'),
+        fallback: translationService.t('refund_process_failed'),
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(userMessage)),
-      );
+      UiFeedback.info(context, userMessage);
     } finally {
       if (mounted) {
         setState(() => _refundingInvoiceIds.remove(invoice.id));
@@ -460,7 +431,6 @@ extension InvoicesScreenActions on _InvoicesScreenState {
     var bookingId = invoice.orderId ?? invoice.raw['booking_id'] ?? invoice.raw['order_id'];
     final orderService = getIt<OrderService>();
 
-    // If no booking_id locally, try to get it from invoice details API
     if (bookingId == null) {
       try {
         final invoiceDetails = await orderService.getInvoice(invoice.id.toString());
@@ -471,27 +441,28 @@ extension InvoicesScreenActions on _InvoicesScreenState {
             ? (data['invoice'] as Map).map((k, v) => MapEntry(k.toString(), v))
             : data;
         bookingId = inv['booking_id'] ?? inv['order_id'] ?? data['booking_id'] ?? data['order_id'];
-      } catch (_) {}
+      } catch (e) {
+        Log.d('InvoicesScreenActions', 'getInvoice for booking-id resolution failed (non-fatal): $e');
+      }
     }
 
     if (bookingId == null) {
-      // Last resort: show InvoiceDetailsDialog instead
       if (!mounted) return;
-      _openInvoiceDetails(invoice);
+      unawaited(_openInvoiceDetails(invoice));
       return;
     }
 
     try {
       final details = await orderService.getBookingDetails(bookingId.toString());
       if (!mounted) return;
-      showDialog(
+      unawaited(showDialog(
         context: context,
         builder: (context) => BookingDetailsDialog(bookingData: details),
-      );
+      ));
     } catch (e) {
       if (!mounted) return;
-      // Fallback to InvoiceDetailsDialog if booking details fail
-      _openInvoiceDetails(invoice);
+      // Fallback to InvoiceDetailsDialog on booking-details failure.
+      unawaited(_openInvoiceDetails(invoice));
     }
   }
 
@@ -545,11 +516,11 @@ extension InvoicesScreenActions on _InvoicesScreenState {
 
     final dateStr = DateFormat('yyyy-MM-dd').format(picked);
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    ));
 
     try {
       await _orderService.updateInvoiceDate(
@@ -558,24 +529,16 @@ extension InvoicesScreenActions on _InvoicesScreenState {
       );
       if (!mounted) return;
       Navigator.pop(context); // dismiss loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('تم تعديل التاريخ بنجاح',
-              'Invoice date updated successfully')),
-          backgroundColor: const Color(0xFF10B981),
-        ),
-      );
+      UiFeedback.success(context, translationService.t('invoice_date_updated_ok'));
       await _loadInvoices(reset: true);
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context); // dismiss loading
       final userMessage = ErrorHandler.toUserMessage(
         e,
-        fallback: _tr('تعذر تعديل التاريخ', 'Failed to update date'),
+        fallback: translationService.t('date_update_failed'),
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(userMessage)),
-      );
+      UiFeedback.info(context, userMessage);
     }
   }
 }

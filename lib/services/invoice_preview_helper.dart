@@ -70,7 +70,7 @@ class InvoicePreviewHelper {
     final resolvedPrinter = preferredPrinter ??
         await _resolvePreferredPrinter(allowSinglePrinterFallback: true);
 
-    String _buildTitle() {
+    String buildTitle() {
       String label = receiptData.invoiceNumber.trim();
       if (label.isEmpty) {
         label = invoiceId?.trim() ?? '';
@@ -97,7 +97,7 @@ class InvoicePreviewHelper {
               receiptData: receiptData,
               printer: resolvedPrinter,
               htmlContent: htmlContent,
-              title: _buildTitle(),
+              title: buildTitle(),
               promptPrinterSelectionOnOpen: promptPrinterSelectionOnOpen,
               forcePreferredPrinter: forcePreferredPrinter,
               carNumber:
@@ -125,7 +125,7 @@ class InvoicePreviewHelper {
           forcePreferredPrinter: forcePreferredPrinter,
           carNumber:
               receiptData.carNumber.isNotEmpty ? receiptData.carNumber : null,
-          title: _buildTitle(),
+          title: buildTitle(),
           orderType: orderType,
           printButtonLabel: printButtonLabel,
         ),

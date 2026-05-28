@@ -1,23 +1,23 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
+import '../locator.dart';
+import '../models.dart';
+import '../models/receipt_data.dart';
 import '../services/api/api_constants.dart';
 import '../services/api/branch_service.dart';
 import '../services/api/device_service.dart';
 import '../services/api/order_service.dart';
-import '../services/invoice_html_pdf_service.dart';
-import '../services/print_audit_service.dart';
+import '../services/app_themes.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
 import '../services/print_orchestrator_service.dart';
+import '../services/printer_language_settings_service.dart';
 import '../services/printer_role_registry.dart';
 import '../services/printer_service.dart';
-import '../models.dart';
-import '../models/receipt_data.dart';
-import '../services/language_service.dart';
-import '../services/printer_language_settings_service.dart';
-import '../locator.dart';
-import '../services/app_themes.dart';
+import '../utils/ui_feedback.dart';
 
 enum _RefundMode { full, partial }
 
@@ -92,11 +92,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
   double _refundAmount = 0;
   bool _allItemsRefunded = false;
 
-  // Captured during _loadData and replayed into the salon refund payload.
-  // The backend's PATCH /seller/refund/branches/{id}/invoices/{id} requires
-  // `date` and `pays` for salon invoices (422 "الحقل التاريخ مطلوب" /
-  // "الحقل المدفوعات مطلوب"); the cashier (meals/products) endpoint does
-  // not, so we only attach them when the refund targets services.
+  // Salon refund PATCH requires `date` and `pays`; cashier endpoint does not.
   String? _invoiceDate;
   List<Map<String, dynamic>> _invoicePays = const [];
   double _invoiceTotal = 0;
@@ -128,7 +124,8 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       Map<String, dynamic> invoiceDetails;
       try {
         invoiceDetails = await _orderService.getInvoice(widget.invoiceId);
-      } catch (_) {
+      } catch (e) {
+        Log.d('catch', 'non-fatal: $e');
         invoiceDetails = await _orderService.getInvoiceHelper(widget.invoiceId);
       }
       final refundPreview = await _orderService.showInvoiceRefund(widget.invoiceId);
@@ -162,11 +159,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           .replaceAll('#', '')
           .trim();
 
-      // If no direct refund amount field, sum up from candidates
       if (amount == 0 && candidates.isNotEmpty) {
         amount = candidates.fold(0.0, (sum, c) => sum + c.total);
       }
-      // Fallback to invoice total if still 0
       if (amount == 0) {
         amount = _parsePrice(
           previewInvoice['total'] ??
@@ -180,9 +175,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
       final allRefunded = candidates.isEmpty && amount == 0;
 
-      // Capture the invoice's `date` and `pays` so a salon refund can echo
-      // them back to satisfy the PATCH validators. Fall back gracefully
-      // when the backend omits any of these fields.
+      // Capture invoice `date` and `pays` so salon refund satisfies PATCH validators.
       final resolvedDate = (data['date'] ??
               previewInvoice['date'] ??
               data['created_at'] ??
@@ -198,9 +191,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       if (paysSource is List) {
         for (final entry in paysSource.whereType<Map>()) {
           final m = entry.map((k, v) => MapEntry(k.toString(), v));
-          // Only forward the keys the backend's pays validator looks at.
-          // Sending unknown fields (e.g. `created_at`) sometimes trips its
-          // strict-mode rejection on this endpoint.
+          // Forward only keys the backend's pays validator accepts (strict-mode rejects unknown).
           final amount = _parsePrice(m['amount'] ?? m['total'] ?? m['paid']);
           if (amount <= 0) continue;
           resolvedPays.add({
@@ -234,7 +225,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         _invoiceTotal = resolvedTotal;
         _isLoading = false;
       });
-      _fadeCtrl.forward();
+      unawaited(_fadeCtrl.forward());
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -254,12 +245,10 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         'refund_reason': 'طلب العميل',
       };
 
-      // Determine which items to refund
       final Iterable<_RefundCandidate> itemsToRefund;
       if (_mode == _RefundMode.partial) {
         itemsToRefund = _selectedItems;
       } else {
-        // Full refund: send all candidate IDs explicitly
         itemsToRefund = _candidates;
       }
 
@@ -277,10 +266,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           .toList();
       if (mealIds.isNotEmpty) refundPayload['refund_meals'] = mealIds;
       if (productIds.isNotEmpty) refundPayload['refund_products'] = productIds;
-      // Salon refund: backend's PATCH /seller/refund/branches/{id}/invoices/{id}
-      // requires the items under `refund_services` and the validators also
-      // demand `date` and `pays` — without them the call returns 422
-      // "الحقل التاريخ مطلوب" / "الحقل المدفوعات مطلوب".
+      // Salon PATCH refund requires `refund_services`, `date`, and `pays` (422 otherwise).
       final isSalonRefund = serviceIds.isNotEmpty ||
           (ApiConstants.branchModule == 'salons' &&
               mealIds.isEmpty &&
@@ -289,8 +275,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         refundPayload['refund_services'] = serviceIds;
       }
       if (isSalonRefund) {
-        // Echo today's date when the invoice didn't carry one (the original
-        // invoice's `date` field is preferred; backend accepts ISO-y-m-d).
+        // Echo invoice `date`, fall back to today (ISO-y-m-d).
         final today =
             DateTime.now().toIso8601String().split('T').first;
         refundPayload['date'] = (_invoiceDate != null &&
@@ -298,15 +283,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             ? _invoiceDate
             : today;
 
-        // The backend's pays validator wants `sum(pays.amount) ==
-        // refund total`. If we just echoed `_invoicePays` from the
-        // original invoice, the sum would be the FULL invoice total —
-        // 700 — and a partial refund of 350 would 422 with "إجمالي
-        // المدفوعات لا يساوي إجمالي الاسترجاع". Compute the actual
-        // refund amount from the selected items (with-tax `c.total`
-        // after the salon fix in `_extractCandidates`) and either scale
-        // the original payment methods proportionally or fall back to a
-        // single cash entry.
+        // Backend requires sum(pays.amount) == refund total; scale proportionally for partial refunds.
         final refundAmount = _mode == _RefundMode.partial
             ? _selectedItems.fold(0.0, (sum, c) => sum + c.total)
             : (_refundAmount > 0
@@ -315,14 +292,10 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
         if (_invoicePays.isNotEmpty &&
             (refundAmount - _invoiceTotal).abs() < 0.01) {
-          // Full refund: send the original payment breakdown verbatim so
-          // the credit note splits across the same methods (e.g. half
-          // cash, half card). Sums already match.
+          // Full refund echoes original breakdown verbatim.
           refundPayload['pays'] = _invoicePays;
         } else if (_invoicePays.isNotEmpty && _invoiceTotal > 0) {
-          // Partial refund: scale each pay method by the refund ratio so
-          // pays.sum equals refundAmount. Round to 2dp; absorb any
-          // rounding remainder into the first entry so the sum is exact.
+          // Partial refund: scale each pay by ratio; last entry absorbs rounding.
           final ratio = refundAmount / _invoiceTotal;
           final scaled = <Map<String, dynamic>>[];
           double runningSum = 0;
@@ -331,7 +304,6 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             final origAmount = (p['amount'] as num?)?.toDouble() ?? 0.0;
             var scaledAmount = double.parse(
                 (origAmount * ratio).toStringAsFixed(2));
-            // Last entry absorbs the rounding delta so the total is exact.
             if (i == _invoicePays.length - 1) {
               scaledAmount = double.parse(
                   (refundAmount - runningSum).toStringAsFixed(2));
@@ -372,22 +344,16 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
       if (!mounted) return;
       final msg = result['message']?.toString().trim();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-          (msg != null && msg.isNotEmpty) ? msg : 'تم تنفيذ الاسترجاع بنجاح',
-        ),
-        backgroundColor: const Color(0xFF10B981),
-      ));
+      UiFeedback.success(context, (msg != null && msg.isNotEmpty) ? msg : translationService.t('refund_done_ok'));
 
-      // Fetch CN number from refunds API
       String? cnNumber;
       try {
         cnNumber = await _orderService.getLatestCreditNoteNumber(widget.invoiceId);
-      } catch (_) {}
+      } catch (e) {
+        Log.d('InvoiceRefundDialog', 'fetch credit-note number failed (non-fatal): $e');
+      }
 
-      // Print credit note in the background. Awaiting would block the
-      // dialog on slow printers — _printCreditNote has its own user-visible
-      // error snackbars, so fire-and-forget is safe here.
+      // Fire-and-forget: _printCreditNote has its own error snackbars.
       unawaited(_printCreditNote(itemsToRefund.toList(), creditNoteNumber: cnNumber));
 
       final isFullRefund = _mode == _RefundMode.full ||
@@ -399,9 +365,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
     } catch (e) {
       if (!mounted) return;
       setState(() => _isProcessing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(translationService.t('failed_execute_refund', args: {'error': e.toString()}))),
-      );
+      UiFeedback.info(context, translationService.t('failed_execute_refund', args: {'error': e.toString()}));
     }
   }
 
@@ -457,9 +421,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'استرجاع فاتورة',
-                  style: TextStyle(
+                Text(
+                  translationService.t('refund_invoice_title'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
@@ -510,7 +474,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           ),
           const SizedBox(height: 16),
           Text(
-            'جاري تحميل بيانات الاسترجاع...',
+            translationService.t('loading_refund_data_dots'),
             style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
           ),
         ],
@@ -526,9 +490,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         children: [
           Icon(LucideIcons.alertCircle, size: 48, color: Colors.red.shade300),
           const SizedBox(height: 12),
-          const Text(
-            'تعذر تحميل البيانات',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          Text(
+            translationService.t('data_load_failed_title'),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
           const SizedBox(height: 6),
           Text(
@@ -581,8 +545,8 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       padding: const EdgeInsets.all(4),
       child: Row(
         children: [
-          _modeTab(_RefundMode.full, LucideIcons.fileX, 'استرجاع كامل'),
-          _modeTab(_RefundMode.partial, LucideIcons.checkSquare, 'استرجاع عناصر'),
+          _modeTab(_RefundMode.full, LucideIcons.fileX, translationService.t('refund_full')),
+          _modeTab(_RefundMode.partial, LucideIcons.checkSquare, translationService.t('refund_items')),
         ],
       ),
     );
@@ -637,10 +601,10 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           children: [
             const Icon(LucideIcons.alertTriangle, size: 18, color: Color(0xFFD97706)),
             const SizedBox(width: 10),
-            const Expanded(
+            Expanded(
               child: Text(
-                'تم استرجاع جميع العناصر مسبقاً',
-                style: TextStyle(fontSize: 13, color: Color(0xFF92400E)),
+                translationService.t('all_items_already_refunded'),
+                style: const TextStyle(fontSize: 13, color: Color(0xFF92400E)),
               ),
             ),
           ],
@@ -653,9 +617,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       children: [
         Row(
           children: [
-            const Text(
-              'اختر العناصر المراد استرجاعها',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF374151)),
+            Text(
+              translationService.t('select_items_to_refund'),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF374151)),
             ),
             const Spacer(),
             if (_candidates.isNotEmpty)
@@ -673,7 +637,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: Text(
-                  _selectedItems.length == _candidates.length ? 'إلغاء الكل' : 'تحديد الكل',
+                  _selectedItems.length == _candidates.length
+                      ? translationService.t('cancel_all')
+                      : translationService.t('select_all'),
                   style: const TextStyle(fontSize: 12, color: _kAccent),
                 ),
               ),
@@ -781,7 +747,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'المبلغ المتوقع للاسترجاع',
+                translationService.t('expected_refund_amount'),
                 style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.65)),
               ),
               const SizedBox(height: 4),
@@ -833,9 +799,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
                     height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                   )
-                : const Text(
-                    'تأكيد الاسترجاع',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                : Text(
+                    translationService.t('confirm_refund'),
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                   ),
           ),
         ),
@@ -849,7 +815,10 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
               foregroundColor: Colors.grey.shade600,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            child: const Text('إلغاء', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            child: Text(
+              translationService.t('cancel'),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
           ),
         ),
       ],
@@ -873,9 +842,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             child: const Icon(LucideIcons.checkCircle, size: 36, color: Color(0xFF16A34A)),
           ),
           const SizedBox(height: 16),
-          const Text(
-            'تم استرجاع جميع العناصر',
-            style: TextStyle(
+          Text(
+            translationService.t('refund_all_done_title'),
+            style: const TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w800,
               color: Color(0xFF1E293B),
@@ -883,7 +852,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
           ),
           const SizedBox(height: 8),
           Text(
-            'لا توجد عناصر متبقية قابلة للاسترجاع في هذه الفاتورة.',
+            translationService.t('refund_all_done_body'),
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
           ),
@@ -897,7 +866,10 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
                 foregroundColor: Colors.grey.shade600,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              child: const Text('إغلاق', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              child: Text(
+                translationService.t('close'),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
             ),
           ),
         ],
@@ -905,11 +877,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
     );
   }
 
-  // ─── helpers ───────────────────────────────────────────────────────────────
-
   String _buildCandidateSubtitle(_RefundCandidate c) {
     final parts = <String>[];
-    if (c.quantity > 0) parts.add('الكمية: ${c.quantity}');
+    if (c.quantity > 0) parts.add('${translationService.t('qty_label')}: ${c.quantity}');
     if (c.total > 0) parts.add('${c.total.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}');
     return parts.join(' • ');
   }
@@ -935,7 +905,6 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
   Future<void> _printCreditNote(List<_RefundCandidate> refundedItems, {String? creditNoteNumber}) async {
     try {
-      // Fetch invoice details for receipt data
       final orderService = getIt<OrderService>();
       final invoiceResponse = await orderService.getInvoice(widget.invoiceId);
       final rawEnvelope = invoiceResponse.map((k, v) => MapEntry(k.toString(), v));
@@ -960,11 +929,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         return '';
       }
 
-      // Resolve printer language settings (local, device-scoped).
       final String invoicePri = printerLanguageSettings.primary;
       final String invoiceSec = printerLanguageSettings.secondary;
 
-      // Build a map of meal_id → meal_name_translations from invoice items
       final invoiceMeals = (invoice['sales_meals'] ?? invoice['meals'] ?? invoice['items'] ?? invoice['booking_meals']);
       final translationsById = <int, Map>{};
       if (invoiceMeals is List) {
@@ -1008,18 +975,12 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         );
       }).toList();
 
-      // Dynamic tax rate from the active branch — credit notes for
-      // non-tax branches would otherwise sprout a phantom 15% VAT line.
+      // Dynamic tax rate per branch — non-tax branches must not show phantom VAT line.
       final branchService = getIt<BranchService>();
       final taxRate =
           branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
 
-      // Salon `_RefundCandidate.total` is already tax-inclusive (it picks
-      // `total_tax` / `total_with_tax` from the invoice — see
-      // `_extractCandidates`). Restaurant items use pre-tax `total`. Without
-      // this branch we'd add VAT on top of a value that already contains it,
-      // printing the credit note with double-taxed totals (e.g. an item the
-      // cashier sold for 350 SAR would show as 402.50 with a fresh 15% line).
+      // Salon totals are tax-inclusive (total_tax); restaurant items are pre-tax — avoid double-taxing.
       final isSalonModule = ApiConstants.branchModule == 'salons';
       final lineSum = items.fold(0.0, (sum, item) => sum + item.total);
       final double totalExcl;
@@ -1056,10 +1017,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         issueTime: pick([invoice['time']]),
       );
 
-      // Print using same ESC/POS flow. Print on EVERY non-kitchen printer
-      // (cashier + general/customer) so the customer gets their copy and the
-      // cashier keeps a receipt of the refund — same coverage as a normal
-      // sale receipt.
+      // Print on every non-kitchen printer (cashier + general/customer), same as a sale receipt.
       final devices = await getIt<DeviceService>().getDevices();
       final registry = getIt<PrinterRoleRegistry>();
       await registry.initialize();
@@ -1071,8 +1029,9 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
         final role = registry.resolveRole(d);
         if (role == PrinterRole.kitchen ||
             role == PrinterRole.kds ||
-            role == PrinterRole.bar) return false;
-        // Bluetooth needs a MAC, network needs an IP.
+            role == PrinterRole.bar) {
+          return false;
+        }
         if (d.connectionType == PrinterConnectionType.bluetooth) {
           return (d.bluetoothAddress ?? '').trim().isNotEmpty;
         }
@@ -1082,9 +1041,10 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
       if (targetPrinters.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('لا توجد طابعة مهيأة لطباعة فاتورة الدائن.'),
-              backgroundColor: Color(0xFFB91C1C),
+            SnackBar(
+              duration: const Duration(seconds: 3),
+              content: Text(translationService.t('no_credit_note_printer')),
+              backgroundColor: const Color(0xFFB91C1C),
             ),
           );
         }
@@ -1104,19 +1064,21 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
       if (!anySucceeded && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('فشلت طباعة فاتورة الدائن على جميع الطابعات.'),
-            backgroundColor: Color(0xFFB91C1C),
+          SnackBar(
+            duration: const Duration(seconds: 3),
+            content: Text(translationService.t('credit_note_all_printers_failed')),
+            backgroundColor: const Color(0xFFB91C1C),
           ),
         );
       }
     } catch (e) {
       debugPrint('Credit note print failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('تعذرت طباعة فاتورة الدائن: $e'),
-            backgroundColor: const Color(0xFFB91C1C),
+        UiFeedback.info(
+          context,
+          translationService.t(
+            'credit_note_print_failed_n',
+            args: {'error': '$e'},
           ),
         );
       }
@@ -1131,9 +1093,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
     final seen = <String>{};
     final results = <_RefundCandidate>[];
 
-    // Salon invoices surface services under both `sales_services` and the
-    // generic `items` fallback. Dedupe by id alone for salon to avoid
-    // duplicates; restaurant keeps the legacy per-type dedupe untouched.
+    // Salon dedupes by id alone since services appear under both `sales_services` and `items`.
     final hasSalonServices =
         previewPayload['sales_services'] is List ||
             previewPayload['services'] is List ||
@@ -1172,13 +1132,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
             m['item_name']?.toString().trim();
         final name = (rawName == null || rawName.isEmpty) ? 'عنصر' : rawName;
         final qty = int.tryParse(m['quantity']?.toString() ?? '1') ?? 1;
-        // Salon invoice items carry both `total` (pre-tax, e.g. "304.35")
-        // and `total_tax` (with-tax, e.g. "350.00"). The cashier expects
-        // every refund amount on this dialog to match the invoice grand
-        // total — verified against IN-53158 which had two services at
-        // total=304.35 / total_tax=350.00 and an invoice total of 700.00.
-        // Restaurant items don't have `total_tax`, so the fallback chain
-        // still picks `total` for them and behaviour is unchanged.
+        // Salon: prefer `total_tax` (with-tax) over `total` so dialog matches invoice grand total.
         final total = _parsePrice(
           (isSalonModule ? (m['total_tax'] ?? m['total_with_tax']) : null) ??
               m['total'] ??
@@ -1191,10 +1145,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
 
     addFromList(previewPayload['sales_meals'] ?? previewPayload['meals'], type: _RefundCandidateType.meal, idKeys: const ['sales_meal_id', 'meal_id', 'item_id']);
     addFromList(previewPayload['sales_products'] ?? previewPayload['products'], type: _RefundCandidateType.product, idKeys: const ['sales_product_id', 'product_id', 'item_id']);
-    // Salon invoices expose refundable services under `sales_services` /
-    // `services`. The backend's PATCH refund endpoint requires them under
-    // `refund_services` (see [_confirm]), so they need their own candidate
-    // type rather than being lumped in with `meal`/`unknown`.
+    // Salon services go under `refund_services` in PATCH payload — needs its own type.
     addFromList(
       previewPayload['sales_services'] ?? previewPayload['services'],
       type: _RefundCandidateType.service,
@@ -1211,9 +1162,7 @@ class _InvoiceRefundDialogState extends State<InvoiceRefundDialog>
   }) async {
     if (refundedItems.isEmpty) return;
     try {
-      // Resolve printer language (local, device-scoped). Both primary and
-      // (optional) secondary so the kitchen ticket renders bilingually when
-      // the cashier enabled a second language.
+      // Resolve primary + optional secondary printer language for bilingual kitchen tickets.
       final String lang = printerLanguageSettings.primary;
       final String langSecondary =
           printerLanguageSettings.allowSecondary &&

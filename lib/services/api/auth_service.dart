@@ -1,16 +1,22 @@
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+// ignore_for_file: avoid_dynamic_calls
+// JSON wire-boundary layer — dynamic accesses accepted pending typed-model refactor.
 import 'dart:async';
 import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../customer_display/nearpay/secure_credential_manager.dart';
+import '../../locator.dart';
+import '../../models/branch.dart';
+import '../../waiter_module/services/mesh_auth_service.dart';
+import '../logger_service.dart';
+import '../nearpay/nearpay_service.dart';
+import '../security/secure_token_store.dart';
+import '../whatsapp_service.dart';
 import 'api_constants.dart';
 import 'base_client.dart';
 import 'branch_service.dart';
-import '../../locator.dart';
-import '../../models/branch.dart';
-import '../../customer_display/nearpay/secure_credential_manager.dart';
-import '../../waiter_module/services/mesh_auth_service.dart';
-import '../nearpay/nearpay_service.dart';
-import '../whatsapp_service.dart';
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
@@ -29,7 +35,6 @@ class AuthService {
   List<Map<String, dynamic>> _cachedLoginBranches = [];
   bool _isInitialized = false;
 
-  // Singleton
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal();
@@ -164,10 +169,7 @@ class AuthService {
           byId[id] = Map<String, dynamic>.from(branch);
           continue;
         }
-        // Fill missing keys from later sources. Login response is missing
-        // `module` + `have_waiters`; `/seller/branches` carries them
-        // (module nested under `type.module`). Don't clobber values that
-        // are already present and non-null on the first source.
+        // Fill missing keys from later sources; don't clobber non-null first-source values.
         branch.forEach((key, value) {
           final cur = existing[key];
           final curIsEmpty = cur == null ||
@@ -198,7 +200,7 @@ class AuthService {
 
       return resolved;
     } catch (e) {
-      print('⚠️ Failed to resolve branch from profile branches: $e');
+      Log.w('auth', 'failed to resolve branch from profile branches', error: e);
       return 0;
     }
   }
@@ -257,10 +259,10 @@ class AuthService {
     }
 
     if (changed) {
-      print(
-          '🏷️ Tax config applied → hasTax=${ApiConstants.hasTax}, '
-          'percentage=${ApiConstants.taxPercentage}%, '
-          'rate=${ApiConstants.taxRate}, currency=${ApiConstants.currency}');
+      Log.d('auth',
+          'tax config applied → hasTax=${ApiConstants.hasTax} '
+          'percentage=${ApiConstants.taxPercentage}% '
+          'rate=${ApiConstants.taxRate} currency=${ApiConstants.currency}');
     }
     return changed;
   }
@@ -295,7 +297,6 @@ class AuthService {
     if (_isInitialized && !force) return;
     await _loadTokenFromStorage();
     if (_cachedToken != null && _cachedToken!.isNotEmpty) {
-      // Do not block app startup on network-bound validation.
       unawaited(_validateStoredBranchForCurrentAccount());
     }
     _isInitialized = true;
@@ -320,104 +321,110 @@ class AuthService {
         ApiConstants.branchId = fallbackId;
         final prefs = await SharedPreferences.getInstance();
         await prefs.setInt(_branchIdKey, fallbackId);
-        print('🔁 Stored branch corrected to account branch: $fallbackId');
+        Log.i('auth', 'stored branch corrected to account branch: $fallbackId');
       }
     } catch (e) {
-      print('⚠️ Skipping stored branch validation: $e');
+      Log.w('auth', 'skipping stored branch validation', error: e);
     }
   }
 
-  /// Load token from SharedPreferences on startup
+  /// Load token from secure storage on startup. Non-credential branch
+  /// settings (tax, currency, module, etc.) stay in SharedPreferences —
+  /// they're configuration, not secrets.
   Future<void> _loadTokenFromStorage() async {
-    final prefs = await SharedPreferences.getInstance();
-    _cachedToken = prefs.getString(_tokenKey);
-    final userJson = prefs.getString(_userKey);
+    // SecureTokenStore migrates any legacy SharedPreferences-resident token on first run.
+    _cachedToken = await secureTokenStore.readToken();
+    final userJson = await secureTokenStore.readUser();
     if (userJson != null) {
-      _cachedUser = jsonDecode(userJson);
+      try {
+        final decoded = jsonDecode(userJson);
+        if (decoded is Map) {
+          _cachedUser = decoded.map((k, v) => MapEntry(k.toString(), v));
+        }
+      } catch (e) {
+        Log.w('auth', 'cached user JSON is corrupt — dropping', error: e);
+        await secureTokenStore.deleteUser();
+      }
     }
-    // Load branch ID from storage
-    final savedBranchId = prefs.getInt(_branchIdKey);
-    if (savedBranchId != null) {
-      ApiConstants.branchId = savedBranchId;
-      print('🏪 Branch ID loaded from storage: $savedBranchId');
+
+    // Corrupt prefs file (seen on Linux when a giant cache write was
+    // interrupted) shouldn't take down session restore — defaults are valid.
+    SharedPreferences? prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      Log.w('auth', 'SharedPreferences unavailable — using defaults', error: e);
     }
-    // Load Seller ID
-    final savedSellerId = prefs.getInt(_sellerIdKey);
-    if (savedSellerId != null) {
-      ApiConstants.sellerId = savedSellerId;
-      print('👤 Seller ID loaded from storage: $savedSellerId');
+    if (prefs != null) {
+      final savedBranchId = prefs.getInt(_branchIdKey);
+      if (savedBranchId != null) {
+        ApiConstants.branchId = savedBranchId;
+      }
+      final savedSellerId = prefs.getInt(_sellerIdKey);
+      if (savedSellerId != null) {
+        ApiConstants.sellerId = savedSellerId;
+      }
+      final savedCurrency = prefs.getString(_currencyKey);
+      if (savedCurrency != null) {
+        ApiConstants.currency = savedCurrency;
+      }
+      // Tax config defaults stay in place when prefs are missing — cold start needs valid math.
+      final savedHasTax = prefs.getBool(_hasTaxKey);
+      if (savedHasTax != null) ApiConstants.hasTax = savedHasTax;
+      final savedTaxPct = prefs.getInt(_taxPercentageKey);
+      if (savedTaxPct != null) {
+        ApiConstants.taxPercentage = savedTaxPct;
+        ApiConstants.taxRate = (savedTaxPct / 100.0).clamp(0.0, 1.0).toDouble();
+      }
+      final savedDigits = prefs.getInt(_digitsNumberKey);
+      if (savedDigits != null) ApiConstants.digitsNumber = savedDigits;
+      final savedModule = prefs.getString('branch_module');
+      if (savedModule != null) {
+        ApiConstants.branchModule = savedModule;
+      }
+      final savedHaveWaiters = prefs.getBool(_haveWaitersKey);
+      if (savedHaveWaiters != null) {
+        ApiConstants.haveWaiters = savedHaveWaiters;
+      }
+      final savedWhatsapp = prefs.getBool(_whatsappEnabledKey);
+      if (savedWhatsapp != null) {
+        ApiConstants.whatsappEnabled = savedWhatsapp;
+      }
+      final savedCountryId = prefs.getInt(_branchCountryIdKey);
+      if (savedCountryId != null && savedCountryId > 0) {
+        ApiConstants.branchCountryId = savedCountryId;
+      }
     }
-    // Load Currency
-    final savedCurrency = prefs.getString(_currencyKey);
-    if (savedCurrency != null) {
-      ApiConstants.currency = savedCurrency;
-      print('💰 Currency loaded from storage: $savedCurrency');
-    }
-    // Load tax config — keeps cashier math correct on cold start before
-    // the first network call. Defaults stay in place when prefs are missing.
-    final savedHasTax = prefs.getBool(_hasTaxKey);
-    if (savedHasTax != null) ApiConstants.hasTax = savedHasTax;
-    final savedTaxPct = prefs.getInt(_taxPercentageKey);
-    if (savedTaxPct != null) {
-      ApiConstants.taxPercentage = savedTaxPct;
-      ApiConstants.taxRate = (savedTaxPct / 100.0).clamp(0.0, 1.0).toDouble();
-    }
-    final savedDigits = prefs.getInt(_digitsNumberKey);
-    if (savedDigits != null) ApiConstants.digitsNumber = savedDigits;
-    if (savedHasTax != null || savedTaxPct != null) {
-      print(
-          '🏷️ Tax loaded from storage → hasTax=${ApiConstants.hasTax}, '
-          'percentage=${ApiConstants.taxPercentage}%');
-    }
-    // Load Branch Module
-    final savedModule = prefs.getString('branch_module');
-    if (savedModule != null) {
-      ApiConstants.branchModule = savedModule;
-      print('🏷️ Branch module loaded from storage: $savedModule');
-    }
-    final savedHaveWaiters = prefs.getBool(_haveWaitersKey);
-    if (savedHaveWaiters != null) {
-      ApiConstants.haveWaiters = savedHaveWaiters;
-      print('🏷️ haveWaiters loaded from storage: $savedHaveWaiters');
-    }
-    final savedWhatsapp = prefs.getBool(_whatsappEnabledKey);
-    if (savedWhatsapp != null) {
-      ApiConstants.whatsappEnabled = savedWhatsapp;
-      print('🏷️ whatsappEnabled loaded from storage: $savedWhatsapp');
-    }
-    final savedCountryId = prefs.getInt(_branchCountryIdKey);
-    if (savedCountryId != null && savedCountryId > 0) {
-      ApiConstants.branchCountryId = savedCountryId;
-    }
-    if (_cachedToken != null) {
+    if (_cachedToken != null && _cachedToken!.isNotEmpty) {
       BaseClient().setToken(_cachedToken!);
-      print('📦 Token loaded from storage');
+      Log.d('auth', 'session restored from secure storage');
     } else {
-      print('📦 No token found in storage');
+      Log.d('auth', 'no stored session');
     }
   }
 
-  /// Save token to SharedPreferences
+  /// Save token to secure storage + non-credential settings to prefs.
   Future<void> _saveTokenToStorage(
       String token, Map<String, dynamic>? user) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
+    await secureTokenStore.writeToken(token);
     if (user != null) {
-      await prefs.setString(_userKey, jsonEncode(user));
+      await secureTokenStore.writeUser(jsonEncode(user));
     }
-    // Save branch ID, Seller ID, Currency, Tax & Module
+    final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_branchIdKey, ApiConstants.branchId);
     await prefs.setInt(_sellerIdKey, ApiConstants.sellerId);
     await _persistTaxConfig(prefs);
     if (ApiConstants.branchModule.isNotEmpty) {
       await prefs.setString('branch_module', ApiConstants.branchModule);
     }
-    print('💾 Branch, Seller ID, Currency, Tax & Module saved to storage');
+    Log.d('auth', 'session persisted (token in secure storage)');
   }
 
-  /// Clear token from SharedPreferences
+  /// Clear all session state from both secure and shared storage.
   Future<void> _clearTokenFromStorage() async {
+    await secureTokenStore.clearAll();
     final prefs = await SharedPreferences.getInstance();
+    // Remove legacy plaintext keys too, in case the migration hadn't run yet.
     await prefs.remove(_tokenKey);
     await prefs.remove(_userKey);
     await prefs.remove(_branchIdKey);
@@ -430,7 +437,6 @@ class AuthService {
     await prefs.remove(_haveWaitersKey);
     await prefs.remove(_whatsappEnabledKey);
     await prefs.remove(_branchCountryIdKey);
-    // Reset defaults
     ApiConstants.branchId = 0;
     ApiConstants.sellerId = 1;
     ApiConstants.currency = 'ر.س';
@@ -442,12 +448,9 @@ class AuthService {
     ApiConstants.haveWaiters = true;
     ApiConstants.whatsappEnabled = true;
     ApiConstants.branchCountryId = 1;
-    // Drop the previous branch's WAWP creds so the next session starts
-    // clean. Without this, the old `instance_id` + `access_token` would
-    // sit in memory until the new branch's `/seller/branches/{id}/settings`
-    // call returns.
+    // Drop previous branch's WAWP creds so next session starts clean.
     whatsAppService.clearBackendCredentials();
-    print('🗑️ Session data cleared from storage');
+    Log.d('auth', 'session data cleared');
   }
 
   /// Login with email and password using MultipartRequest
@@ -459,33 +462,28 @@ class AuthService {
     final uri = Uri.parse(
         '${ApiConstants.authBaseUrl}${ApiConstants.jwtLoginEndpoint}');
 
-    var request = http.MultipartRequest('POST', uri);
+    final request = http.MultipartRequest('POST', uri);
     request.fields['email'] = email;
     request.fields['password'] = password;
     request.fields['remember_me'] = rememberMe;
 
-    // Add required headers
     request.headers.addAll(ApiConstants.defaultHeaders);
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200 || response.statusCode == 201) {
+      // NEVER log the body — leaks token prefix + PII to logcat/syslog.
       final jsonData = jsonDecode(response.body);
-      print(
-          '📥 Login response received: ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}...');
 
-      // Extract token from supported response variants.
       String? token;
       if (jsonData is Map) {
         final responseMap = jsonData.map((k, v) => MapEntry(k.toString(), v));
-        print('🔍 Response keys: ${responseMap.keys.toList()}');
         token = _extractTokenFromPayload(responseMap);
 
         final data = responseMap['data'];
         if (data is Map) {
           final normalizedData = data.map((k, v) => MapEntry(k.toString(), v));
-          print('🔍 Data keys: ${normalizedData.keys.toList()}');
           final user = normalizedData['user'];
           if (user is Map<String, dynamic>) {
             _cachedUser = user;
@@ -502,11 +500,10 @@ class AuthService {
         }
       }
 
-      print('🔍 Token extracted: ${token != null ? "FOUND" : "NULL"}');
+      Log.d('auth', 'login response parsed — token ${token != null ? "found" : "missing"}');
 
       if (token != null && token.isNotEmpty) {
         _cachedToken = token;
-        // Set token in BaseClient for authenticated requests
         BaseClient().setToken(token);
         // Prevent stale branch leaks from previous sessions/accounts.
         ApiConstants.branchId = 0;
@@ -527,17 +524,14 @@ class AuthService {
 
         if (resolvedBranchId > 0) {
           ApiConstants.branchId = resolvedBranchId;
-          print(
-              '🏪 Branch ID set to: ${ApiConstants.branchId} from login payload');
+          Log.d('auth',
+              'branch resolved from login payload: ${ApiConstants.branchId}');
         } else {
-          print(
-              '⚠️ No valid branch_id in login payload. Branch remains unset (0).');
+          Log.w('auth',
+              'no valid branch_id in login payload; branch remains unset');
         }
 
-        // Extract tax/currency config from the active branch's `taxObject`.
-        // Prefer the branch we just resolved (`resolvedBranchId`) so that
-        // multi-branch accounts pick up the right VAT % per branch instead
-        // of always inheriting the first branch's settings.
+        // Pull taxObject from the resolved branch — multi-branch accounts need per-branch VAT.
         if (jsonData is Map &&
             jsonData['data'] is Map &&
             jsonData['data']['branches'] is List) {
@@ -560,9 +554,8 @@ class AuthService {
           }
         }
 
-        // Set Seller ID from User ID or seller_id field
         if (_cachedUser != null) {
-          dynamic sId = _cachedUser!['seller_id'] ?? _cachedUser!['id'];
+          final dynamic sId = _cachedUser!['seller_id'] ?? _cachedUser!['id'];
           if (sId != null) {
             if (sId is String) {
               ApiConstants.sellerId = int.tryParse(sId) ?? 81;
@@ -570,22 +563,20 @@ class AuthService {
               ApiConstants.sellerId = sId;
             }
           }
-          print(
-              '👤 Seller ID set to: ${ApiConstants.sellerId} from login response');
         }
 
-        // Persist session with resolved branch/currency/seller.
         await _saveTokenToStorage(token, _cachedUser);
-        print('✅ Token set successfully and saved to storage');
+        Log.i('auth', 'login successful — session persisted');
       } else {
-        print('❌ No token found in response. Full response: $jsonData');
+        // Don't echo jsonData — account-tier hints leak to logcat via USB.
+        Log.w('auth', 'login response did not contain a token');
         throw Exception('لم يتم استلام رمز المصادقة');
       }
 
       return jsonData;
     } else {
-      final errorBody = response.body;
-      print('Login failed: ${response.statusCode} → $errorBody');
+      // Don't log body — may include email-tied validation messages.
+      Log.w('auth', 'login failed (HTTP ${response.statusCode})');
       throw Exception('فشل تسجيل الدخول: ${response.statusCode}');
     }
   }
@@ -600,18 +591,7 @@ class AuthService {
         email: email, password: password, rememberMe: rememberMe.toString());
   }
 
-  // ──────────────────────────── Forgot password ────────────────────────────
-  //
-  // Three-step flow backed by `portal.hermosaapp.com`. The first step accepts
-  // either a mobile number or an email — the backend keys both into the
-  // same signed-route response so steps 2/3 are identical regardless:
-  //   1. POST /seller/forgot           body: mobile=... | email=... → signed_route for step 2
-  //   2. POST <signed_route from 1>    body: otp=...                → signed_route for step 3
-  //   3. POST <signed_route from 2>    body: password, password_confirmation
-  //
-  // Each response nests `data.signed_route` holding the exact path (with
-  // expires + signature + account id) the next call must hit. Callers
-  // pass that string back in unchanged — we don't re-sign anything.
+  // --- Forgot password: 3-step signed-route flow; callers pass data.signed_route back unchanged. ---
 
   Map<String, String> _forgotHeaders() => {
         'Accept': 'application/json',
@@ -626,7 +606,10 @@ class AuthService {
       if (decoded is Map) {
         return decoded.map((k, v) => MapEntry(k.toString(), v));
       }
-    } catch (_) {}
+    } catch (e) {
+      // Malformed JSON is a real bug — surface in crash reports.
+      Log.w('auth', 'response body was not valid JSON', error: e);
+    }
     return const {};
   }
 
@@ -721,15 +704,13 @@ class AuthService {
 
   /// Check if user is authenticated
   Future<bool> isAuthenticated() async {
-    // Initialize if not already done
     if (!_isInitialized) {
       await initialize();
     }
-    // Load from storage if not cached
+    // Defensive re-read for the case where _cachedToken was cleared mid-rebuild.
     if (_cachedToken == null) {
-      final prefs = await SharedPreferences.getInstance();
-      _cachedToken = prefs.getString(_tokenKey);
-      if (_cachedToken != null) {
+      _cachedToken = await secureTokenStore.readToken();
+      if (_cachedToken != null && _cachedToken!.isNotEmpty) {
         BaseClient().setToken(_cachedToken!);
       }
     }
@@ -808,7 +789,6 @@ class AuthService {
   Future<void> logout() async {
     try {
       final client = BaseClient();
-      // Perform API logout with specific headers requested
       await client.post(
         ApiConstants.logoutEndpoint,
         {},
@@ -819,33 +799,33 @@ class AuthService {
         },
       );
     } catch (e) {
-      print('⚠️ API Logout failed: $e');
+      Log.w('auth', 'API logout failed (local state will still be cleared)',
+          error: e);
     } finally {
       _cachedToken = null;
       _cachedUser = null;
       BaseClient().clearToken();
       NearPayService().clearCache();
-      // Wipe per-session BranchService caches so the next user (which
-      // can be a different cashier on a different branch on the same
-      // shared tablet) doesn't inherit pay methods, branch settings,
-      // or a receipt logo from the previous session.
+      // Wipe per-session BranchService caches so next user on shared tablet doesn't inherit.
       try {
         getIt<BranchService>().clearSessionCaches();
-      } catch (_) {}
-      // Drop the NearPay merchant credentials cache so a different
-      // account's signon can't reuse the previous merchant's token
-      // out of memory.
+      } catch (e) {
+        Log.w('auth', 'logout: BranchService.clearSessionCaches failed',
+            error: e);
+      }
+      // Drop NearPay merchant credentials cache so next account can't reuse from memory.
       try {
         secureCredentialManager.clearCache();
-      } catch (_) {}
-      // Wipe the mesh MAC key — a fresh login derives a new one for
-      // its branch+seller. Without this, the brief moment between
-      // logout and next login would keep an old branch's key in
-      // memory and any in-flight broadcast on the LAN would still
-      // verify against it.
+      } catch (e) {
+        Log.w('auth', 'logout: NearPay credential cache clear failed',
+            error: e);
+      }
+      // Wipe mesh MAC key — fresh login derives a new one per branch+seller.
       try {
         getIt<MeshAuthService>().clear();
-      } catch (_) {}
+      } catch (e) {
+        Log.w('auth', 'logout: MeshAuthService.clear failed', error: e);
+      }
       await _clearTokenFromStorage();
     }
   }
@@ -884,7 +864,7 @@ class AuthService {
     }
 
     if (_cachedUser != null) {
-      print('⚠️ getProfile failed, returning cached user data');
+      Log.w('auth', 'getProfile failed — returning cached user data');
       return {
         'status': 200,
         'message': 'cached_profile_fallback',
@@ -915,7 +895,7 @@ class AuthService {
           collected.add(branches);
         }
       } catch (e) {
-        print('⚠️ Failed to load branches from $endpoint: $e');
+        Log.w('auth', 'failed to load branches from $endpoint', error: e);
       }
     }
 
@@ -935,7 +915,7 @@ class AuthService {
       try {
         parsed.add(Branch.fromJson(branchJson));
       } catch (e) {
-        print('⚠️ Skipping invalid branch payload: $e');
+        Log.w('auth', 'skipping invalid branch payload', error: e);
       }
     }
     return parsed;
@@ -979,7 +959,6 @@ class AuthService {
       ApiConstants.branchCountryId = branch.countryId;
     }
 
-    // Apply taxObject (currency + has_tax + percentage + digits).
     final tax = branch.taxObject;
     ApiConstants.hasTax = tax.hasTax;
     ApiConstants.taxPercentage = tax.taxPercentage;
@@ -1000,7 +979,12 @@ class AuthService {
       await prefs.setInt(_branchCountryIdKey, branch.countryId);
     }
 
-    print(
-        '🔄 Active Branch updated to: ${branch.name} (ID: ${branch.id}, module: ${branch.module}, hasTax=${ApiConstants.hasTax}, taxPercentage=${ApiConstants.taxPercentage}%, haveWaiters=${branch.haveWaiters}, whatsappEnabled=${branch.whatsappStatus}, country=${branch.countryId})');
+    Log.d('auth',
+        'active branch → id=${branch.id} module=${branch.module} '
+        'hasTax=${ApiConstants.hasTax} '
+        'taxPercentage=${ApiConstants.taxPercentage}% '
+        'haveWaiters=${branch.haveWaiters} '
+        'whatsappEnabled=${branch.whatsappStatus} '
+        'country=${branch.countryId}');
   }
 }

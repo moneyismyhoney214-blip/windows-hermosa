@@ -100,6 +100,13 @@ extension DisplayAppServiceApi on DisplayAppService {
     String? invoicePrimaryLang,
     String? invoiceSecondaryLang,
     bool? invoiceAllowSecondary,
+    // Salon-only: per-service "turn slip" rows mirrored from the cart.
+    // Each entry shape: {customer_name, service_name, employee_name,
+    // price_formatted, notes, daily_order_number, booking_number,
+    // date_str, time_str}. Display App renders these on the CDS as
+    // salon-style tickets (one card per row) when branchModule == 'salons'.
+    List<Map<String, dynamic>>? salonTickets,
+    String? branchModule,
   }) {
     final resolvedTaxRate = _resolveTaxRate(
       subtotal: subtotal,
@@ -156,6 +163,8 @@ extension DisplayAppServiceApi on DisplayAppService {
         'invoice_secondary_lang': invoiceSecondaryLang,
       if (invoiceAllowSecondary != null)
         'invoice_allow_secondary': invoiceAllowSecondary,
+      if (branchModule != null) 'branch_module': branchModule,
+      if (salonTickets != null) 'salon_tickets': salonTickets,
     };
 
     _lastCartPayload = {
@@ -203,6 +212,8 @@ extension DisplayAppServiceApi on DisplayAppService {
           'invoice_secondary_lang': invoiceSecondaryLang,
         if (invoiceAllowSecondary != null)
           'invoice_allow_secondary': invoiceAllowSecondary,
+        if (branchModule != null) 'branch_module': branchModule,
+        if (salonTickets != null) 'salon_tickets': salonTickets,
       },
     };
 
@@ -459,6 +470,29 @@ extension DisplayAppServiceApi on DisplayAppService {
     });
   }
 
+  /// Push a meal availability change (enable/disable) to the display app so
+  /// the KDS inventory + CDS converge with the cashier's local state.
+  void notifyMealAvailabilityChange({
+    required String mealId,
+    required String mealName,
+    String? categoryName,
+    required bool isDisabled,
+  }) {
+    final id = mealId.trim();
+    if (id.isEmpty) return;
+    _sendMessage({
+      'type': 'MEAL_DISABLED_SYNC',
+      'data': {
+        'meal_id': id,
+        'meal_name': mealName,
+        'category_name': categoryName,
+        'is_disabled': isDisabled,
+        'reason': isDisabled ? 'نفذت الوجبة' : 'تم التفعيل من الكاشير',
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+    });
+  }
+
   /// Push direct booking status sync to display app/KDS.
   void sendOrderStatusUpdateToDisplay({
     required String orderId,
@@ -471,6 +505,47 @@ extension DisplayAppServiceApi on DisplayAppService {
       'data': {
         'order_id': normalizedOrderId,
         'status': status,
+        'timestamp': DateTime.now().toIso8601String(),
+      },
+    });
+  }
+
+  /// Tell the display/KDS that this order was cancelled by the cashier.
+  /// The KDS removes it from the active board immediately; status=8 on the
+  /// backend is the authoritative record, this just shortens the realtime gap.
+  void notifyOrderCancelled({required String orderId}) {
+    final normalizedOrderId = orderId.trim();
+    if (normalizedOrderId.isEmpty) return;
+    _sendMessage({
+      'type': 'ORDER_CANCELLED',
+      'data': {
+        'order_id': normalizedOrderId,
+        'timestamp': DateTime.now().toIso8601String(),
+      },
+    });
+  }
+
+  /// Tell the display/KDS that the cashier rewrote this order's meal list.
+  /// Covers add / remove / quantity changes — the cashier's `updateBookingItems`
+  /// endpoint always sends the full items list, so we mirror that semantic on
+  /// the wire (one event = the new authoritative items array).
+  void notifyOrderItemsChanged({
+    required String orderId,
+    required List<Map<String, dynamic>> items,
+    String? orderNumber,
+    double? total,
+    String? note,
+  }) {
+    final normalizedOrderId = orderId.trim();
+    if (normalizedOrderId.isEmpty) return;
+    _sendMessage({
+      'type': 'ORDER_ITEMS_CHANGED',
+      'data': {
+        'order_id': normalizedOrderId,
+        if (orderNumber != null) 'order_number': orderNumber,
+        if (total != null) 'total': total,
+        if (note != null) 'note': note,
+        'items': items,
         'timestamp': DateTime.now().toIso8601String(),
       },
     });

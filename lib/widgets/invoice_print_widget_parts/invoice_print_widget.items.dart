@@ -97,10 +97,65 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
           ),
         ),
         ...data!.items.map((item) {
-          final itemPrice =
-              item.quantity > 0 ? (item.total / item.quantity) : item.total;
+          // Per-item discount surfaces inline beside the meal name —
+          // "(مجاناً)" for free lines and "(خصم 10%)" / "(خصم 5.00 ر.س)"
+          // for everything else with a discount. The order-level
+          // discount/coupon banner in `_buildTotals` handles whole-bill
+          // discounts; per-item chips show in BOTH cases so the
+          // customer can see exactly which meal each per-item discount
+          // applied to (e.g. a meal manually discounted by the cashier
+          // alongside an order-wide coupon).
+          final isOrderFullyFree =
+              data!.totalInclVat <= 0.001 && _hasAnyDiscountSource;
+          // A line is "free" — regardless of how the cashier achieved
+          // it — when ANY of the following is true:
+          //   * explicit "Free" flag from cashier / backend
+          //     (discountName == 'مجاناً')
+          //   * 100% discount from the slider or a full coupon
+          //     (discountPercentage ≈ 100)
+          //   * math fully-discounted line (originalPrice > 0 &&
+          //     total ≈ 0 && a discount is present) — catches the
+          //     "cashier discounted the full amount in currency"
+          //     edge case where neither percentage nor flag is set.
+          // The user explicitly asked that all three paths read as
+          // "(مجاناً)" rather than splitting "(خصم 100%)" out.
+          final isFreeLine = (item.discountName?.trim() == 'مجاناً') ||
+              (item.discountPercentage != null &&
+                  item.discountPercentage! >= 99.99) ||
+              (item.originalPrice != null &&
+                  item.originalPrice! > 0 &&
+                  item.total <= 0.001 &&
+                  item.hasDiscount);
+          // Displayed total: 0 for any free line OR when the whole
+          // order is free (banner-driven), otherwise the line total
+          // straight from the data.
+          final displayedItemTotal =
+              (isOrderFullyFree || isFreeLine) ? 0.0 : item.total;
+          final itemPrice = item.quantity > 0
+              ? (displayedItemTotal / item.quantity)
+              : displayedItemTotal;
           final hasAddons = item.addons != null && item.addons!.isNotEmpty;
-          final hasDiscount = item.hasDiscount;
+          // Compose the inline discount chip text. Hidden when the
+          // whole order is free (the FREE ORDER banner already speaks
+          // for every line) or when this line has no discount at all.
+          String? discountChip;
+          if (!isOrderFullyFree) {
+            if (isFreeLine) {
+              discountChip =
+                  '(${_ml(ar: 'مجاناً', en: 'FREE', hi: 'मुफ्त', ur: 'مفت', es: 'GRATIS', tr: 'ÜCRETSİZ')})';
+            } else if (item.hasDiscount) {
+              final pct = item.discountPercentage;
+              final amount = item.discountAmount ?? 0;
+              if (pct != null && pct > 0) {
+                discountChip =
+                    '(${_ml(ar: 'خصم', en: 'Discount', hi: 'छूट', ur: 'ڈسکاؤنٹ', es: 'Descuento', tr: 'İndirim')} ${pct.toStringAsFixed(0)}%)';
+              } else if (amount > 0) {
+                final currency = _translateCurrency(ApiConstants.currency);
+                discountChip =
+                    '(${_ml(ar: 'خصم', en: 'Discount', hi: 'छूट', ur: 'ڈسکاؤنٹ', es: 'Descuento', tr: 'İndirim')} ${amount.toStringAsFixed(ApiConstants.digitsNumber)} $currency)';
+              }
+            }
+          }
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -139,6 +194,24 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                                       fontSize: 18,
                                       fontWeight: FontWeight.bold,
                                       color: Colors.black),
+                                ),
+                              // Inline per-item discount chip (e.g.
+                              // "(مجاناً)" / "(خصم 10%)" / "(خصم 5.00 ر.س)")
+                              // — sits immediately under the meal name so
+                              // the customer reads it as a qualifier on
+                              // that specific line. Cheaper visual weight
+                              // than a separate framed row underneath.
+                              if (discountChip != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    discountChip,
+                                    style: GoogleFonts.tajawal(
+                                        fontSize: 16,
+                                        color: Colors.black,
+                                        fontWeight: FontWeight.bold,
+                                        fontStyle: FontStyle.italic),
+                                  ),
                                 ),
                               // Addons inside the item cell, grouped by name.
                               // Uses primary invoice language for the main
@@ -256,7 +329,8 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.center,
                             child: Text(
-                              item.total.toStringAsFixed(ApiConstants.digitsNumber),
+                              displayedItemTotal.toStringAsFixed(
+                                  ApiConstants.digitsNumber),
                               maxLines: 1,
                               softWrap: false,
                               style: const TextStyle(
@@ -273,29 +347,6 @@ extension InvoicePrintWidgetItems on InvoicePrintWidget {
                   ),
                 ),
               ),
-              if (hasDiscount)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                  decoration: const BoxDecoration(
-                    border: Border(bottom: BorderSide(color: Colors.black38)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '${item.discountName ?? _ml(ar: 'خصم', en: 'Discount', hi: 'छूट', ur: 'ڈسکاؤنٹ', es: 'Descuento', tr: 'İndirim')}${item.discountPercentage != null ? ' (${item.discountPercentage!.toStringAsFixed(0)}%)' : ''}',
-                        style: GoogleFonts.tajawal(
-                            fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        '-${item.discountAmount!.toStringAsFixed(ApiConstants.digitsNumber)}',
-                        style: GoogleFonts.tajawal(
-                            fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ),
             ],
           );
         }),

@@ -1,8 +1,10 @@
+// ignore_for_file: avoid_dynamic_calls
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
 import '../services/api/api_constants.dart';
-import '../services/language_service.dart';
 import '../services/app_themes.dart';
+import '../services/language_service.dart';
 import '../widgets/amount_num_pad_sheet.dart';
 
 class SplitPaymentDialog extends StatefulWidget {
@@ -23,12 +25,8 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
   final List<Map<String, dynamic>> _selectedPayments = [];
   double _remainingAmount = 0;
 
-  // Use the active branch's currency precision for rounding (2 for SAR,
-  // 3 for BHD/KWD). widget.total can carry sub-fils precision from raw
-  // tax math, so without this rounding the per-method text fields drift
-  // versus the total and the backend rejects payments != invoice total.
+  // Round to branch currency precision; raw tax math can carry sub-fils that the backend rejects against invoice total.
   double get _total => ApiConstants.roundMoney(widget.total);
-  String _fmt(double v) => ApiConstants.formatMoney(v);
 
   String _t(String key, {Map<String, dynamic>? args}) {
     return translationService.t(key, args: args);
@@ -203,7 +201,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
       final c = removed['controller'];
       if (c is TextEditingController) c.dispose();
       _calculateRemaining();
-      // Auto-fill remaining into last method
       _autoFillLastMethod();
     });
   }
@@ -216,9 +213,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     }
     setState(() {
       _remainingAmount = (_total - totalPaid);
-      // Tolerate one currency unit (0.01 SAR / 0.001 BHD) of rounding
-      // drift so a fully-allocated split enables the "pay" button even
-      // when the raw total carries sub-precision math.
+      // Tolerate one currency unit of rounding drift so fully-allocated splits enable "pay".
       final tolerance = 1.0 / _pow10(ApiConstants.digitsNumber);
       if (_remainingAmount.abs() < tolerance) _remainingAmount = 0;
     });
@@ -234,7 +229,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
 
   /// When user changes amount in any field, clamp it and auto-fill the last method
   void _onAmountChanged(int changedIndex) {
-    // Clamp: don't allow value > total or negative
     final controller = _selectedPayments[changedIndex]['controller'] as TextEditingController;
     var entered = double.tryParse(controller.text) ?? 0;
     if (entered < 0) {
@@ -244,7 +238,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
           TextPosition(offset: controller.text.length));
     }
 
-    // Sum all OTHER methods (excluding current)
     double sumOthers = 0;
     for (var i = 0; i < _selectedPayments.length; i++) {
       if (i == changedIndex) continue;
@@ -252,7 +245,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
           double.tryParse(_selectedPayments[i]['controller'].text) ?? 0;
     }
 
-    // Max allowed for this field = total - sum of others
     final maxAllowed = _total - sumOthers;
     if (entered > maxAllowed) {
       entered = maxAllowed < 0 ? 0 : maxAllowed;
@@ -261,7 +253,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
           TextPosition(offset: controller.text.length));
     }
 
-    // Auto-fill last method if editing a non-last field
     if (_selectedPayments.length >= 2) {
       final lastIndex = _selectedPayments.length - 1;
       if (changedIndex != lastIndex) {
@@ -291,8 +282,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     _calculateRemaining();
   }
 
-  // Maximum this row is allowed to hold: the total minus whatever the other
-  // rows already sum to. Prevents the keypad confirm from over-allocating.
+  // Max row allowance = total minus sum of other rows; prevents keypad over-allocation.
   double _maxForRow(int index) {
     double sumOthers = 0;
     for (var i = 0; i < _selectedPayments.length; i++) {
@@ -326,16 +316,12 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     final viewInsets = MediaQuery.viewInsetsOf(context);
     final isCompact = size.width < 900;
     final isPhone = isCompact && size.width < 600;
-    // Very short viewports (e.g. landscape phones, or portrait phones while
-    // the numeric keypad is open) need tighter spacing — otherwise the
-    // summary banner alone eats the space that should belong to the methods.
+    // Short viewports (landscape phones, keypad-open) need tighter spacing.
     final isShortViewport =
         (size.height - viewInsets.bottom) < 560;
     final dialogDirection =
         translationService.isRTL ? TextDirection.rtl : TextDirection.ltr;
-    // When the keyboard is open, shrink the dialog's bottom inset so the
-    // dialog doesn't try to reserve space beneath the keyboard. This lets
-    // the scrollable body actually fit the visible viewport.
+    // Shrink bottom inset when keyboard is open so the scrollable body fits the visible viewport.
     final insetPadding = EdgeInsets.fromLTRB(
       isCompact ? (isPhone ? 8 : 10) : 24,
       isCompact ? (isShortViewport ? 8 : 12) : 24,
@@ -345,13 +331,10 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
     final dialogWidth = isCompact
         ? (size.width - insetPadding.horizontal).clamp(280.0, 560.0).toDouble()
         : 1000.0;
-    // Available height = viewport – inset – keyboard. Clamp to a small-enough
-    // minimum so we never pick a height larger than what's actually visible.
     final availableHeight =
         (size.height - insetPadding.vertical).clamp(320.0, 900.0).toDouble();
     final dialogHeight = isCompact ? availableHeight : 700.0;
 
-    // Phone-tuned sizes for the method tiles and summary banner.
     final methodTileWidth = isPhone ? 68.0 : 80.0;
     final methodTileHeight = isShortViewport
         ? 56.0
@@ -688,7 +671,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
               : Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Left Side: Payment Summary & Confirmation (similar to Tender Dialog)
                     Container(
                       width: 350,
                       color: const Color(0xFFF59E0B),
@@ -773,7 +755,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                       ),
                     ),
 
-                    // Right Side: Selection and Inputs
                     Expanded(
                       child: Container(
                         color: context.appBg,
@@ -800,7 +781,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                             ),
                             const SizedBox(height: 24),
 
-                            // Available Methods Horizontal List
                             SizedBox(
                               height: 80,
                               child: ListView.builder(
@@ -858,7 +838,6 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
                             ),
                             const SizedBox(height: 16),
 
-                            // Selected Payments List
                             Expanded(
                               child: ListView.builder(
                                 itemCount: _selectedPayments.length,
@@ -921,9 +900,7 @@ class _SplitPaymentDialogState extends State<SplitPaymentDialog> {
   }
 }
 
-// Read-only field that mirrors the look of a bordered TextField but opens
-// the in-app numeric keypad on tap instead of the system keyboard. Listens
-// to the controller so typed values remain visible after the keypad closes.
+// Bordered read-only field that opens the in-app numeric keypad on tap.
 class _AmountField extends StatefulWidget {
   final TextEditingController controller;
   final VoidCallback onTap;

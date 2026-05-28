@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
 import '../models.dart';
 import '../services/api/api_constants.dart';
+import '../services/app_themes.dart';
 import '../services/language_service.dart';
 import 'split_payment_dialog.dart';
-import '../services/app_themes.dart';
 
 class PaymentTenderDialog extends StatefulWidget {
   final double total;
@@ -75,13 +76,6 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
   PromoCode? _localPromo;
   int? _localDepositId;
   final TextEditingController _noteController = TextEditingController();
-
-  bool get _useArabicUi {
-    final code = translationService.currentLanguageCode.trim().toLowerCase();
-    return code.startsWith('ar') || code.startsWith('ur');
-  }
-
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
 
   /// Pre-tax principal of the currently picked deposit (0 if none / unknown).
   double get _depositPricePreTax {
@@ -177,14 +171,14 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         },
         {
           'id': 'mada',
-          'label': _tr('مدى', 'Mada'),
+          'label': translationService.t('mada_provider'),
           'icon': LucideIcons.creditCard,
           'color': Colors.orange,
           'bg': Colors.orange[50]
         },
         {
           'id': 'visa',
-          'label': _tr('فيزا / ماستر', 'Visa / Master'),
+          'label': translationService.t('visa_master'),
           'icon': LucideIcons.wallet,
           'color': Colors.blue,
           'bg': Colors.blue[50]
@@ -205,84 +199,84 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
         },
         {
           'id': 'bank_transfer',
-          'label': _tr('تحويل بنكي', 'Bank Transfer'),
+          'label': translationService.t('bank_transfer_label'),
           'icon': LucideIcons.send,
           'color': Colors.orange,
           'bg': Colors.orange[50]
         },
         {
           'id': 'wallet',
-          'label': _tr('المحفظة', 'Wallet'),
+          'label': translationService.t('wallet_label'),
           'icon': LucideIcons.wallet,
           'color': Colors.teal,
           'bg': Colors.teal[50]
         },
         {
           'id': 'cheque',
-          'label': _tr('شيك', 'Cheque'),
+          'label': translationService.t('cheque_label'),
           'icon': LucideIcons.fileCheck,
           'color': Colors.brown,
           'bg': Colors.brown[50]
         },
         {
           'id': 'petty_cash',
-          'label': _tr('بيتي كاش', 'Petty Cash'),
+          'label': translationService.t('petty_cash'),
           'icon': LucideIcons.banknote,
           'color': Colors.teal,
           'bg': Colors.teal[50]
         },
         {
           'id': 'pay_later',
-          'label': _tr('الدفع بالآجل', 'Pay Later'),
+          'label': translationService.t('pay_later_label'),
           'icon': LucideIcons.clock,
           'color': Colors.indigo,
           'bg': Colors.indigo[50]
         },
         {
           'id': 'tabby',
-          'label': _tr('تابي', 'Tabby'),
+          'label': translationService.t('tabby_provider'),
           'icon': LucideIcons.creditCard,
           'color': Colors.blueGrey,
           'bg': Colors.blueGrey[50]
         },
         {
           'id': 'tamara',
-          'label': _tr('تمارا', 'Tamara'),
+          'label': translationService.t('tamara_provider'),
           'icon': LucideIcons.creditCard,
           'color': Colors.deepPurple,
           'bg': Colors.deepPurple[50]
         },
         {
           'id': 'keeta',
-          'label': _tr('كيتا', 'Keeta'),
+          'label': translationService.t('keeta_provider'),
           'icon': LucideIcons.truck,
           'color': Colors.orange,
           'bg': Colors.orange[50]
         },
         {
           'id': 'my_fatoorah',
-          'label': _tr('ماي فاتورة', 'My Fatoorah'),
+          'label': translationService.t('my_fatoorah'),
           'icon': LucideIcons.wallet,
           'color': Colors.cyan,
           'bg': Colors.cyan[50]
         },
         {
           'id': 'jahez',
-          'label': _tr('جاهز', 'Jahez'),
+          'label': translationService.t('jahez_provider'),
           'icon': LucideIcons.truck,
           'color': Colors.green,
           'bg': Colors.green[50]
         },
         {
           'id': 'talabat',
-          'label': _tr('طلبات', 'Talabat'),
+          'label': translationService.t('talabat_provider'),
           'icon': LucideIcons.shoppingBag,
           'color': Colors.red,
           'bg': Colors.red[50]
         },
         {
           'id': 'hunger_station',
-          'label': _tr('هنقر ستيشن', 'Hunger Station'),
+          'label': translationService.t('hunger_station'),
           'icon': LucideIcons.truck,
           'color': Colors.deepOrange,
           'bg': Colors.deepOrange[50]
@@ -378,7 +372,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
     final depositDeduction = _depositDeductionWithTax;
     final hasDeposit = depositDeduction > 0;
     return _SectionCard(
-      title: _tr('ملخص الفاتورة', 'Invoice Summary'),
+      title: translationService.t('invoice_summary'),
       icon: LucideIcons.receipt,
       compact: isCompact,
       expandChild: !isCompact,
@@ -409,7 +403,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           if (hasDeposit) ...[
             const SizedBox(height: 6),
             _SummaryLine(
-              label: _tr('عربون', 'Deposit'),
+              label: translationService.t('deposit_label'),
               value: '- ${depositDeduction.toStringAsFixed(ApiConstants.digitsNumber)}',
               valueColor: const Color(0xFF22C55E),
               compact: isCompact,
@@ -449,8 +443,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                _tr('لا يوجد عرابين لهذا العميل',
-                    'No deposits for this customer'),
+                translationService.t('no_deposits_for_customer'),
                 style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -506,10 +499,10 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
             Expanded(
               child: Text(
                 hasSelection
-                    ? '${_tr('عربون مطبّق', 'Deposit applied')}: ${selected['label'] ?? ''}'
-                    : _tr(
-                        'اختر عربون (${deposits.length})',
-                        'Apply a deposit (${deposits.length})',
+                    ? '${translationService.t('deposit_applied')}: ${selected['label'] ?? ''}'
+                    : translationService.t(
+                        'apply_deposit_n',
+                        args: {'count': deposits.length},
                       ),
                 style: TextStyle(
                   fontSize: 13,
@@ -558,16 +551,13 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                _tr('اختر عربون للخصم', 'Apply a deposit'),
+                translationService.t('apply_a_deposit_label'),
                 style: const TextStyle(
                     fontWeight: FontWeight.bold, fontSize: 16),
               ),
               const SizedBox(height: 4),
               Text(
-                _tr(
-                  'قيمة العربون يجب ألا تتجاوز إجمالي الفاتورة',
-                  'A deposit cannot exceed the invoice total',
-                ),
+                translationService.t('deposit_exceeds_invoice_msg'),
                 style: const TextStyle(
                     fontSize: 11, color: Color(0xFF64748B)),
               ),
@@ -612,11 +602,14 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                         title: Text(label),
                         subtitle: Text(
                           exceeds
-                              ? _tr(
-                                  'المبلغ: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — أكبر من الفاتورة',
-                                  'Amount: ${price.toStringAsFixed(ApiConstants.digitsNumber)} — exceeds invoice',
+                              ? translationService.t(
+                                  'amount_exceeds_invoice_n',
+                                  args: {
+                                    'amount': price.toStringAsFixed(
+                                        ApiConstants.digitsNumber),
+                                  },
                                 )
-                              : '${_tr('المبلغ', 'Amount')}: ${price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
+                              : '${translationService.t('amount_label')}: ${price.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}',
                           style: TextStyle(
                             color:
                                 exceeds ? const Color(0xFFEF4444) : null,
@@ -644,7 +637,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                     Navigator.pop(ctx);
                   },
                   icon: const Icon(LucideIcons.x, size: 16),
-                  label: Text(_tr('إزالة العربون', 'Remove deposit')),
+                  label: Text(translationService.t('remove_deposit_btn')),
                   style: TextButton.styleFrom(foregroundColor: Colors.red),
                 ),
               ],
@@ -662,10 +655,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
     final methodsGrid = _methods.isEmpty
         ? Center(
             child: Text(
-              _tr(
-                'لا توجد طرق دفع مفعّلة لهذا الفرع',
-                'No payment methods are enabled for this branch',
-              ),
+              translationService.t('no_payment_methods_enabled'),
               style: const TextStyle(
                 color: Color(0xFF64748B),
                 fontWeight: FontWeight.w600,
@@ -744,7 +734,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           );
 
     return _SectionCard(
-      title: _tr('طرق الدفع', 'Payment Methods'),
+      title: translationService.t('payment_methods_label'),
       icon: LucideIcons.wallet,
       compact: isCompact,
       expandChild: !isCompact,
@@ -769,10 +759,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                     children: [
                       Text(
                         selectedMethod?['label']?.toString() ??
-                            _tr(
-                              'لم يتم اختيار طريقة دفع',
-                              'No payment method selected',
-                            ),
+                            translationService.t('no_payment_method_selected'),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -796,10 +783,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                       Expanded(
                         child: Text(
                           selectedMethod?['label']?.toString() ??
-                              _tr(
-                                'لم يتم اختيار طريقة دفع',
-                                'No payment method selected',
-                              ),
+                              translationService.t('no_payment_method_selected'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -834,7 +818,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           : '${promo.discount.toStringAsFixed(ApiConstants.digitsNumber)} ${ApiConstants.currency}';
       label = '${promo.code} ($discountText)';
     } else {
-      label = _tr('اختر كوبون', 'Select Coupon');
+      label = translationService.t('select_coupon');
     }
 
     return InkWell(
@@ -897,7 +881,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
 
   Widget _buildExtrasSection({required bool isCompact}) {
     return _SectionCard(
-      title: _tr('خيارات إضافية', 'Extra Options'),
+      title: translationService.t('extra_options'),
       icon: LucideIcons.ticket,
       compact: isCompact,
       expandChild: !isCompact,
@@ -907,7 +891,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
           _buildPromoCodeButton(),
           const SizedBox(height: 14),
           Text(
-            _tr('ملاحظات الطلب', 'Order Notes'),
+            translationService.t('order_notes'),
             style: TextStyle(
               fontWeight: FontWeight.w700,
               color: context.appTextMuted,
@@ -920,7 +904,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
               minLines: 3,
               maxLines: 4,
               decoration: InputDecoration(
-                hintText: _tr('أدخل ملاحظات الطلب...', 'Enter order notes...'),
+                hintText: translationService.t('enter_order_notes_dots'),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
@@ -935,7 +919,7 @@ class _PaymentTenderDialogState extends State<PaymentTenderDialog> {
                 expands: true,
                 decoration: InputDecoration(
                   hintText:
-                      _tr('أدخل ملاحظات الطلب...', 'Enter order notes...'),
+                      translationService.t('enter_order_notes_dots'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -1345,8 +1329,6 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
     return code.startsWith('ar') || code.startsWith('ur');
   }
 
-  String _tr(String ar, String en) => _useArabicUi ? ar : en;
-
   @override
   void initState() {
     super.initState();
@@ -1401,7 +1383,7 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        _tr('الكوبونات', 'Promo Codes'),
+                        translationService.t('promo_codes'),
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -1424,7 +1406,7 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                   controller: _searchController,
                   style: TextStyle(color: context.appText),
                   decoration: InputDecoration(
-                    hintText: _tr('ابحث عن كوبون...', 'Search coupon...'),
+                    hintText: translationService.t('search_coupon_dots'),
                     hintStyle: TextStyle(fontSize: 13, color: context.appTextSubtle),
                     prefixIcon: Icon(LucideIcons.search, size: 16, color: context.appTextSubtle),
                     filled: true,
@@ -1450,7 +1432,7 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                         child: Padding(
                           padding: const EdgeInsets.all(24),
                           child: Text(
-                            _tr('لا توجد كوبونات', 'No coupons found'),
+                            translationService.t('no_coupons_found'),
                             style: const TextStyle(color: Color(0xFF94A3B8)),
                           ),
                         ),
@@ -1522,7 +1504,7 @@ class _PaymentPromoDialogState extends State<_PaymentPromoDialog> {
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: Text(
-                                        _tr('مطبّق', 'Applied'),
+                                        translationService.t('applied_label'),
                                         style: const TextStyle(
                                           fontSize: 10,
                                           color: Colors.white,

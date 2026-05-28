@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'logger_service.dart';
+
 /// Stores manual category -> printer routing for kitchen printing.
 ///
 /// Mapping model:
@@ -40,7 +42,7 @@ class CategoryPrinterRouteRegistry {
         }
       }
     } catch (e) {
-      print('⚠️ Failed to load category printer routes: $e');
+      Log.w('cat-route', 'failed to load routes', error: e);
     } finally {
       _loaded = true;
     }
@@ -176,7 +178,7 @@ class CategoryPrinterRouteRegistry {
       }
       await prefs.setString(_storageKey, jsonEncode(payload));
     } catch (e) {
-      print('⚠️ Failed to persist category printer routes: $e');
+      Log.w('cat-route', 'failed to persist routes', error: e);
     }
   }
 }

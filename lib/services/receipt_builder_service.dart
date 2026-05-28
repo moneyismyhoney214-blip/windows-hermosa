@@ -1,6 +1,6 @@
 import '../models/receipt_data.dart';
-import 'printer_language_settings_service.dart';
 import '../services/api/api_constants.dart';
+import 'printer_language_settings_service.dart';
 
 /// Shared receipt-building logic used by both the cashier (main screen)
 /// and the waiter module. Previously the cashier's
@@ -707,7 +707,7 @@ class ReceiptBuilderService {
     // provider suffix being applied when there's no orderType paren),
     // but kept available via the public helper for future callers.
     // ignore: unused_local_variable
-    final _providerHint = resolveDeliveryProviderTypeCode(
+    final providerHint = resolveDeliveryProviderTypeCode(
       isMenuListActive: isMenuListActive,
       activeMenuListName: activeMenuListName,
       menuListPriceType: menuListPriceType,
@@ -816,6 +816,27 @@ class ReceiptBuilderService {
         }
       }
 
+      // Per-line discount (populated by _buildOrderItemsSnapshot from the
+      // cart's `discount` / `discountType` / `isFree` fields). Tax-up the
+      // absolute amounts with the same multiplier as `total` so the
+      // "Discount -25.00" row on the printed receipt is in the same
+      // currency units as the line total above it.
+      final rawDiscount = (item['discount_amount'] as num?)?.toDouble() ?? 0;
+      final rawOriginalTotal =
+          (item['original_total'] as num?)?.toDouble() ?? 0;
+      final rawDiscountPct =
+          (item['discount_percentage'] as num?)?.toDouble() ?? 0;
+      final isFreeLine = item['is_free'] == true;
+      final discountAmount =
+          rawDiscount > 0 ? rawDiscount * multiplier : null;
+      final originalPriceForReceipt =
+          rawOriginalTotal > 0 ? rawOriginalTotal * multiplier : null;
+      final discountPctForReceipt =
+          rawDiscountPct > 0 ? rawDiscountPct : null;
+      final discountLabel = isFreeLine
+          ? 'مجاناً'
+          : (discountAmount != null && discountAmount > 0 ? 'خصم' : null);
+
       return ReceiptItem(
         nameAr: primaryName,
         nameEn: secondaryName.isNotEmpty ? secondaryName : primaryName,
@@ -823,6 +844,10 @@ class ReceiptBuilderService {
         unitPrice: rawUnitPrice * multiplier,
         total: rawTotal * multiplier,
         addons: addons.isNotEmpty ? addons : null,
+        discountAmount: discountAmount,
+        discountPercentage: discountPctForReceipt,
+        discountName: discountLabel,
+        originalPrice: originalPriceForReceipt,
       );
     }).toList();
 

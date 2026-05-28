@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../orders_screen.dart';
 
 extension OrdersScreenLifecycle on _OrdersScreenState {
@@ -19,9 +19,12 @@ extension OrdersScreenLifecycle on _OrdersScreenState {
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    // Auto-refresh every 10 seconds to avoid rate limiting
-    // Status updates from KDS are sent via WebSocket (real-time)
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    // 3s cadence keeps salon bookings snappy (they don't fan out through KDS
+    // WebSocket, so HTTP is their only refresh signal). Restaurant orders also
+    // refresh via DisplayAppService.addOrderStatusListener — see initState.
+    // _refreshOrdersRealtime self-guards via _isRealtimeRefreshing, so a slow
+    // backend won't queue up overlapping requests.
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       unawaited(_refreshOrdersRealtime());
     });
   }

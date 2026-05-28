@@ -1,20 +1,33 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../orders_screen.dart';
 
 extension OrdersScreenActions on _OrdersScreenState {
+  /// Mirror Orders-screen booking mutation to the waiter mesh; no-op for non-table bookings.
+  void _mirrorBookingTableState(Booking booking, {required bool reserved}) {
+    final tableId = booking.tableId;
+    if (tableId == null) return;
+    try {
+      getIt<CashierMeshBootstrap>().broadcastCashierTableState(
+        tableId: tableId.toString(),
+        tableNumber: booking.tableName ?? '',
+        reserved: reserved,
+        bookingId: reserved ? booking.id.toString() : null,
+      );
+    } catch (e) {
+      Log.d('OrdersScreenActions', 'broadcast table state to mesh failed (non-fatal): $e');
+    }
+  }
+
   Future<void> _cancelBooking(Booking booking) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(_tr('إلغاء الحجز', 'Cancel Booking')),
-        content: Text(_tr(
-          'هل أنت متأكد من إلغاء هذا الحجز؟',
-          'Are you sure you want to cancel this booking?',
-        )),
+        title: Text(translationService.t('cancel_booking_title')),
+        content: Text(translationService.t('confirm_cancel_this_booking_msg')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text(_tr('لا', 'No')),
+            child: Text(translationService.t('no')),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -22,7 +35,7 @@ extension OrdersScreenActions on _OrdersScreenState {
               backgroundColor: const Color(0xFFEF4444),
               foregroundColor: Colors.white,
             ),
-            child: Text(_tr('نعم، إلغاء', 'Yes, Cancel')),
+            child: Text(translationService.t('yes_cancel')),
           ),
         ],
       ),
@@ -35,7 +48,6 @@ extension OrdersScreenActions on _OrdersScreenState {
         status: 8,
       );
 
-      // Print cancellation ticket to kitchen
       if (widget.onPrintOrderChanges != null) {
         try {
           final details = await _orderService.getBookingDetails(booking.id.toString());
@@ -71,16 +83,15 @@ extension OrdersScreenActions on _OrdersScreenState {
         }
       }
 
+      // Free the table on every device immediately.
+      _mirrorBookingTableState(booking, reserved: false);
+
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_tr('تم إلغاء الحجز', 'Booking cancelled'))),
-      );
-      _loadData();
+      UiFeedback.info(context, translationService.t('booking_cancelled_msg'));
+      unawaited(_loadData());
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_tr('فشل إلغاء الحجز', 'Failed to cancel booking'))),
-      );
+      UiFeedback.info(context, translationService.t('cancel_booking_failed'));
     }
   }
 
@@ -90,40 +101,25 @@ extension OrdersScreenActions on _OrdersScreenState {
       bookingId: booking.id.toString(),
       bookingLabel: _bookingReference(booking),
     );
-    // The dialog returns null on cancel and a non-null value (possibly 0 for
-    // salon previews that omit prices) when a refund actually happened.
-    // Refresh on any non-null return so the displayed total reflects reality.
+    // Null = cancel; any non-null = refund happened (may be 0 for salon previews).
     if (refundedPreTax == null || !mounted) return;
 
-    // Optimistically subtract the dialog-reported amount so the total drops
-    // even if the recompute below fails (network/parse error). The recompute
-    // overwrites this with the authoritative value from booking_services.
+    // Optimistic subtraction; recompute below overwrites with authoritative value.
     if (refundedPreTax > 0) {
       _bookingRefundedAmounts[booking.id] =
           (_bookingRefundedAmounts[booking.id] ?? 0) + refundedPreTax;
     }
 
-    // Pull the booking detail BEFORE _loadData so the remaining-items
-    // override is in place by the time the list rebuilds. The list endpoint
-    // can lag the detail endpoint and may not even include
-    // `booking_services` / `booking_meals` in its rows, so for salons the
-    // detail endpoint is the only authoritative source for the post-refund
-    // state.
+    // Pull detail BEFORE _loadData so override is set before rebuild.
     await _refreshBookingRemainingFromDetail(booking);
     await _loadData();
 
-    // After _loadData, refresh once more in case the list endpoint still
-    // returned the frozen totals — the override map is keyed by booking id
-    // and survives the rebuild, so the card + invoice flow keep using
-    // the up-to-date numbers.
+    // Refresh again post-list in case list returned frozen totals.
     await _refreshBookingRemainingFromDetail(booking);
     if (mounted) setState(() {});
   }
 
-  /// Lazily refresh `_bookingRemainingPreTaxOverride` for a booking whose
-  /// list-side `total_price` is known to be stale (salon `has_cancelled`).
-  /// Skips when a refresh is already in flight or when an override is
-  /// already cached. Called from build paths, so it must NOT block.
+  /// Lazy refresh of override map for stale salon list rows. Non-blocking; idempotent.
   void _scheduleBookingDetailRefresh(Booking booking) {
     if (_bookingRemainingPreTaxOverride.containsKey(booking.id)) return;
     if (_bookingDetailRefreshInFlight.contains(booking.id)) return;
@@ -160,8 +156,7 @@ extension OrdersScreenActions on _OrdersScreenState {
         final rows = detailMap[key];
         if (rows is! List) continue;
         for (final row in rows.whereType<Map>()) {
-          // Restaurant refunds soft-delete via `is_returned`; skip those
-          // rows so the override matches the actual outstanding items.
+          // Skip soft-deleted (is_returned) rows so override matches outstanding items.
           final isReturned = row['is_returned'];
           if (isReturned == true ||
               isReturned == 1 ||
@@ -188,15 +183,15 @@ extension OrdersScreenActions on _OrdersScreenState {
       }
       _bookingRemainingPreTaxOverride[booking.id] = remainingPreTax;
 
-      // Reconcile the legacy refunded-amount tracker so the existing
-      // grand-total subtraction path also stays in sync if the override
-      // ever isn't consulted.
+      // Keep legacy refunded-amount tracker in sync as a fallback path.
       final originalPreTax = _bookingOriginalTotal(booking);
       if (originalPreTax > 0) {
         _bookingRefundedAmounts[booking.id] =
             (originalPreTax - remainingPreTax).clamp(0.0, originalPreTax);
       }
-    } catch (_) {}
+    } catch (e) {
+      Log.d('OrdersScreenActions', 'reconcile booking refunded amount failed (non-fatal): $e');
+    }
   }
 
   double _bookingOriginalTotal(Booking booking) {
@@ -213,7 +208,7 @@ extension OrdersScreenActions on _OrdersScreenState {
   String _formatBookingDate(Booking booking) {
     final raw =
         booking.date.trim().isNotEmpty ? booking.date : booking.createdAt;
-    if (raw.isEmpty) return _tr('بدون تاريخ', 'No date');
+    if (raw.isEmpty) return translationService.t('no_date_label');
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return raw;
     return DateFormat('yyyy-MM-dd HH:mm').format(parsed);
@@ -221,32 +216,18 @@ extension OrdersScreenActions on _OrdersScreenState {
 
   double _bookingGrandTotal(Booking booking) {
     final raw = booking.raw;
-    // Resolve the branch's real tax rate at call time. Previously this
-    // function hardcoded `* 1.15`, which baked a 15% VAT onto every pay-later
-    // total even for branches that have tax disabled — so a 6 SAR order
-    // showed as 6.90 in the Orders list. Reading from BranchService keeps
-    // taxed branches working (15%, 5%, custom rates) and makes untaxed
-    // branches display the raw amount.
+    // Use branch tax rate (not hardcoded 15%) so untaxed branches display raw amount.
     final branchService = getIt<BranchService>();
     final taxRate = branchService.cachedHasTax ? branchService.cachedTaxRate : 0.0;
     final taxMultiplier = 1.0 + taxRate;
 
-    // After a refund the backend keeps `total_price` / `grand_total` frozen.
-    // Trust the per-booking override populated from booking-detail when it
-    // exists — that's the authoritative remaining-items pre-tax sum.
+    // Backend keeps totals frozen post-refund; override (from detail) is authoritative.
     final override = _bookingRemainingPreTaxOverride[booking.id];
     if (override != null) {
       return override * taxMultiplier;
     }
 
-    // Cancelled bookings (status=8) keep their original `total_price` on
-    // the list endpoint even though every booking_service is gone — without
-    // this short-circuit the card showed e.g. 700 SAR for a fully cancelled
-    // booking. Verified against booking 443600/443602 on a.lamal salon
-    // (status=8, total_price=608.7, booking_services=[]). For salon
-    // bookings flagged `has_cancelled=true` (partial-or-full cancellation)
-    // we trigger a background detail fetch — once it completes the
-    // override path above takes over with the real remaining sum.
+    // Cancelled bookings (status=8) keep original total_price on list even with empty booking_services.
     final isSalon = ApiConstants.branchModule == 'salons';
     final statusStr = booking.status.trim().toLowerCase();
     final isCancelled = statusStr == '8' ||
@@ -258,28 +239,24 @@ extension OrdersScreenActions on _OrdersScreenState {
     }
 
     double base;
-    // 1. Try grand_total directly from API (already includes any tax).
+    // Priority: grand_total → total+tax → sum(meals)*taxMultiplier → total*taxMultiplier.
     final gt = double.tryParse(raw['grand_total']?.toString() ?? '');
     if (gt != null && gt > 0) {
       base = gt;
     } else if (booking.tax > 0) {
-      // 2. Backend returned an explicit tax amount — trust it.
       base = booking.total + booking.tax;
     } else if (booking.meals.isNotEmpty) {
-      // 3. Sum meals and optionally gross up by the configured tax rate.
       double sum = 0;
       for (final meal in booking.meals) {
         sum += meal.total > 0 ? meal.total : (meal.unitPrice * meal.quantity);
       }
       base = sum > 0 ? sum * taxMultiplier : booking.total;
     } else if (booking.total > 0) {
-      // 4. Fallback: gross up booking.total by the configured tax rate.
       base = booking.total * taxMultiplier;
     } else {
       base = booking.total;
     }
-    // Subtract locally tracked refund amounts (pre-tax → gross up by the
-    // same configured rate).
+    // Subtract locally tracked refunds (pre-tax → gross up by same rate).
     final refundedPreTax = _bookingRefundedAmounts[booking.id];
     if (refundedPreTax != null && refundedPreTax > 0) {
       base = (base - refundedPreTax * taxMultiplier).clamp(0.0, double.infinity);
@@ -308,12 +285,12 @@ extension OrdersScreenActions on _OrdersScreenState {
       case 'confirmed':
       case 'new':
       case 'pending':
-        return _tr('حجز مؤكد', 'Confirmed');
+        return translationService.t('confirmed_booking_label');
       case '2':
       case 'started':
-        return _tr('بدأ', 'Started');
+        return translationService.t('started_label');
       case '3':
-        return _tr('انتهي', 'Ended');
+        return translationService.t('ended_label');
       case '4':
       case 'preparing':
       case 'processing':
@@ -321,7 +298,7 @@ extension OrdersScreenActions on _OrdersScreenState {
       case '5':
       case 'ready':
       case 'ready_for_delivery':
-        return _tr('جاهز للتوصيل', 'Ready for delivery');
+        return translationService.t('ready_for_delivery');
       case '6':
       case 'on_the_way':
       case 'out_for_delivery':

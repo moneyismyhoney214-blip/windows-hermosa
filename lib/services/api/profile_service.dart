@@ -1,8 +1,9 @@
-import '../api/base_client.dart';
-import '../api/api_constants.dart';
-import '../../models/profile_data.dart';
 import '../../locator.dart';
+import '../../models/profile_data.dart';
+import '../api/api_constants.dart';
+import '../api/base_client.dart';
 import 'auth_service.dart';
+
 export '../../models/profile_data.dart';
 
 class ProfileService {

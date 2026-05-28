@@ -47,6 +47,45 @@ extension DisplayAppServiceInternals on DisplayAppService {
     }
   }
 
+  void addOrderStatusListener(
+    void Function(String orderId, int status) listener,
+  ) {
+    _orderStatusListeners.add(listener);
+  }
+
+  void removeOrderStatusListener(
+    void Function(String orderId, int status) listener,
+  ) {
+    _orderStatusListeners.remove(listener);
+  }
+
+  void _notifyOrderStatusListeners(String orderId, int status) {
+    for (final listener in List<void Function(String, int)>.from(
+      _orderStatusListeners,
+    )) {
+      try {
+        listener(orderId, status);
+      } catch (e) {
+        debugPrint('Order status listener error: $e');
+      }
+    }
+  }
+
+  /// Record a KDS-pushed order status locally. Returns false (no-op) when the
+  /// incoming value equals the cached one — prevents rebuild spam / duplicate
+  /// snackbars / sound replays when KDS broadcasts the same status repeatedly.
+  bool _recordKdsOrderStatus(dynamic orderIdRaw, int status) {
+    if (orderIdRaw == null) return false;
+    final orderId = orderIdRaw.toString().trim();
+    if (orderId.isEmpty) return false;
+    final existing = _kdsOrderStatuses[orderId];
+    if (existing == status) return false;
+    _kdsOrderStatuses[orderId] = status;
+    _notifyOrderStatusListeners(orderId, status);
+    notifyListeners();
+    return true;
+  }
+
   Future<void> _sendKdsContext() async {
     // KDS context is restaurant-specific: it pushes the `meals` catalogue to
     // the kitchen display. Salons don't have meals/meal-categories — firing
@@ -114,6 +153,7 @@ extension DisplayAppServiceInternals on DisplayAppService {
           'id': product.id,
           'name': product.name,
           'category': product.category,
+          'category_id': product.categoryId,
           'price': product.price,
           'is_active': product.isActive,
           'image': product.image,

@@ -74,15 +74,7 @@ extension OrderServiceMiscApis on OrderService {
       return const <Map<String, dynamic>>[];
     }
 
-    // `/seller/refunded-meals/...` is the restaurant cashier endpoint —
-    // it returns 422 "غير مسموح بهذه العملية!" for salon branches. The
-    // equivalent refund history for salon lives in Credit Note records:
-    // `GET /seller/branches/{id}/refunds` lists CNs (each a refund
-    // invoice) and `GET /seller/branches/{id}/refunds/{cnId}` exposes
-    // the per-line `items[]` keyed by the original invoice's
-    // `original_invoice_number`. Aggregate matching CNs so the cashier
-    // sees the refunded services even though the restaurant endpoint
-    // returns 422.
+    // `/seller/refunded-meals/...` is restaurant-only (422 for salons); salons aggregate Credit Notes instead.
     if (ApiConstants.branchModule == 'salons') {
       return _fetchSalonRefundedItems(
         bookingId: normalizedBookingId,
@@ -104,10 +96,7 @@ extension OrderServiceMiscApis on OrderService {
       final normalized = _rememberResponse('get_refunded_meals', response);
       return _extractBookingRowsFromResponse(normalized);
     } on ApiException catch (e) {
-      // Defensive: if the backend ever flips the 422 message for a
-      // restaurant branch (e.g. permissions), return an empty list rather
-      // than letting it propagate as a user-facing error — the dialog can
-      // still render the invoice without the refunded-meals overlay.
+      // Defensive: swallow 422 "غير مسموح" so the dialog still renders without the overlay.
       if (e.statusCode == 422 &&
           (e.message.contains('غير مسموح') ||
               (e.userMessage ?? '').contains('غير مسموح'))) {
@@ -131,13 +120,7 @@ extension OrderServiceMiscApis on OrderService {
     if (invoiceId.isEmpty && bookingId.isEmpty) {
       return const <Map<String, dynamic>>[];
     }
-    // Build the candidate identifiers we'll match the CN's
-    // `original_invoice_number` and `booking_number` against. The backend
-    // exposes the invoice's *number* (e.g. "53158" → "#IN-53158") on the
-    // CN, NOT the invoice id (e.g. 454238). The caller usually passes
-    // the id, so we resolve the number via `getInvoice` once before
-    // walking the CN pages — without this, every comparison would miss
-    // and the dialog would still report "لا توجد مرتجعات".
+    // CNs reference invoices by *number* (e.g. "#IN-53158"), not id — resolve via getInvoice first.
     final invoiceTargets = <String>{};
     if (invoiceId.isNotEmpty) {
       invoiceTargets.add(invoiceId);
@@ -152,7 +135,6 @@ extension OrderServiceMiscApis on OrderService {
         final invNumber = invInner['invoice_number']?.toString().trim() ??
             '';
         if (invNumber.isNotEmpty) {
-          // Stored "#IN-53158", "IN-53158" and bare "53158" all match.
           final stripped = invNumber.replaceFirst(RegExp(r'^#?IN-?'), '');
           invoiceTargets
             ..add(invNumber)
@@ -161,9 +143,9 @@ extension OrderServiceMiscApis on OrderService {
             ..add('IN-$stripped')
             ..add(stripped);
         }
-      } catch (_) {
-        // Tolerate failure — id-only match still works for the rare
-        // backend that includes the bare id in `original_invoice_number`.
+      } catch (e) {
+        Log.d('order-misc',
+            'invoice-number target enumeration failed; id-only match still works (non-fatal): $e');
       }
     }
     final bookingTargets = <String>{};
@@ -183,7 +165,6 @@ extension OrderServiceMiscApis on OrderService {
           }
         }
       }
-      // Booking-level match: scan items for booking_number reference.
       final items = refundOrInvoice['items'];
       if (bookingTargets.isNotEmpty && items is List) {
         for (final item in items.whereType<Map>()) {
@@ -199,9 +180,7 @@ extension OrderServiceMiscApis on OrderService {
     }
 
     try {
-      // Walk a small number of pages — refund history grows over time but
-      // recent refunds for a freshly opened invoice are at the top of
-      // page 1. Cap at 3 pages to bound the worst-case latency.
+      // Cap at 3 pages; recent refunds land on page 1.
       final aggregated = <Map<String, dynamic>>[];
       for (var page = 1; page <= 3; page++) {
         final listResponse = await _client.get(
@@ -217,8 +196,7 @@ extension OrderServiceMiscApis on OrderService {
           final refundId = m['id']?.toString() ?? '';
           if (refundId.isEmpty) continue;
 
-          // Fetch the full CN detail — `original_invoice_number` and the
-          // refunded items only live there, not on the list rows.
+          // Full CN detail required — list rows omit `original_invoice_number` and items.
           Map<String, dynamic>? invoiceMap;
           try {
             final detail = await _client.get(
@@ -232,7 +210,8 @@ extension OrderServiceMiscApis on OrderService {
               invoiceMap =
                   invoiceRaw.map((k, v) => MapEntry(k.toString(), v));
             }
-          } catch (_) {
+          } catch (e) {
+            Log.d('order-misc', 'refund detail fetch failed, skipping (non-fatal): $e');
             continue;
           }
           if (invoiceMap == null) continue;
@@ -243,16 +222,12 @@ extension OrderServiceMiscApis on OrderService {
           for (final item in items.whereType<Map>()) {
             final row =
                 item.map((k, v) => MapEntry(k.toString(), v));
-            // Tag the row so the merge / display layers know it's a
-            // salon-style refund and pick the with-tax `total_tax` for
-            // the amount column. Also forward the CN context for
-            // display (e.g. "مسترجع في #CN-821").
+            // Tag as salon-refund so display picks `total_tax` and shows CN context.
             row['is_refunded'] = true;
             row['refund_invoice_number'] = invoiceMap['invoice_number'];
             row['refund_id'] = refundId;
             row['refund_date'] = invoiceMap['date'];
-            // Existing display widgets read `meal_name` / `name` first;
-            // CN items expose only `item_name`, so mirror it.
+            // Mirror item_name → meal_name; display widgets read meal_name first.
             if (row['meal_name'] == null && row['item_name'] != null) {
               row['meal_name'] = row['item_name'];
             }
@@ -260,17 +235,13 @@ extension OrderServiceMiscApis on OrderService {
           }
         }
 
-        // Stop early when the page returned a partial / empty list — the
-        // backend pages this list 15 at a time, so anything shorter than
-        // 15 means we're at the end.
+        // Backend pages this list 15 at a time; shorter page = end.
         if (listData.length < 15) break;
       }
       return aggregated;
     } catch (e) {
-      // Don't surface a red banner from the refund-history overlay —
-      // returning empty just hides it; the rest of the invoice/booking
-      // dialog still renders.
-      print('⚠️ salon refunded-items lookup failed: $e');
+      // Hide overlay on failure rather than blocking the rest of the invoice dialog.
+      Log.w('refund', 'salon refunded-items lookup failed', error: e);
       return const <Map<String, dynamic>>[];
     }
   }
@@ -426,12 +397,12 @@ extension OrderServiceMiscApis on OrderService {
     }
 
     final response = await _client.postMultipart(endpoint, fields);
-    // Slot-availability cache is keyed on (employee, service, date) and
-    // any item edit can free or consume a slot. Drop the whole cache so
-    // the next picker open is forced to re-query the backend.
+    // Drop slot cache — any item edit can free/consume a slot.
     try {
       getIt<SalonEmployeeService>().invalidateAvailableTimesCache();
-    } catch (_) {}
+    } catch (e) {
+      Log.d('OrderServiceMiscApis', 'invalidate salon slot cache after item update failed (non-fatal): $e');
+    }
     return _rememberResponse('update_booking_items', response);
   }
 }

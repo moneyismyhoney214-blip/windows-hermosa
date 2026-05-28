@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Allows plain ws:// traffic ONLY to private/LAN addresses, so waiter
-     peers can talk to each other on the local network without needing
-     TLS certificates. Public-internet HTTPS is still enforced. -->
+<!-- Allows plain ws:// traffic ONLY to private/LAN addresses (waiter
+     mesh) and pins HTTPS to hermosaapp.com against Let's Encrypt's
+     issuing chain. Public-internet HTTPS is still enforced for
+     everything else.
+
+     The Dart `dart:io` HttpClient does NOT consult this config (it
+     uses bundled BoringSSL), so the application-level PinningHttpClient
+     in lib/services/security/pinning_http_client.dart handles those
+     requests. THIS file covers the rest: WebView, image loaders,
+     Bonsoir mDNS, NearPay SDK, and any other plugin that uses the
+     platform's HttpsURLConnection / OkHttp.
+
+     Pins are SPKI SHA-256 over the public key (NOT the full cert), so
+     the leaf can rotate every 90 days without breaking the pin as long
+     as Let's Encrypt keeps signing with the same intermediate. We pin
+     ALL current LE production intermediates (R10-R14) plus both ISRG
+     roots; the chain validates if any one of them matches. Bumps to
+     this list go in `scripts/refresh-cert-pins.sh`. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
     <domain-config cleartextTrafficPermitted="true">
@@ -14,5 +29,27 @@
         <!-- mDNS / Link-local -->
         <domain includeSubdomains="true">169.254.0.0/16</domain>
         <domain includeSubdomains="true">.local</domain>
+    </domain-config>
+    <domain-config>
+        <domain includeSubdomains="true">hermosaapp.com</domain>
+        <!-- expiration is a soft reminder for ops to refresh — Android
+             still enforces the pin after this date, but logs that the
+             pin set has expired. -->
+        <pin-set expiration="2027-12-31">
+            <!-- ISRG Root X1 (RSA) -->
+            <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin>
+            <!-- ISRG Root X2 (ECDSA) -->
+            <pin digest="SHA-256">diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=</pin>
+            <!-- LE R10 intermediate (RSA) -->
+            <pin digest="SHA-256">K7rZOrXHknnsEhUH8nLL4MZkejquUuIvOIr6tCa0rbo=</pin>
+            <!-- LE R11 intermediate (RSA) -->
+            <pin digest="SHA-256">bdrBhpj38ffhxpubzkINl0rG+UyossdhcBYj+Zx2fcc=</pin>
+            <!-- LE R12 intermediate (RSA) — currently issuing for portal.hermosaapp.com -->
+            <pin digest="SHA-256">kZwN96eHtZftBWrOZUsd6cA4es80n3NzSk/XtYz2EqQ=</pin>
+            <!-- LE R13 intermediate (ECDSA) -->
+            <pin digest="SHA-256">AlSQhgtJirc8ahLyekmtX+Iw+v46yPYRLJt9Cq1GlB0=</pin>
+            <!-- LE R14 intermediate (ECDSA) -->
+            <pin digest="SHA-256">8WR6XuPvrFTIkukwWE/keXm3rNHHbBJxvKHFB22GmIg=</pin>
+        </pin-set>
     </domain-config>
 </network-security-config>

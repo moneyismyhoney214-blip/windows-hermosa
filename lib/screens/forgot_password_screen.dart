@@ -977,11 +977,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           child: Column(
             children: [
               _padRow(const ['1', '2', '3'], btn, gap),
-              SizedBox(height: gap),
+              const SizedBox(height: gap),
               _padRow(const ['4', '5', '6'], btn, gap),
-              SizedBox(height: gap),
+              const SizedBox(height: gap),
               _padRow(const ['7', '8', '9'], btn, gap),
-              SizedBox(height: gap),
+              const SizedBox(height: gap),
               Row(
                 children: [
                   _padAction(
@@ -989,9 +989,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     onTap: _onPadClear,
                     size: btn,
                   ),
-                  SizedBox(width: gap),
+                  const SizedBox(width: gap),
                   _padDigit('0', btn),
-                  SizedBox(width: gap),
+                  const SizedBox(width: gap),
                   _padAction(
                     icon: LucideIcons.delete,
                     onTap: _onPadBackspace,
@@ -1070,7 +1070,7 @@ class _NumpadButtonState extends State<_NumpadButton> {
   @override
   Widget build(BuildContext context) {
     const baseColor = Color(0xFFF7F8FB);
-    final tintedBase = const Color(0xFFFFF3E6);
+    const tintedBase = Color(0xFFFFF3E6);
     final pressed = widget.tinted
         ? const Color(0xFFFFE2C2)
         : const Color(0xFFE6E8EF);

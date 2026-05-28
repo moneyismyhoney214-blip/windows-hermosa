@@ -1,12 +1,14 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import 'particles.dart';
-import 'butterfly_logo.dart';
+
+import 'package:flutter/material.dart';
+
+import '../locator.dart';
 import '../screens/login_screen.dart';
 import '../screens/main_screen.dart';
 import '../services/api/auth_service.dart';
-import '../locator.dart';
 import '../waiter_module/waiter_module_entry.dart';
+import 'butterfly_logo.dart';
+import 'particles.dart';
 
 class SplashScreen extends StatefulWidget {
   final bool isAuthenticated;
@@ -29,27 +31,23 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
 
-    // Floating animation for the logo
     _floatController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat(reverse: true);
 
-    // Staggered text animation
     _textController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1300),
     );
 
-    // Start text animation after logo finishes drawing
     Future.delayed(const Duration(milliseconds: 1200), () {
       if (mounted) _textController.forward();
     });
 
     _navigationTimer = Timer(const Duration(milliseconds: 4200), () {
       if (!mounted) return;
-      // Route a resumed waiter session straight into the waiter module
-      // instead of the cashier POS.
+      // Resumed waiter session routes to waiter module, not cashier.
       Widget next;
       if (!widget.isAuthenticated) {
         next = const LoginScreen();
@@ -80,49 +78,39 @@ class _SplashScreenState extends State<SplashScreen>
         backgroundColor: Colors.white,
         body: LayoutBuilder(
           builder: (context, constraints) {
-            // حساب الأحجام المتجاوبة بناءً على أصغر بُعد
             final screenWidth = constraints.maxWidth;
             final screenHeight = constraints.maxHeight;
             final minDimension = screenWidth < screenHeight ? screenWidth : screenHeight;
-            
-            // تصنيف حجم الشاشة
+
             final isVerySmallScreen = minDimension < 400;
             final isSmallScreen = minDimension < 600;
             final isMediumScreen = minDimension < 800;
-            
-            // حجم اللوجو (نسبة من أصغر بُعد)
-            final logoSize = isVerySmallScreen 
+
+            final logoSize = isVerySmallScreen
                 ? minDimension * 0.35
-                : (isSmallScreen 
+                : (isSmallScreen
                     ? minDimension * 0.32
                     : (isMediumScreen ? minDimension * 0.28 : minDimension * 0.25));
-            
-            // حجم الـ glow
+
             final glowSize = logoSize * 1.5;
-            
-            // حجم الخط (نسبة من عرض الشاشة)
-            final fontSize = isVerySmallScreen 
+
+            final fontSize = isVerySmallScreen
                 ? screenWidth * 0.09
-                : (isSmallScreen 
+                : (isSmallScreen
                     ? screenWidth * 0.08
                     : (isMediumScreen ? screenWidth * 0.06 : screenWidth * 0.05));
-            
-            // المسافة بين اللوجو والنص
+
             final spacing = isVerySmallScreen ? 8.0 : (isSmallScreen ? 12.0 : 20.0);
-            
-            // حجم الحركة العمودية
+
             final floatOffset = isVerySmallScreen ? 8.0 : (isSmallScreen ? 12.0 : 15.0);
-            
-            // المسافة بين الحروف
+
             final letterSpacing = fontSize * 0.12;
             final horizontalPadding = fontSize * 0.03;
-            
+
             return Stack(
               children: [
-                // 1. Particles Background
                 const Positioned.fill(child: Particles()),
 
-                // 2. Centered Content Container
                 Center(
                   child: SingleChildScrollView(
                     physics: const NeverScrollableScrollPhysics(),
@@ -134,7 +122,6 @@ class _SplashScreenState extends State<SplashScreen>
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
-                          // Glowing Background Effects
                           Positioned(
                             child: Container(
                               width: glowSize,
@@ -152,7 +139,6 @@ class _SplashScreenState extends State<SplashScreen>
                             ),
                           ),
 
-                          // Main Content
                           Padding(
                             padding: EdgeInsets.symmetric(
                               horizontal: screenWidth * 0.05,
@@ -162,7 +148,6 @@ class _SplashScreenState extends State<SplashScreen>
                               mainAxisAlignment: MainAxisAlignment.center,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // Animated Floating Logo
                                 AnimatedBuilder(
                                   animation: _floatController,
                                   builder: (context, child) {
@@ -184,7 +169,6 @@ class _SplashScreenState extends State<SplashScreen>
 
                                 SizedBox(height: spacing),
 
-                                // Staggered Text Animation
                                 ConstrainedBox(
                                   constraints: BoxConstraints(
                                     maxWidth: screenWidth * 0.9,
@@ -199,7 +183,6 @@ class _SplashScreenState extends State<SplashScreen>
                                         mainAxisAlignment: MainAxisAlignment.center,
                                         mainAxisSize: MainAxisSize.min,
                                         children: List.generate(text.length, (index) {
-                                          // Calculate staggered interval for each letter
                                           final double start = index * 0.1;
                                           final double end = (start + 0.4).clamp(0.0, 1.0);
 

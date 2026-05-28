@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, unnecessary_cast, library_private_types_in_public_api
 part of '../order_panel.dart';
 
 extension OrderPanelItemActions on _OrderPanelState {
@@ -84,7 +84,7 @@ extension OrderPanelItemActions on _OrderPanelState {
                     children: [
                       if (!compact)
                         Text(
-                          _tr('التفاصيل', 'Details'),
+                          translationService.t('details_label'),
                           style: const TextStyle(
                             color: Color(0xFFF59E0B),
                             fontSize: 14,
@@ -167,7 +167,7 @@ extension OrderPanelItemActions on _OrderPanelState {
             final shownValue = currentValue.isEmpty ? '0' : currentValue;
 
             return AlertDialog(
-              title: Text(_tr('تعديل الكمية', 'Edit Quantity')),
+              title: Text(translationService.t('edit_quantity')),
               content: SizedBox(
                 width: 280,
                 child: Column(
@@ -266,13 +266,13 @@ extension OrderPanelItemActions on _OrderPanelState {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
-                  child: Text(_tr('إلغاء', 'Cancel')),
+                  child: Text(translationService.t('cancel')),
                 ),
                 TextButton(
                   onPressed: currentValue.isEmpty
                       ? null
                       : () => setDialogState(() => currentValue = ''),
-                  child: Text(_tr('مسح', 'Clear')),
+                  child: Text(translationService.t('clear_btn')),
                 ),
                 ElevatedButton(
                   onPressed: canSave
@@ -281,7 +281,7 @@ extension OrderPanelItemActions on _OrderPanelState {
                             parsed,
                           )
                       : null,
-                  child: Text(_tr('حفظ', 'Save')),
+                  child: Text(translationService.t('save')),
                 ),
               ],
             );
@@ -300,6 +300,7 @@ extension OrderPanelItemActions on _OrderPanelState {
   }
 
   Widget _buildItemMenu(CartItem item) {
+    final showSessions = widget.isSalonMode && item.salonData != null;
     return PopupMenuButton<String>(
       icon: const Icon(LucideIcons.moreVertical,
           size: 16, color: Color(0xFF94A3B8)),
@@ -312,6 +313,8 @@ extension OrderPanelItemActions on _OrderPanelState {
           _showItemDiscountDialog(item);
         } else if (value == 'free') {
           widget.onToggleFree(item.cartId);
+        } else if (value == 'sessions') {
+          _showItemSessionsDialog(item);
         }
       },
       itemBuilder: (context) => [
@@ -321,7 +324,7 @@ extension OrderPanelItemActions on _OrderPanelState {
             children: [
               const Icon(LucideIcons.trash2, size: 16, color: Colors.red),
               const SizedBox(width: 8),
-              Text(_tr('حذف', 'Delete'),
+              Text(translationService.t('delete'),
                   style: const TextStyle(color: Colors.red)),
             ],
           ),
@@ -332,7 +335,7 @@ extension OrderPanelItemActions on _OrderPanelState {
             children: [
               const Icon(LucideIcons.percent, size: 16, color: Colors.orange),
               const SizedBox(width: 8),
-              Text(_tr('خصم', 'Discount')),
+              Text(translationService.t('discount')),
             ],
           ),
         ),
@@ -342,12 +345,110 @@ extension OrderPanelItemActions on _OrderPanelState {
             children: [
               const Icon(LucideIcons.gift, size: 16, color: Colors.green),
               const SizedBox(width: 8),
-              Text(_tr('مجاني', 'Free')),
+              Text(translationService.t('free_label')),
             ],
           ),
         ),
+        if (showSessions)
+          PopupMenuItem(
+            value: 'sessions',
+            child: Row(
+              children: [
+                const Icon(LucideIcons.repeat,
+                    size: 16, color: Color(0xFFF58220)),
+                const SizedBox(width: 8),
+                Text(translationService.t('sessions_label')),
+              ],
+            ),
+          ),
       ],
     );
+  }
+
+  static int _itemSessionCount(CartItem item) {
+    final v = item.salonData?['session_numbers'];
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
+  Future<void> _showItemSessionsDialog(CartItem item) async {
+    if (item.salonData == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final count = _itemSessionCount(item);
+          Widget stepBtn(IconData icon, VoidCallback? onTap) => InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: onTap == null
+                        ? Colors.grey.withValues(alpha: 0.15)
+                        : const Color(0xFFFFF7ED),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: context.appBorder),
+                  ),
+                  child: Icon(icon,
+                      size: 18,
+                      color: onTap == null
+                          ? context.appTextSubtle
+                          : const Color(0xFFF58220)),
+                ),
+              );
+          return AlertDialog(
+            title: Text(translationService.t('sessions_label')),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  item.product.name,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: context.appTextMuted),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    stepBtn(
+                      LucideIcons.minus,
+                      count > 0
+                          ? () => setDialogState(() => item
+                              .salonData!['session_numbers'] = count - 1)
+                          : null,
+                    ),
+                    Container(
+                      width: 64,
+                      alignment: Alignment.center,
+                      child: Text('$count',
+                          style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: context.appText)),
+                    ),
+                    stepBtn(
+                      LucideIcons.plus,
+                      () => setDialogState(() =>
+                          item.salonData!['session_numbers'] = count + 1),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(translationService.t('done_label')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   void _showItemDiscountDialog(CartItem item) {
@@ -359,7 +460,7 @@ extension OrderPanelItemActions on _OrderPanelState {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text(_tr('إضافة خصم للمنتج', 'Add Item Discount')),
+          title: Text(translationService.t('add_item_discount')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -395,7 +496,7 @@ extension OrderPanelItemActions on _OrderPanelState {
                           'قيمة الخصم (${ApiConstants.currency})',
                           'Discount Amount (${ApiConstants.currency})',
                         )
-                      : _tr('نسبة الخصم (%)', 'Discount Percentage (%)'),
+                      : translationService.t('discount_percentage_pct'),
                   border: const OutlineInputBorder(),
                 ),
               ),
@@ -404,14 +505,14 @@ extension OrderPanelItemActions on _OrderPanelState {
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: Text(_tr('إلغاء', 'Cancel'))),
+                child: Text(translationService.t('cancel'))),
             ElevatedButton(
               onPressed: () {
                 final discount = double.tryParse(controller.text) ?? 0.0;
                 widget.onDiscount(item.cartId, discount, selectedType);
                 Navigator.pop(context);
               },
-              child: Text(_tr('حفظ', 'Save')),
+              child: Text(translationService.t('save')),
             ),
           ],
         ),

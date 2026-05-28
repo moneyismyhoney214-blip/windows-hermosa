@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../main_screen.dart';
 
 extension MainScreenBuildWidgets on _MainScreenState {
@@ -36,7 +36,6 @@ extension MainScreenBuildWidgets on _MainScreenState {
                         if (constraints.maxWidth <= 0) {
                           return const SizedBox.shrink();
                         }
-                        // نحسب الـ filtered products مرة واحدة بس بدل ما نحسبها 6 مرات
                         final products = _filteredProducts;
                         if (products.isEmpty) {
                           return Center(
@@ -52,10 +51,7 @@ extension MainScreenBuildWidgets on _MainScreenState {
                         final availableWidth = constraints.maxWidth;
                         final availableHeight = constraints.maxHeight;
                         final isPhoneLike = availableWidth < 700;
-                        // Wider clamp so the meal-icon slider in cashier
-                        // settings has meaningful range (75% → 150%).
-                        // Without this, even slamming the slider to max
-                        // produced a barely-visible 15% bump.
+                        // Wide clamp (0.75–1.5) for the meal-icon slider's range.
                         final iconScale = _mealIconScale.clamp(0.75, 1.5);
                         final gridPadding =
                             (availableWidth * 0.02).clamp(10.0, 24.0);
@@ -290,7 +286,7 @@ extension MainScreenBuildWidgets on _MainScreenState {
 
   /// Salon mode toggle bar: switch between "خدمات" (Services) and "باقات الخدمات" (Package Services).
   Widget _buildSalonServiceTypeBar() {
-    Widget _pill(String label, String value, IconData icon) {
+    Widget pill(String label, String value, IconData icon) {
       final isActive = _salonServiceType == value;
       return InkWell(
         onTap: () => _onSalonServiceTypeChanged(value),
@@ -330,9 +326,9 @@ extension MainScreenBuildWidgets on _MainScreenState {
       color: Colors.transparent,
       child: Row(
         children: [
-          _pill(_trUi('خدمات', 'Services'), 'services', LucideIcons.scissors),
+          pill(_trUi('خدمات', 'Services'), 'services', LucideIcons.scissors),
           const SizedBox(width: 8),
-          _pill(_trUi('باقات الخدمات', 'Package Services'), 'packageServices', LucideIcons.package2),
+          pill(_trUi('باقات الخدمات', 'Package Services'), 'packageServices', LucideIcons.package2),
         ],
       ),
     );
@@ -349,7 +345,6 @@ extension MainScreenBuildWidgets on _MainScreenState {
           : Colors.transparent,
       child: Row(
         children: [
-          // Menu selector button
           InkWell(
             onTap: _showMenuListPicker,
             borderRadius: BorderRadius.circular(8),
@@ -390,7 +385,6 @@ extension MainScreenBuildWidgets on _MainScreenState {
               ),
             ),
           ),
-          // Price type selector (only when a menu list is active)
           if (_isMenuListActive) ...[
             const SizedBox(width: 12),
             _buildPriceTypeChip(
@@ -575,7 +569,7 @@ extension MainScreenBuildWidgets on _MainScreenState {
 
   Widget _buildCategoryBar() {
     if (_categories.isEmpty) return const SizedBox.shrink();
-    // Use cached sorted list - invalidated when categories or pins change
+    // Cached sorted list — invalidated when categories or pins change.
     final sorted = _sortedCategoriesCache ??= List<CategoryModel>.from(_categories)
       ..sort((a, b) {
         if (a.id == 'all') return -1;
@@ -588,7 +582,6 @@ extension MainScreenBuildWidgets on _MainScreenState {
       builder: (context, constraints) {
         final screenWidth = constraints.maxWidth;
         final catScale = _sidebarIconScale.clamp(0.85, 1.4);
-        // Responsive sizes (scaled by sidebar icon scale)
         final boxWidth = (screenWidth < 600 ? 80.0 : (screenWidth < 1000 ? 95.0 : 110.0)) * catScale;
         final boxHeight = (screenWidth < 600 ? 78.0 : (screenWidth < 1000 ? 90.0 : 100.0)) * catScale;
         final fontSize = (screenWidth < 600 ? 11.0 : (screenWidth < 1000 ? 12.0 : 13.0)) * catScale;
@@ -900,10 +893,7 @@ extension MainScreenBuildWidgets on _MainScreenState {
       onPayLater: _handlePayLater,
       onAddBooking: _isSalonMode ? _handleAddBooking : null,
       onBookingLongPress: _showBookingDetails,
-      // Salons don't expose per-service "details" pages — the meal-details
-      // dialog only renders restaurant meal/product metadata (calories,
-      // ingredients, addon catalogue). Suppress the button entirely for
-      // salon to avoid showing an empty / restaurant-only detail screen.
+      // Suppress on salon — meal-details dialog renders restaurant-only metadata.
       onShowItemDetails:
           _isSalonMode ? null : _showMealDetailsForCartItem,
       selectedOrderType: _selectedOrderType,
@@ -929,7 +919,7 @@ extension MainScreenBuildWidgets on _MainScreenState {
       onBrowsePromocodes: _showPromocodesSheet,
       appliedPromoCode: _activePromoCode,
       onClearPromoCode: () => _applyPromoCode(null),
-      requireCustomerSelection: _requireCustomerSelection,
+      requireCustomerSelection: _effectiveRequireCustomerSelection,
       carNumberController: _carNumberController,
       onApplyCoupon: (code) async {
         final normalizedCode = code.trim();
@@ -938,13 +928,12 @@ extension MainScreenBuildWidgets on _MainScreenState {
           return;
         }
 
-        // Show loading
-        showDialog(
+        unawaited(showDialog(
           context: context,
           barrierDismissible: false,
           builder: (context) =>
               const Center(child: CircularProgressIndicator()),
-        );
+        ));
 
         try {
           final promoService = PromoCodeService();
@@ -956,41 +945,23 @@ extension MainScreenBuildWidgets on _MainScreenState {
             _applyPromoCode(promo);
 
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    translationService.t(
+              UiFeedback.success(context, translationService.t(
                       'promo_applied',
                       args: {'code': promo.code},
-                    ),
-                  ),
-                  backgroundColor: Colors.green,
-                ),
-              );
+                    ));
             }
           } else {
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(translationService.t('promo_invalid')),
-                  backgroundColor: Colors.red,
-                ),
-              );
+              UiFeedback.error(context, translationService.t('promo_invalid'));
             }
           }
         } catch (e) {
           if (mounted) Navigator.pop(context);
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  translationService.t(
+            UiFeedback.info(context, translationService.t(
                     'promo_apply_error',
                     args: {'error': e},
-                  ),
-                ),
-              ),
-            );
+                  ));
           }
         }
       },

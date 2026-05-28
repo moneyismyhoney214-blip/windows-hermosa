@@ -1,98 +1,115 @@
 library main_screen;
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:hermosa_pos/dialogs/edit_order_dialog.dart';
-import 'package:hermosa_pos/services/printer_service.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
-import 'package:lucide_icons/lucide_icons.dart';
 
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:hermosa_pos/dialogs/edit_order_dialog.dart';
+import 'package:hermosa_pos/services/api/api_constants.dart';
+import 'package:hermosa_pos/services/api/auth_service.dart';
+import 'package:hermosa_pos/services/api/base_client.dart';
+import 'package:hermosa_pos/services/api/branch_service.dart';
+import 'package:hermosa_pos/services/api/device_service.dart';
+import 'package:hermosa_pos/services/api/error_handler.dart';
+import 'package:hermosa_pos/services/api/order_service.dart';
+import 'package:hermosa_pos/services/api/product_service.dart';
+import 'package:hermosa_pos/services/api/promocode_service.dart';
+import 'package:hermosa_pos/services/api/table_service.dart';
+import 'package:hermosa_pos/services/cashier_sound_service.dart';
+import 'package:hermosa_pos/services/printer_service.dart';
+import 'package:intl/intl.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
+
+import '../controllers/cart_controller.dart';
+import '../controllers/order_totals_calculator.dart';
+import '../controllers/payment_logic.dart';
+import '../controllers/payment_method_policy.dart';
+import '../customer_display/nearpay/nearpay_bootstrap.dart';
+import '../customer_display/nearpay/nearpay_config_service.dart';
+import '../customer_display/nearpay/nearpay_service.dart' as np_local;
+import '../data.dart';
+import '../dialogs/booking_details_dialog.dart';
+import '../dialogs/meal_details_dialog.dart';
+import '../dialogs/payment_success_view.dart';
+import '../dialogs/payment_tender_dialog.dart';
+import '../dialogs/product_customization_dialog.dart';
+import '../dialogs/salon_package_selection_dialog.dart';
+import '../dialogs/salon_service_selection_dialog.dart';
+import '../locator.dart';
 import '../models.dart';
 import '../models/booking_invoice.dart';
 import '../models/customer.dart';
 import '../models/receipt_data.dart';
-import '../data.dart';
-import '../widgets/product_card.dart';
-import '../widgets/order_panel.dart';
-import '../widgets/settings_view.dart';
-import '../dialogs/product_customization_dialog.dart';
-import '../dialogs/payment_tender_dialog.dart';
-import '../services/language_service.dart';
-import '../services/display_app_service.dart';
-import '../services/presentation_service.dart';
-import '../services/invoice_html_pdf_service.dart';
-import '../services/kds_meal_availability_service.dart';
-import '../services/print_orchestrator_service.dart';
-import '../services/category_printer_route_registry.dart';
-import '../services/kitchen_printer_route_registry.dart';
-import '../dialogs/payment_success_view.dart';
-import '../services/print_job_cache_service.dart';
-import '../services/printer_role_registry.dart';
-import '../services/printer_language_settings_service.dart';
-import '../services/receipt_builder_service.dart';
-import '../services/salon_invoice_events.dart';
-import '../services/nearpay/nearpay_service.dart';
+import '../services/api/salon_employee_service.dart';
 import '../services/app_themes.dart';
 import '../services/cashier_mesh_bootstrap.dart';
-import '../customer_display/nearpay/nearpay_bootstrap.dart';
-import '../customer_display/nearpay/nearpay_config_service.dart';
-import '../customer_display/nearpay/nearpay_service.dart' as np_local;
+import '../services/category_printer_route_registry.dart';
+import '../services/display_app_service.dart';
+import '../services/invoice_html_pdf_service.dart';
+import '../services/kds_meal_availability_service.dart';
+import '../services/kitchen_printer_route_registry.dart';
+import '../services/language_service.dart';
+import '../services/logger_service.dart';
+import '../services/nearpay/nearpay_service.dart';
+import '../services/presentation_service.dart';
+import '../services/print_job_cache_service.dart';
+import '../services/print_orchestrator_service.dart';
+import '../services/printer_language_settings_service.dart';
+import '../services/printer_role_registry.dart';
+import '../services/receipt_builder_service.dart';
 import '../services/remote_nearpay_dispatcher.dart';
-import 'package:uuid/uuid.dart';
+import '../services/salon_invoice_events.dart';
 import '../utils/display_device_selection.dart';
+import '../utils/ui_feedback.dart';
+import '../widgets/order_panel.dart';
 import '../widgets/pdf_preview_screen.dart';
-
-import '../dialogs/booking_details_dialog.dart';
-import '../dialogs/meal_details_dialog.dart';
-import '../dialogs/salon_service_selection_dialog.dart';
-import '../dialogs/salon_package_selection_dialog.dart';
-import '../services/api/salon_employee_service.dart';
-import 'table_management_screen.dart';
+import '../widgets/product_card.dart';
+import '../widgets/settings_view.dart';
+import 'bookings_screen.dart';
+import 'branch_selection_screen.dart';
 import 'customers_screen.dart';
 import 'deposits_screen.dart';
-import 'bookings_screen.dart';
-import 'review_tickets_screen.dart';
-import 'reports_screen.dart';
-import 'orders_screen.dart';
 import 'invoices_screen.dart';
-import '../locator.dart';
-import 'package:hermosa_pos/services/api/product_service.dart';
-import 'package:hermosa_pos/services/api/order_service.dart';
-import 'package:hermosa_pos/services/api/table_service.dart';
-import 'package:hermosa_pos/services/api/branch_service.dart';
-import 'package:hermosa_pos/services/api/base_client.dart';
-import 'package:hermosa_pos/services/api/auth_service.dart';
-import 'package:hermosa_pos/services/api/promocode_service.dart';
-import 'package:hermosa_pos/services/api/api_constants.dart';
-import 'package:hermosa_pos/services/api/device_service.dart';
-import 'package:hermosa_pos/services/api/error_handler.dart';
-import 'package:hermosa_pos/services/cashier_sound_service.dart';
-import 'branch_selection_screen.dart';
 import 'login_screen.dart';
-import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'main_screen_parts/invoice_attempts_builder.dart';
+import 'main_screen_parts/payment_process_helpers.dart' as pph;
+import 'orders_screen.dart';
+import 'reports_screen.dart';
+import 'review_tickets_screen.dart';
+import 'table_management_screen.dart';
 
+part 'main_screen_parts/main_screen.build_widgets.dart';
+part 'main_screen_parts/main_screen.cart.dart';
+part 'main_screen_parts/main_screen.devices.dart';
+part 'main_screen_parts/main_screen.kitchen_print.dart';
+part 'main_screen_parts/main_screen.kitchen_print.dispatch.dart';
+part 'main_screen_parts/main_screen.kitchen_print.helpers.dart';
 part 'main_screen_parts/main_screen.localization.dart';
+part 'main_screen_parts/main_screen.menu_lists.dart';
+part 'main_screen_parts/main_screen.payment.dart';
+part 'main_screen_parts/main_screen.payment.helpers.dart';
+part 'main_screen_parts/main_screen.payment.process.dart';
+part 'main_screen_parts/main_screen.payment.receipt.dart';
+part 'main_screen_parts/main_screen.products.dart';
+part 'main_screen_parts/main_screen.promo.dart';
+part 'main_screen_parts/main_screen.salon.dart';
 part 'main_screen_parts/main_screen.session.dart';
 part 'main_screen_parts/main_screen.settings.dart';
-part 'main_screen_parts/main_screen.utils.dart';
 part 'main_screen_parts/main_screen.tax.dart';
-part 'main_screen_parts/main_screen.products.dart';
-part 'main_screen_parts/main_screen.menu_lists.dart';
-part 'main_screen_parts/main_screen.salon.dart';
-part 'main_screen_parts/main_screen.promo.dart';
-part 'main_screen_parts/main_screen.cart.dart';
-part 'main_screen_parts/main_screen.payment.dart';
-part 'main_screen_parts/main_screen.kitchen_print.dart';
-part 'main_screen_parts/main_screen.devices.dart';
-part 'main_screen_parts/main_screen.build_widgets.dart';
+part 'main_screen_parts/main_screen.utils.dart';
 
-// Storage keys relocated from _MainScreenState statics to library-level
-// so extensions can reference them without qualification.
+// Storage keys at library level so extensions can reference them unqualified.
 const String _requireCustomerSelectionKey =
     'cashier_require_customer_selection';
+// Per-branch flag set when the backend rejects a booking with a missing
+// `customer_id` 422. Once tripped, the cashier treats customer selection as
+// effectively mandatory on that branch and disables the settings toggle.
+String _customerRequiredByBackendKeyFor(int branchId) =>
+    'cashier_customer_required_by_backend_v1_$branchId';
 const String _cdsEnabledKey = 'cashier_cds_enabled_v1';
 const String _kdsEnabledKey = 'cashier_kds_enabled_v1';
 const String _autoPrintCashierKey = 'cashier_auto_print_cashier_v1';
@@ -125,7 +142,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String _selectedCategory = 'all';
   String _searchQuery = '';
   Timer? _searchDebounce;
-  final List<CartItem> _cart = [];
+
+  /// CartController owns cart state; `_cart` getter exposes backing list for legacy in-place mutators.
+  late final CartController _cartController = CartController();
+  List<CartItem> get _cart => _cartController.mutableItems;
+
   final List<DeviceConfig> _devices = [];
 
   List<Product> _allProducts = [];
@@ -133,15 +154,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final Set<String> _pinnedCategoryIds = {};
   List<CategoryModel>? _sortedCategoriesCache;
 
-  // Menu Lists (Price Lists) state
   bool _isMenuListActive = false;
   int? _activeMenuListId;
   String _activeMenuListName = '';
-  String _menuListPriceType = 'delivery'; // 'delivery' or 'pickup'
+  String _menuListPriceType = 'delivery';
   List<Product> _menuListProducts = [];
   List<CategoryModel> _menuListCategories = [];
   List<Map<String, dynamic>> _availableMenuLists = [];
-  List<CategoryModel> _originalCategories = []; // saved before menu list switch
+  List<CategoryModel> _originalCategories = [];
   Map<String, bool> _enabledPayMethods = {
     'cash': false,
     'card': false,
@@ -166,7 +186,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   TableItem? _selectedTable;
   TableItem? _lastSelectedTable;
   Customer? _selectedCustomer;
-  PromoCode? _activePromoCode;
+
+  /// Order-level promo routed through [_cartController]; null clears.
+  PromoCode? get _activePromoCode => _cartController.activePromoCode;
+  set _activePromoCode(PromoCode? value) {
+    if (value == null) {
+      _cartController.clearPromoCode();
+    } else {
+      _cartController.applyPromoCode(value);
+    }
+  }
+
   List<PromoCode> _cachedPromoCodes = [];
   bool _isLoading = true;
   String? _error;
@@ -175,16 +205,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   bool _isLoadingMore = false;
   final ScrollController _productsScrollController = ScrollController();
 
-  // New Ecosystem state
   String _selectedOrderType = 'services';
   final TextEditingController _orderNotesController = TextEditingController();
   final TextEditingController _carNumberController = TextEditingController();
 
-  // User Profile
   String _userName = 'المستخدم';
   String _userRole = 'كاشير';
   String _initials = 'US';
   bool _requireCustomerSelection = true;
+  // Tripped to true when the backend returns a 422 with `customer_id` errors
+  // on this branch — locks the settings toggle on and forces the cart label
+  // into the "* required" state without waiting for the user to toggle it.
+  bool _customerRequiredByBackend = false;
+  bool get _effectiveRequireCustomerSelection =>
+      _requireCustomerSelection || _customerRequiredByBackend;
   bool _isCdsEnabled = true;
   bool _isKdsEnabled = true;
   bool _autoPrintCashier = true;
@@ -195,10 +229,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   double _mealIconScale = 1.0;
   double _sidebarIconScale = 1.0;
   bool _categoryLayoutVertical = false;
-  // Initialised from the global VAT config (populated at login + restored
-  // from SharedPreferences). `_loadTaxConfiguration` overwrites these
-  // once the branch-settings API resolves; the defaults here only matter
-  // for the first frame before that future completes.
+  // Init from global VAT config; overwritten by _loadTaxConfiguration once branch-settings resolves.
   bool _isTaxEnabled = ApiConstants.hasTax;
   double _taxRate = ApiConstants.effectiveTaxRate;
   bool _isProfileNearPayEnabled = false;
@@ -216,35 +247,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   double _cashOpeningBalance = 0.0;
   double _cashTransactionsTotal = 0.0;
 
-  // ── Salon mode state ──────────────────────────────────────────────
   bool get _isSalonMode => ApiConstants.branchModule == 'salons';
-  /// Selected deposit ID for invoice integration (salon only)
+  /// Selected deposit ID for invoice integration (salon only).
   int? _selectedDepositId;
-  /// Deposits belonging to the currently selected customer (salon only).
-  /// Populated from `/seller/filters/branches/{branchId}/allDeposits?customer_id=X`.
-  /// Each entry has the shape {label, value, price, is_active, ...}.
+  /// Deposits for the currently selected customer (salon only).
   List<Map<String, dynamic>> _customerDeposits = [];
-  /// In-flight customer id for a deposits fetch; used to discard stale
-  /// responses when the user flips between customers quickly.
-  int? _depositsFetchCustomerId;
-  String _salonServiceType = 'services'; // 'services' or 'packageServices'
+  /// In-flight customer id; used to discard stale deposits responses.
+  String? _depositsFetchCustomerId;
+  String _salonServiceType = 'services';
   List<Map<String, dynamic>> _salonServices = [];
-  List<Map<String, dynamic>> _salonPackages = []; // raw package data
+  List<Map<String, dynamic>> _salonPackages = [];
   List<Map<String, dynamic>> _salonEmployees = [];
   int _salonCurrentPage = 1;
   int _salonLastPage = 1;
-  /// Maps service ID → list of employees who can perform that service
+  /// service ID → list of employees who can perform that service.
   Map<int, List<Map<String, dynamic>>> _serviceEmployeeMap = {};
-  /// Branch/seller logo URL — used as a fallback image for salon services
-  /// that don't have their own picture (product cards, service dialogs).
+  /// Branch/seller logo URL — fallback image for salon services.
   String? _salonBranchLogoUrl;
 
-  /// Navigation items adjusted for salon module:
-  /// - "orders" stays but gets renamed to "فواتير معلقة" in _navLabel
-  /// - "tables" is replaced with "deposits" (العرابين)
-  /// - "bookings" (الحجوزات) is inserted right after "invoices" so the
-  ///   cashier can manage salon appointments + pay-later orders without
-  ///   leaving the home shell. Restaurant mode keeps the original layout.
+  /// Salon nav: "orders"→"فواتير معلقة", "tables"→"deposits", insert "bookings"+"review_tickets" after "invoices".
   List<NavItem> get _effectiveNavItems {
     if (!_isSalonMode) return navItems;
     final mapped = navItems.map((item) {
@@ -270,7 +291,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       label: 'review_tickets',
     );
     if (invoicesIndex >= 0) {
-      // Order in salon nav: invoices → bookings → review tickets.
       mapped.insert(invoicesIndex + 1, bookingsItem);
       mapped.insert(invoicesIndex + 2, reviewTicketsItem);
     } else {
@@ -284,33 +304,42 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _mealAvailabilityService = getIt<KdsMealAvailabilityService>();
+    _mealAvailabilityService.addListener(_onMealAvailabilityChanged);
     _displayAppService = getIt<DisplayAppService>();
     _displayAppService.addMealAvailabilityListener(_handleMealAvailabilitySync);
     WidgetsBinding.instance.addObserver(this);
+    _cartController.addListener(_onCartChanged);
     translationService.addListener(_onLanguageChanged);
-    // When the cashier flips invoice language settings, invalidate the CDS
-    // payload fingerprint and push a refreshed cart so the CDS can redraw
-    // names in the new primary/secondary pair immediately.
+    // Re-push cart to CDS when invoice languages change.
     printerLanguageSettings.addListener(_onPrinterLanguageChanged);
-    // When ProductService harvests a new translation in the background,
-    // re-push the cart so the CDS picks up richer names without waiting
-    // for the next user-triggered cart edit.
+    // Re-push cart when ProductService harvests new translations.
     ProductService.addCacheListener(_onProductNameCacheChanged);
     _productsScrollController.addListener(_onProductsScroll);
     unawaited(_bootstrapSessionAndLoad());
   }
 
+  /// Folds CartController notifications into the existing setState flow.
+  void _onCartChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _onMealAvailabilityChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   void _onPrinterLanguageChanged() {
-    // Prime ProductService for the new primary/secondary so the background
-    // fetcher starts harvesting translations for any cached pages. Listeners
-    // rebroadcast the cart once those translations land.
+    // Prime ProductService for new primary/secondary so background fetch harvests translations.
     try {
       getIt<ProductService>().primeLanguages([
         printerLanguageSettings.primary,
         if (printerLanguageSettings.allowSecondary)
           printerLanguageSettings.secondary,
       ]);
-    } catch (_) {}
+    } catch (e) {
+      Log.d('MainScreen', 'primeLanguages on printer-lang change failed (non-fatal): $e');
+    }
     _lastMainCartFingerprint = null;
     _syncDisplayCartFromMain();
   }
@@ -321,10 +350,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _syncDisplayCartFromMain();
   }
 
-  // Fields relocated from mid-class positions during refactor
-  double _orderDiscount = 0.0;
-  DiscountType _orderDiscountType = DiscountType.amount;
-  bool _isOrderFree = false;
+  // Order-level totals routed through [_cartController] for unified notifications.
+  double get _orderDiscount => _cartController.orderDiscount;
+  set _orderDiscount(double v) =>
+      _cartController.setOrderDiscount(v, type: _orderDiscountType);
+
+  DiscountType get _orderDiscountType => _cartController.orderDiscountType;
+  set _orderDiscountType(DiscountType t) =>
+      _cartController.setOrderDiscount(_orderDiscount, type: t);
+
+  bool get _isOrderFree => _cartController.isOrderFree;
+  set _isOrderFree(bool v) => _cartController.setOrderFree(v);
   String? _pendingPaymentTypeAfterTableSelection;
   List<Map<String, dynamic>>? _pendingPaymentPaysAfterTableSelection;
   bool _pendingPaymentShowLoadingAfterTableSelection = true;
@@ -338,23 +374,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     _searchDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _cartController.removeListener(_onCartChanged);
+    _cartController.dispose();
     translationService.removeListener(_onLanguageChanged);
     printerLanguageSettings.removeListener(_onPrinterLanguageChanged);
     ProductService.removeCacheListener(_onProductNameCacheChanged);
     _displayAppService.removeMealAvailabilityListener(
       _handleMealAvailabilitySync,
     );
+    _mealAvailabilityService.removeListener(_onMealAvailabilityChanged);
     unawaited(_mealAvailabilityService.disposeService());
     getIt<DisplayAppService>().clearCallbacks();
     _productsScrollController.removeListener(_onProductsScroll);
     _productsScrollController.dispose();
     _orderNotesController.dispose();
     _carNumberController.dispose();
-    // Tear down the waiter-mesh viewer so logout / branch switch stops
-    // the cashier broadcasting into a session it no longer belongs to.
+    // Tear down waiter-mesh viewer to stop broadcasting after logout/branch switch.
     try {
       unawaited(getIt<CashierMeshBootstrap>().stop());
-    } catch (_) {}
+    } catch (e) {
+      Log.d('MainScreen', 'stop cashier mesh on dispose failed (non-fatal): $e');
+    }
     super.dispose();
   }
 
@@ -369,7 +409,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // 1. Handle Full Screen Tabs (Deposits, Tables, Customers, Settings)
     if (_activeTab == 'deposits') {
       return DepositsScreen(
         onBack: () => setState(() => _activeTab = 'home'),
@@ -380,10 +419,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_activeTab == 'bookings') {
       return BookingsScreen(
         onBack: () => setState(() => _activeTab = 'home'),
-        // After a fresh booking is created from the tab's create dialog,
-        // pass the response payload back so we can fan out the salon turn
-        // slip to every kitchen / KDS / bar printer — same contract the
-        // home cart's "دفع لاحقاً" button has.
+        // Fan out salon turn slip to kitchen/KDS/bar printers after fresh booking.
         onPrintSalonTurnTicket: (orderId, bookingData) =>
             triggerSalonTurnPrintFromBookingResponse(
           orderId: orderId,
@@ -406,10 +442,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_activeTab == 'tables') {
       return TableManagementScreen(
         onBack: () => setState(() => _activeTab = 'home'),
+        onPrintOrderChanges: _printOrderChangeTicket,
         onTableTap: (table) {
-          print(
-            '🧾 [PAY] table tapped id=${table.id} number=${table.number} activeTab=$_activeTab pending=$_pendingPaymentTypeAfterTableSelection',
-          );
+          Log.d('pay',
+              'table tapped id=${table.id} number=${table.number} '
+              'activeTab=$_activeTab pending=$_pendingPaymentTypeAfterTableSelection');
           final pendingType = _pendingPaymentTypeAfterTableSelection;
           final pendingPays = _pendingPaymentPaysAfterTableSelection;
           final pendingShowLoading =
@@ -430,7 +467,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           if (pendingType == 'payment') {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
-              print('🧾 [PAY] resume pending payment after table select');
+              Log.d('pay', 'resume pending payment after table select');
               unawaited(
                 _processPayment(
                   type: pendingType!,
@@ -445,7 +482,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           } else if (pendingType == 'open_tender') {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
-              print('🧾 [PAY] resume pending open_tender after table select');
+              Log.d('pay', 'resume pending open_tender after table select');
               unawaited(_handlePay());
             });
           }
@@ -479,8 +516,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         categories: _categories,
         onAddDevice: _addDevice,
         onRemoveDevice: _removeDevice,
-        requireCustomerSelection: _requireCustomerSelection,
+        requireCustomerSelection: _effectiveRequireCustomerSelection,
         onRequireCustomerSelectionChanged: _setRequireCustomerSelection,
+        customerRequirementLocked: _customerRequiredByBackend,
         cdsEnabled: _isCdsEnabled,
         kdsEnabled: _isKdsEnabled,
         onCdsEnabledChanged: _setCdsEnabled,
@@ -506,7 +544,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       );
     }
 
-    // 2. Handle Reports (Layout similar to Main but specific)
     if (_activeTab == 'reports') {
       return Scaffold(
         body: LayoutBuilder(
@@ -524,39 +561,40 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 body: const ReportsScreen(),
               );
             }
-            return Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
-                  ),
-                  color: Colors.white,
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(LucideIcons.chevronRight),
-                        onPressed: () =>
-                            setState(() => _activeTab = 'home'),
-                      ),
-                      Text(
-                        translationService.t('back_to_main'),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
+            return SafeArea(
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                    color: Colors.white,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(LucideIcons.chevronRight),
+                          onPressed: () =>
+                              setState(() => _activeTab = 'home'),
                         ),
-                      ),
-                    ],
+                        Text(
+                          translationService.t('back_to_main'),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const Expanded(child: ReportsScreen()),
-              ],
+                  const Expanded(child: ReportsScreen()),
+                ],
+              ),
             );
           },
         ),
       );
     }
 
-    // 3. Handle Home Screen (Responsive)
     return LayoutBuilder(
       builder: (context, constraints) {
         final isPhone = constraints.maxWidth < 700;
@@ -569,7 +607,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             _cart.length > 99 ? '99+' : _cart.length.toString();
 
         if (isPhone) {
-          // Mobile Layout
           return Scaffold(
             key: _scaffoldKey,
             backgroundColor: context.appBg,
@@ -666,7 +703,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
             body: Column(
               children: [
-                // Nav Tabs for Mobile
                 SizedBox(
                   height: 60,
                   child: ListView.separated(
@@ -691,7 +727,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     },
                   ),
                 ),
-                // Hungerstation Toggle (restaurant only) / Salon Service Type Toggle + Category Bar
                 if (!_isSalonMode) _buildHungerstationBar() else _buildSalonServiceTypeBar(),
                 if (!_categoryLayoutVertical)
                   RepaintBoundary(child: _buildCategoryBar()),
@@ -711,28 +746,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           );
         }
 
-        // Tablet/Desktop Layout
         return Scaffold(
           key: _scaffoldKey,
           backgroundColor: context.appBg,
-          body: Row(
+          // No AppBar — SafeArea protects against notched/gesture-nav insets.
+          body: SafeArea(
+            child: Row(
             children: [
-              // Main Content
               Expanded(
                 child: Column(
                   children: [
-                    // Header
                     _buildSearchHeader(),
-
-                    // Nav Tabs
                     _buildNavTabs(),
-
-                    // Hungerstation Toggle (restaurant only) / Salon Service Type Toggle + Category Bar
                     if (!_isSalonMode) _buildHungerstationBar() else _buildSalonServiceTypeBar(),
                     if (!_categoryLayoutVertical)
                       RepaintBoundary(child: _buildCategoryBar()),
 
-                    // Main Body
                     Expanded(
                       child: (_categoryLayoutVertical)
                           ? Row(
@@ -747,12 +776,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-              // 3. Order Panel (always visible for tablet and larger)
               SizedBox(
                 width: orderPanelWidth,
                 child: _buildOrderPanel(),
               ),
             ],
+          ),
           ),
         );
       },

@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression
+// ignore_for_file: invalid_use_of_protected_member, unused_element, unused_element_parameter, dead_code, dead_null_aware_expression, library_private_types_in_public_api
 part of '../orders_screen.dart';
 
 extension OrdersScreenHelpers on _OrdersScreenState {
@@ -42,27 +42,22 @@ extension OrdersScreenHelpers on _OrdersScreenState {
 
   String _bookingReference(Booking booking) {
     final orderId = booking.orderId;
-    // Priority 1: Use orderNumber if available (daily_order_number from API)
+    // Priority: orderNumber → orderId → bookingNumber (strip BOK-) → booking.id.
     final orderNumber = booking.orderNumber?.trim();
     if (orderNumber != null && orderNumber.isNotEmpty && orderNumber != '0') {
       return orderNumber.startsWith('#') ? orderNumber : '#$orderNumber';
     }
-    // Priority 2: Use orderId if available
     if (orderId != null && orderId > 0) {
       return '#$orderId';
     }
-    // Priority 3: Use bookingNumber if available (but strip BOK- prefix)
     final bookingNumber = booking.bookingNumber?.trim();
     if (bookingNumber != null &&
         bookingNumber.isNotEmpty &&
         bookingNumber != '0') {
-      // Remove BOK- prefix if present to show cleaner number
       final cleaned = bookingNumber.replaceAll(
           RegExp(r'#?BOK-?', caseSensitive: false), '');
       return cleaned.startsWith('#') ? cleaned : '#$cleaned';
     }
-    // Fallback: Use booking.id
-    // Note: Backend should provide daily_order_number in /bookings endpoint
     return '#${booking.id}';
   }
 
@@ -81,13 +76,7 @@ extension OrdersScreenHelpers on _OrdersScreenState {
     final hasBookingInvoiceId =
         hasValue(raw['invoice'] is Map ? (raw['invoice'] as Map)['id'] : null);
 
-    // Salon-only: the bookings LIST endpoint NEVER returns
-    // has_invoice/invoice_id/is_paid/pays — verified via curl across all
-    // invoiced bookings on a test branch. The ONLY signal it returns
-    // immediately after invoice creation is `status=3` (status_display
-    // "انتهي" / finished). Trust it here so the first paint hides the
-    // action buttons instead of waiting up to 8s for the cross-reference
-    // scan (`_kickOffSalonInvoiceCrossRef`) to derive the link.
+    // Salon bookings-list lacks invoice signals; status=3/"انتهي"/"finished" is the only immediate marker.
     if (ApiConstants.branchModule == 'salons') {
       final statusValue = raw['status'];
       final statusInt = statusValue is int
@@ -105,14 +94,7 @@ extension OrdersScreenHelpers on _OrdersScreenState {
     return hasInvoiceFlag || hasInvoiceId || hasBookingInvoiceId;
   }
 
-  // Salon pay-now bookings stay at status=1 (the backend doesn't flip them
-  // to 7 like the restaurant module does). They DO surface a populated
-  // `pays` array, a non-zero `paid` field, and a `status_display` of
-  // "تم الدفع". Without these signals the orders screen would show
-  // "Create Invoice" / "Refund" / "Cancel" buttons on a booking the
-  // cashier already paid for. Mirror the cashier's "is this booking
-  // settled?" detection: if the booking has any payment evidence, treat
-  // it as paid.
+  /// Salon pay-now stays at status=1; detect paid via pays/paid/status_display.
   bool _isBookingPaid(Booking booking) {
     if (booking.isPaid) return true;
     final raw = booking.raw;
@@ -129,7 +111,6 @@ extension OrdersScreenHelpers on _OrdersScreenState {
 
     if (truthy(raw['is_paid']) || truthy(raw['paid_at'])) return true;
 
-    // Numeric `paid` > 0 means a payment was recorded.
     final paidValue = raw['paid'];
     if (paidValue is num && paidValue > 0) return true;
     if (paidValue is String) {
@@ -137,7 +118,6 @@ extension OrdersScreenHelpers on _OrdersScreenState {
       if (parsed != null && parsed > 0) return true;
     }
 
-    // `pays` is a non-empty list of recorded payment methods (cash/card/...).
     final pays = raw['pays'];
     if (pays is List && pays.isNotEmpty) return true;
     if (pays is String && pays.trim().isNotEmpty) return true;
@@ -147,8 +127,7 @@ extension OrdersScreenHelpers on _OrdersScreenState {
       return true;
     }
 
-    // Salon list rows expose `status_display: "تم الدفع"` (or "Paid")
-    // alongside `status: 1`. Match the localised label as the last fallback.
+    // Salon list rows expose status_display "تم الدفع"/"Paid" alongside status=1.
     final display = raw['status_display']?.toString().trim() ?? '';
     if (display.isNotEmpty) {
       final lower = display.toLowerCase();
@@ -174,18 +153,9 @@ extension OrdersScreenHelpers on _OrdersScreenState {
     if (_isBookingCancelled(booking)) return false;
     if (_isBookingPaid(booking)) return false;
     if (_bookingHasInvoice(booking)) return false;
-    // Salon pay-now bookings come back from the list endpoint with no
-    // payment / invoice fields populated. The cross-reference scan
-    // (kicked off after every list load — see
-    // `_kickOffSalonInvoiceCrossRef`) records booking ids that already
-    // have an invoice, and we rely on that to mask the buttons here.
+    // Cross-reference scan masks salon pay-now bookings with missing list signals.
     if (_bookingIdsWithInvoice.contains(booking.id)) return false;
-    // Salon bookings with `has_cancelled=true` may have all booking_services
-    // refunded already even though `status` is still 1. Verified on
-    // a.lamal/branch 14: booking 443605 had status=1, total_price=608.7,
-    // booking_services=[]. Without this guard the cashier could click
-    // "Create Invoice" on a booking with no items → backend would error
-    // with "الطلب بدون عناصر" (the existing items-empty fallback).
+    // Guard against fully-refunded bookings still at status=1 (would 422 on create).
     final remaining = _bookingRemainingPreTaxOverride[booking.id];
     if (remaining != null && remaining <= 0) return false;
     final overrideItems = _bookingItemsOverride[booking.id];
@@ -250,19 +220,11 @@ extension OrdersScreenHelpers on _OrdersScreenState {
     }
   }
 
-  /// Cache key for the persistent invoice→booking map. Keyed by branch +
-  /// today so different days don't pollute each other and we don't trip on
-  /// a stale entry after the date rolls over. The map is shared across
-  /// orders screen sessions — re-entering the screen reads it back and
-  /// hides the action buttons before the network even returns.
+  /// Cache key for persistent invoice→booking map; keyed by branch + day.
   String _salonInvoiceLinkCacheKey(String dateStr) =>
       'salon_invoice_booking_link_${ApiConstants.branchId}_$dateStr';
 
-  /// Hydrate `_bookingIdsWithInvoice` from disk so the buttons hide on the
-  /// FIRST paint when the user re-enters the screen — without this the
-  /// network round-trip (which can take ~10s for many invoices) re-runs
-  /// every time and the user sees the old "Create Invoice" buttons until
-  /// it finishes.
+  /// Hydrate `_bookingIdsWithInvoice` from disk so buttons hide on first paint.
   Future<void> _hydrateSalonInvoiceLinkFromCache(String dateStr) async {
     try {
       final cached = await _cache.get(_salonInvoiceLinkCacheKey(dateStr));
@@ -277,42 +239,22 @@ extension OrdersScreenHelpers on _OrdersScreenState {
       if (discovered.isEmpty || !mounted) return;
       setState(() {
         _bookingIdsWithInvoice.addAll(discovered);
-        // Drop already-invoiced bookings — they belong in Posted Invoices,
-        // not Pending. _processBookings applies the same filter to fresh
-        // responses; this keeps the cached paint consistent.
+        // Drop already-invoiced bookings — they belong in Posted Invoices, not Pending.
         _bookings.removeWhere(
             (booking) => _bookingIdsWithInvoice.contains(booking.id));
       });
-    } catch (_) {}
+    } catch (e) {
+      Log.d('OrdersScreenHelpers', 'scan-for-existing-invoices failed (non-fatal): $e');
+    }
   }
 
-  /// Salon-only: build a set of booking ids that already have an invoice.
-  ///
-  /// The salon /bookings list endpoint returns pay-now bookings with NONE
-  /// of `is_paid` / `paid` / `pays` / `has_invoice` / `invoice_id`
-  /// populated, so the orders screen can't decide locally whether to hide
-  /// the "Create Invoice" / "Refund" / "Cancel" buttons.
-  ///
-  /// Worse, the salon /invoices LIST endpoint also omits `booking_id` —
-  /// rows expose only `id`, `order_number`, `invoice_number`, `userable`,
-  /// `total`, `pays`, etc. The `booking_id` lives ONLY on the invoice
-  /// DETAIL response (`/seller/branches/{id}/invoices/{invoiceId}` →
-  /// `data.booking_id`). So the cross-reference must:
-  ///   1. read the persisted invoice→booking map (instant),
-  ///   2. fetch today's invoices list (1-2 pages),
-  ///   3. fan out detail fetches IN PARALLEL for invoices we haven't
-  ///      mapped yet — invoice/booking pairings are immutable, so anything
-  ///      already in the cache is skipped,
-  ///   4. setState progressively after each batch so the UI updates as
-  ///      soon as each chunk lands instead of waiting for the slowest
-  ///      detail fetch,
-  ///   5. write the merged map back to cache so the next session is free.
+  /// Salon-only invoice→booking cross-reference: cache → invoice list → parallel detail
+  /// fetches (booking_id lives only on invoice detail). Progressive setState; persists merged map.
   Future<void> _kickOffSalonInvoiceCrossRef(String todayDateStr) async {
     if (_invoiceCrossRefInFlight) return;
     _invoiceCrossRefInFlight = true;
     try {
-      // Step 1: load the persisted map so we know which invoice ids we've
-      // already linked. Format: { "invoiceId": bookingId, ... }.
+      // Step 1: load persisted map { invoiceId: bookingId, ... }.
       final cacheKey = _salonInvoiceLinkCacheKey(todayDateStr);
       final cachedRaw = await _cache.get(cacheKey);
       final invoiceToBooking = <int, int>{};
@@ -342,7 +284,8 @@ extension OrdersScreenHelpers on _OrdersScreenState {
             dateFrom: todayDateStr,
             dateTo: todayDateStr,
           );
-        } catch (_) {
+        } catch (e) {
+          Log.d('catch', 'non-fatal: $e');
           break;
         }
         final list = _extractListResponse(response);
@@ -360,14 +303,11 @@ extension OrdersScreenHelpers on _OrdersScreenState {
         if (list.length < 50) break;
       }
 
-      // Step 3: only fetch details for invoices not already in the map.
+      // Step 3: fetch details for unmapped invoices only.
       final pending = invoiceIds
           .where((id) => !invoiceToBooking.containsKey(id))
           .toList(growable: false);
-      // Aggressive concurrency — invoice DETAIL is a fast endpoint on the
-      // backend and the rate limiter has been comfortable at 6 in
-      // parallel during testing. Combined with progressive setState the
-      // user sees results trickle in within ~1s for typical loads.
+      // Concurrency of 6 is comfortable with the backend rate limiter.
       const maxConcurrent = 6;
       var changedThisRun = false;
       for (var i = 0; i < pending.length; i += maxConcurrent) {
@@ -381,8 +321,7 @@ extension OrdersScreenHelpers on _OrdersScreenState {
               final dataMap = data is Map
                   ? data.map((k, v) => MapEntry(k.toString(), v))
                   : <String, dynamic>{};
-              // Salon detail nests booking_id at the envelope's top level
-              // (verified against /seller/branches/14/invoices/472301).
+              // Salon detail nests booking_id at the envelope top level.
               final raw = dataMap['booking_id'] ??
                   (dataMap['booking'] is Map
                       ? (dataMap['booking'] as Map)['id']
@@ -392,7 +331,8 @@ extension OrdersScreenHelpers on _OrdersScreenState {
                   raw is int ? raw : int.tryParse(raw.toString());
               if (bookingId == null || bookingId <= 0) return null;
               return MapEntry(invoiceId, bookingId);
-            } catch (_) {
+            } catch (e) {
+              Log.d('catch', 'non-fatal: $e');
               return null;
             }
           }),
@@ -407,8 +347,6 @@ extension OrdersScreenHelpers on _OrdersScreenState {
         if (discoveredThisBatch.isNotEmpty && mounted) {
           setState(() {
             _bookingIdsWithInvoice.addAll(discoveredThisBatch);
-            // Strip newly-discovered invoiced bookings from the visible
-            // list — they are now Posted Invoices, not Pending.
             _bookings.removeWhere(
                 (booking) => discoveredThisBatch.contains(booking.id));
           });
@@ -416,9 +354,7 @@ extension OrdersScreenHelpers on _OrdersScreenState {
         }
       }
 
-      // Step 4: merge cached entries into the in-memory set as well —
-      // for the (rare) case where hydrateFromCache hadn't completed yet
-      // when setState ran during step 3.
+      // Step 4: merge cached entries (handles late hydration race).
       if (mounted && invoiceToBooking.isNotEmpty) {
         final allIds = invoiceToBooking.values.toSet();
         if (!_bookingIdsWithInvoice.containsAll(allIds)) {
@@ -430,8 +366,7 @@ extension OrdersScreenHelpers on _OrdersScreenState {
         }
       }
 
-      // Step 5: persist the merged map. 6h expiry keeps it fresh on the
-      // same shift without growing unbounded across days.
+      // Step 5: persist merged map with 6h expiry.
       if (changedThisRun || (cachedRaw == null && invoiceToBooking.isNotEmpty)) {
         await _cache.set(
           cacheKey,
@@ -445,9 +380,7 @@ extension OrdersScreenHelpers on _OrdersScreenState {
     }
   }
 
-  /// Match the backend's "booking_id already used" 422 returned by the
-  /// salon /invoices endpoint. Captured strictly so an unrelated 422 does
-  /// not mark the booking as already-invoiced.
+  /// Match backend's "booking_id already used" 422 strictly (avoid false positives).
   bool _isBookingAlreadyInvoiced422(Object error) {
     final text = error.toString();
     final lower = text.toLowerCase();
