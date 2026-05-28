@@ -59,7 +59,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: Duration(seconds: 3),
+            duration: const Duration(seconds: 3),
             content: Text('فشل إضافة الجهاز: $e'),
             backgroundColor: Colors.red,
           ),
@@ -101,7 +101,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          duration: Duration(seconds: 3),
+          duration: const Duration(seconds: 3),
           content: Text(translationService.t('bt_test_print_sent')),
           backgroundColor: Colors.green,
         ),
@@ -110,7 +110,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          duration: Duration(seconds: 3),
+          duration: const Duration(seconds: 3),
           content: Text(translationService.t('bt_connect_failed_check_pair')),
           backgroundColor: Colors.orange,
         ),
