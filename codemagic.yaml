@@ -48,6 +48,43 @@ workflows:
         script: C:\flutter\bin\flutter.bat test
       - name: Build Windows Release
         script: C:\flutter\bin\flutter.bat build windows --release --verbose
+      - name: Set up Windows code signing (optional)
+        # If a code signing cert is provided as secure Codemagic env vars,
+        # decode it and locate signtool so the sign steps below can run.
+        # Mirrors the DEVELOPER_CERT_PEM pattern: when the secret is ABSENT
+        # the build still succeeds — it just ships UNSIGNED (SmartScreen
+        # will warn on first run). To enable signing, add two SECURE vars
+        # in the Codemagic UI:
+        #   WINDOWS_CERT_P12      = base64 of your .pfx/.p12 file
+        #                           (PowerShell: [Convert]::ToBase64String(
+        #                            [IO.File]::ReadAllBytes("cert.pfx")))
+        #   WINDOWS_CERT_PASSWORD = the .pfx export password
+        script: |
+          if ($env:WINDOWS_CERT_P12) {
+            Write-Host "ℹ️ Decoding code signing certificate"
+            $bytes = [System.Convert]::FromBase64String($env:WINDOWS_CERT_P12)
+            [System.IO.File]::WriteAllBytes("$env:CM_BUILD_DIR\codesign.pfx", $bytes)
+            $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+            if (-not $signtool) { Write-Host "❌ signtool.exe not found on runner"; exit 1 }
+            echo "CODESIGN_PFX=$env:CM_BUILD_DIR\codesign.pfx" | Out-File -FilePath $env:CM_ENV -Append -Encoding utf8
+            echo "SIGNTOOL=$signtool" | Out-File -FilePath $env:CM_ENV -Append -Encoding utf8
+            Write-Host "✓ Signing ready ($signtool)"
+          } else {
+            Write-Host "⚠️ WINDOWS_CERT_P12 not set — build will be UNSIGNED (SmartScreen will warn)."
+          }
+      - name: Sign app executable
+        # Sign the app binary BEFORE it gets bundled into the ZIP and the
+        # installer, so the exe is trusted when launched after install.
+        # Timestamping (/tr) keeps the signature valid after the cert
+        # expires. No-op when no cert was provided.
+        script: |
+          if (-not $env:CODESIGN_PFX) { Write-Host "Skipping — no certificate."; exit 0 }
+          & $env:SIGNTOOL sign /f $env:CODESIGN_PFX /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Hermosa POS" "$env:BUILD_DIR\Hermosa.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # verify is informational — /pa fails for self-signed test certs
+          # whose root isn't trusted on the runner; don't gate the build on it
+          & $env:SIGNTOOL verify /pa "$env:BUILD_DIR\Hermosa.exe"
+          exit 0
       - name: List build output
         script: dir build\windows\x64\runner\Release
         ignore_failure: true
@@ -55,8 +92,35 @@ workflows:
         script: |
           cd build\windows\x64\runner\Release
           Compress-Archive -Path * -DestinationPath $env:CM_BUILD_DIR\hermosa-windows.zip -Force
+      - name: Build Windows installer (Start Menu + desktop shortcut)
+        # Compiles windows/installer/hermosa_pos.iss with Inno Setup into a
+        # single setup .exe. The installer registers the app in Add/Remove
+        # Programs, creates a Start Menu group, and (via the desktopicon
+        # task) drops a desktop shortcut on install. Version is pulled from
+        # pubspec.yaml so the installer metadata matches the marketing
+        # version without a second place to bump.
+        script: |
+          choco install innosetup -y --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $line = Select-String -Path pubspec.yaml -Pattern '^version:' | Select-Object -First 1
+          $appVersion = ($line.Line -replace '^version:\s*', '') -replace '\+.*$', ''
+          Write-Host "Building installer for version $appVersion"
+          & $iscc "/DMyAppVersion=$appVersion" windows\installer\hermosa_pos.iss
+      - name: Sign installer
+        # Sign the final setup .exe — this is what users download, so it's
+        # the signature SmartScreen checks. No-op when no cert was provided.
+        script: |
+          if (-not $env:CODESIGN_PFX) { Write-Host "Skipping — no certificate."; exit 0 }
+          $setup = Get-ChildItem windows\installer\Output\*.exe | Select-Object -First 1
+          if (-not $setup) { Write-Host "❌ Installer exe not found"; exit 1 }
+          & $env:SIGNTOOL sign /f $env:CODESIGN_PFX /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Hermosa POS Setup" $setup.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # verify is informational (see note in the app-signing step)
+          & $env:SIGNTOOL verify /pa $setup.FullName
+          exit 0
     artifacts:
       - hermosa-windows.zip
+      - windows/installer/Output/*.exe
       - build/windows/x64/runner/Release/**/*.exe
       - build/windows/x64/runner/Release/**/*.dll
     publishing:
