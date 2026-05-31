@@ -58,9 +58,9 @@ workflows:
           $dll = "$env:CM_BUILD_DIR\sqlite3dll\sqlite3.dll"
           # Also drop a copy in the project root (the test process cwd) as
           # a fallback for the default 'sqlite3.dll' search path.
-          Copy-Item $dll -Destination (Get-Location) -Force
+          Copy-Item $dll -Destination (Get-Location).Path -Force
           echo "SQLITE3_TEST_DLL=$dll" | Out-File -FilePath $env:CM_ENV -Append -Encoding utf8
-          Write-Host "✓ sqlite3.dll ready at $dll"
+          Write-Host "sqlite3.dll ready at $dll"
       - name: Unit + widget tests (blocks build on failure)
         # `flutter test` exits non-zero on any failing test, which fails
         # the Codemagic step automatically. Builds NEVER proceed with a
@@ -82,16 +82,16 @@ workflows:
         #   WINDOWS_CERT_PASSWORD = the .pfx export password
         script: |
           if ($env:WINDOWS_CERT_P12) {
-            Write-Host "ℹ️ Decoding code signing certificate"
+            Write-Host "Decoding code signing certificate"
             $bytes = [System.Convert]::FromBase64String($env:WINDOWS_CERT_P12)
             [System.IO.File]::WriteAllBytes("$env:CM_BUILD_DIR\codesign.pfx", $bytes)
             $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-            if (-not $signtool) { Write-Host "❌ signtool.exe not found on runner"; exit 1 }
+            if (-not $signtool) { Write-Host "ERROR: signtool.exe not found on runner"; exit 1 }
             echo "CODESIGN_PFX=$env:CM_BUILD_DIR\codesign.pfx" | Out-File -FilePath $env:CM_ENV -Append -Encoding utf8
             echo "SIGNTOOL=$signtool" | Out-File -FilePath $env:CM_ENV -Append -Encoding utf8
-            Write-Host "✓ Signing ready ($signtool)"
+            Write-Host "Signing ready ($signtool)"
           } else {
-            Write-Host "⚠️ WINDOWS_CERT_P12 not set — build will be UNSIGNED (SmartScreen will warn)."
+            Write-Host "WINDOWS_CERT_P12 not set - build will be UNSIGNED (SmartScreen will warn)."
           }
       - name: Sign app executable
         # Sign the app binary BEFORE it gets bundled into the ZIP and the
@@ -99,7 +99,7 @@ workflows:
         # Timestamping (/tr) keeps the signature valid after the cert
         # expires. No-op when no cert was provided.
         script: |
-          if (-not $env:CODESIGN_PFX) { Write-Host "Skipping — no certificate."; exit 0 }
+          if (-not $env:CODESIGN_PFX) { Write-Host "Skipping - no certificate."; exit 0 }
           & $env:SIGNTOOL sign /f $env:CODESIGN_PFX /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Hermosa POS" "$env:BUILD_DIR\Hermosa.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # verify is informational — /pa fails for self-signed test certs
@@ -131,9 +131,9 @@ workflows:
         # Sign the final setup .exe — this is what users download, so it's
         # the signature SmartScreen checks. No-op when no cert was provided.
         script: |
-          if (-not $env:CODESIGN_PFX) { Write-Host "Skipping — no certificate."; exit 0 }
+          if (-not $env:CODESIGN_PFX) { Write-Host "Skipping - no certificate."; exit 0 }
           $setup = Get-ChildItem windows\installer\Output\*.exe | Select-Object -First 1
-          if (-not $setup) { Write-Host "❌ Installer exe not found"; exit 1 }
+          if (-not $setup) { Write-Host "ERROR: Installer exe not found"; exit 1 }
           & $env:SIGNTOOL sign /f $env:CODESIGN_PFX /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Hermosa POS Setup" $setup.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # verify is informational (see note in the app-signing step)
