@@ -40,6 +40,27 @@ workflows:
         script: C:\flutter\bin\flutter.bat pub get --verbose
       - name: Static analysis (blocks build on warnings/errors)
         script: C:\flutter\bin\flutter.bat analyze
+      - name: Provide sqlite3.dll for tests
+        # `flutter test` runs on the Dart VM with no built Flutter app, so
+        # the DLL that sqlite3_flutter_libs bundles next to the .exe isn't
+        # present, and the offline DB tests fail on Windows with
+        # "Couldn't resolve native function 'sqlite3_initialize'".
+        # (macOS CI is fine — sqlite3 is a system library there.)
+        # Download the official sqlite3 DLL and point the test bootstrap
+        # (test/support/sqflite_test_init.dart) at it via SQLITE3_TEST_DLL.
+        script: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $ver = "3460100"   # SQLite 3.46.1
+          $url = "https://www.sqlite.org/2024/sqlite-dll-win-x64-$ver.zip"
+          $zip = "$env:CM_BUILD_DIR\sqlite3.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:CM_BUILD_DIR\sqlite3dll" -Force
+          $dll = "$env:CM_BUILD_DIR\sqlite3dll\sqlite3.dll"
+          # Also drop a copy in the project root (the test process cwd) as
+          # a fallback for the default 'sqlite3.dll' search path.
+          Copy-Item $dll -Destination (Get-Location) -Force
+          echo "SQLITE3_TEST_DLL=$dll" | Out-File -FilePath $env:CM_ENV -Append -Encoding utf8
+          Write-Host "✓ sqlite3.dll ready at $dll"
       - name: Unit + widget tests (blocks build on failure)
         # `flutter test` exits non-zero on any failing test, which fails
         # the Codemagic step automatically. Builds NEVER proceed with a

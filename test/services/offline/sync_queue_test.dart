@@ -5,7 +5,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermosa_pos/services/offline/offline_database_service.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../../support/sqflite_test_init.dart';
 
 /// Tests for the offline sync queue inside [OfflineDatabaseService].
 ///
@@ -22,10 +23,7 @@ void main() {
 
   late Directory tmpDir;
 
-  setUpAll(() {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  });
+  setUpAll(initSqfliteForTests);
 
   setUp(() async {
     // Every test gets a fresh DB in a unique temp dir so concurrent
