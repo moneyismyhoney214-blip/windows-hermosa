@@ -20,6 +20,10 @@ AppId={{B7E3F2A1-8C4D-4E9F-A1B2-9F3C2D1E4B05}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+; Default install location is C:\Program Files\Hermosa POS. The wizard
+; STILL shows the "Select Destination Location" page so the user can
+; change it (that page is on by default — we deliberately don't set
+; DisableDirPage). Program Files lives on C: and is admin-protected.
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -53,4 +57,11 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; Hide the installed app files from the end user (the cashier should not
+; see or tamper with the binaries). This runs automatically (no
+; postinstall flag) right after the files are copied and shortcuts are
+; created. Shortcuts and the uninstaller keep working — the hidden
+; attribute doesn't block launching or uninstalling.
+Filename: "{cmd}"; Parameters: "/C attrib +h ""{app}"" & attrib +h /S /D ""{app}\*"""; Flags: runhidden; StatusMsg: "Securing application files..."
+; Optional "launch now" checkbox on the final page.
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

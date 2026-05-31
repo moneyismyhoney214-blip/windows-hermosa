@@ -109,10 +109,6 @@ workflows:
       - name: List build output
         script: dir build\windows\x64\runner\Release
         ignore_failure: true
-      - name: Package as ZIP
-        script: |
-          cd build\windows\x64\runner\Release
-          Compress-Archive -Path * -DestinationPath $env:CM_BUILD_DIR\hermosa-windows.zip -Force
       - name: Build Windows installer (Start Menu + desktop shortcut)
         # Compiles windows/installer/hermosa_pos.iss with Inno Setup into a
         # single setup .exe. The installer registers the app in Add/Remove
@@ -140,10 +136,10 @@ workflows:
           & $env:SIGNTOOL verify /pa $setup.FullName
           exit 0
     artifacts:
-      - hermosa-windows.zip
+      # Ship ONLY the installer so there's no raw Hermosa.exe to run by
+      # mistake (running that directly creates no Start Menu / desktop
+      # shortcut — only the setup .exe installs the app properly).
       - windows/installer/Output/*.exe
-      - build/windows/x64/runner/Release/**/*.exe
-      - build/windows/x64/runner/Release/**/*.dll
     publishing:
       email:
         recipients:
